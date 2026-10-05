@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M02 · 与 64M 模型对话 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m02">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第一篇 开箱</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M02</span><span>第一篇 · 开箱：用</span></div>
+        <h1>与 64M 模型对话</h1>
+        <p class="lede">
+          M01 的冒烟给了你 3 个 tiny 权重，<code>out/</code> 里还躺着完整训练出的 64M 正主。这一课先不管模型内部长什么样——把模型叫醒，问它"你是谁"，转 temperature 旋钮看它换三种性格；然后猎一个真实 bug：官方对话入口 <code>tools/chat.py</code> 此刻根本跑不起来，而 49 个测试全绿。为什么？
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M01 课程导览与第一个绿灯</b></span>
+          <span class="chip">时长：<b>约 45 分钟</b></span>
+          <span class="chip">新概念：<b>采样分布（temperature / top_p）</b></span>
+          <span class="chip">对照：<code>tools/chat.py</code> · <code>inference/engine.py</code> · <code>out/*.pth</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>用 <code>MiniMindLLM.build()</code> 一次调用把<b>权重名</b>变成<b>可对话模型</b>，说清它替你收拢了哪几件脏活；</li>
+        <li>转动 <b>temperature / top_p</b> 旋钮，观察输出"性格"的规律变化，并用概率重分配解释它；</li>
+        <li>解释 <b>pretrain 基座</b>与 <b>full_sft 权重</b>的行为差异——为什么基座用对话模板问只会堆模板词；</li>
+        <li>从一条 <code>TypeError</code> 回溯出发，定位<b>测试桩与真实入口的签名缝隙</b>，写出精确的一行修复；</li>
+        <li>说出模型自称"Qwen / 通义千问"背后的数据来源真相。</li>
+      </ul>
+
+      <h2 id="weights-where">开跑之前：你的权重从哪来</h2>
+      <p>本课的实验对象是 <b>SFT 后的对话模型</b>，但不是每个环境里都恰好有它。三条路线任选其一，都能走完本课：</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w120">路线</th><th>怎么跑</th><th>你能看到什么</th></tr></thead>
+          <tbody>
+            <tr><td><b>A · 64M 正主</b><br>（本页素材来源）</td><td><code>out/</code> 里已有 <code>full_sft_768.pth</code>（本工作区自带完整训练产物；若你从零复现，M16 会训出你自己的），直接 <code>MiniMindLLM.build('full_sft')</code></td><td>通顺的中文自我介绍、清晰的温度"性格"分档——本页所有表格与引文都出自它</td></tr>
+            <tr><td><b>B · tiny 权重</b><br>（M01 冒烟产物）</td><td>6 行手动组装，见下方代码块</td><td><b>管线全通、旋钮可玩</b>，但 0.53M 参数只训了 6 步，输出是无意义词流（作者实测首句："的可以不技术提供在：为或者我而有通常……"）——温度对"乱度"的影响仍可观察，只是没有"性格"</td></tr>
+            <tr><td><b>C · 读档对照</b><br>（无 GPU/无权重）</td><td>精读本页 A 路线的实测表格与引文</td><td>观察结论是数据，读数据也是正式学习路径</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>路线 B 有个值得一趟的小弯路：你可能想写 <code>build('full_sft', hidden_size=64, num_hidden_layers=2)</code>——<b>会报 size mismatch</b>。因为 <code>build()</code> 只暴露了 hidden/层数两个形状参数，头数用的是 768 系默认值（8 头/4 KV 头），而冒烟配方里的 tiny 是 4 头/2 KV 头。于是你只好亲自体验一次"静态工厂 vs 裸构造器"的分工：</p>
+      <div class="codeblock"><div class="code-head"><span>路线 B · 裸构造器手动组装 tiny 引擎</span><span class="lang">python</span></div><pre class="code"><code>import torch
+from minimind_reborn.inference.engine import MiniMindLLM, _load_tokenizer
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+from minimind_reborn.models.weights import load_inference_weights
+
+cfg = MiniMindConfig(hidden_size=64, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2)
+model = MiniMindForCausalLM(cfg)                      # 头数写进配置，形状就对上了
+load_inference_weights(model, 'out/full_sft_64.pth', strict=True)
+dev = 'cuda' if torch.cuda.is_available() else 'cpu'
+llm = MiniMindLLM(model.to(dev).to(torch.float32), _load_tokenizer(), dev, torch.float32)</code></pre></div>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> build() 直连报 <code>size mismatch for model.layers.0.self_attn.q_norm.weight ... [16] vs [8]</code>；手动组装后正常生成（64 token 词流）。build() 不含头数参数是当前引擎的设计取舍——🏭 工业界的 <code>from_pretrained</code> 从权重自带的 config.json 读全部形状，就没有这类缝。</p>
+
+      <h2 id="temps">黑箱先行：三档温度，三种性格</h2>
+      <p>
+        这一节把模型当黑箱。同一个问题「你好，请介绍一下你自己」，同一份权重 <code>full_sft_768.pth</code>（SFT 后的 64M 模型），只动一个旋钮：temperature。三组输出全部来自作者实测，先看对照表：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w120">temperature</th><th>finish_reason</th><th>tokens</th><th>latency</th><th>性格速写</th></tr></thead>
+          <tbody>
+            <tr><td><code>0.1</code></td><td><code>length</code></td><td>128</td><td>1213ms</td><td>稳定但<b>模板化</b>：条目式自我介绍，句式单一，顶满 128 token 上限</td></tr>
+            <tr><td><code>0.85</code></td><td><code>length</code></td><td>128</td><td>771ms</td><td><b>流畅自然</b>，但仍有句内重复——「我是一个由jingyaogong创建的AI模型」说了两遍</td></tr>
+            <tr><td><code>1.5</code></td><td><code>stop</code></td><td>95</td><td>583ms</td><td><b>发散</b>：自称「小明」，语义漂移，提前撞上 eos（end of sequence，结束符 <code>&lt;|im_end|&gt;</code>）停止</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130]</b> seed=42 · top_p=0.95 · max_new_tokens=128 · full_sft_768.pth。采样有随机性，你复跑的字句几乎必然不同，但三档的<b>结构差异</b>（模板化 / 通顺 / 发散）稳定复现（作者同设置复跑核对）。</p>
+
+      <h3 id="temps-quotes">三段原文（… 为截断标记）</h3>
+      <p><b>temperature=0.1</b>——低温像个守规矩的客服，每句话都走同一模板：</p>
+      <pre class="term"><code><span class="out">你好！我是Qwen，一个由jingyaogong创造的AI模型。我被设计用于提供信息、解答问题、
+进行对话等，能够理解和生成人类语言。我的主要功能包括：1.**信息查询**…2.**知识检索**…
+3.**语言翻译**…4.**创意生成**…</span></code></pre>
+      <p><b>temperature=0.85</b>——中温最像"正常说话"，但请注意前两句的自我介绍几乎是复读：</p>
+      <pre class="term"><code><span class="out">你好！我是由jingyaogong创建的AI模型，我叫通义千问。我是一个由jingyaogong创建的AI模型，
+专注于提供高效、准确的信息和帮助。…我可以回答各种各样的问题…</span></code></pre>
+      <p><b>temperature=1.5</b>——高温开始"创作"：身份漂移成小明，句子逐渐不成话：</p>
+      <pre class="term"><code><span class="out">我叫小明，专注于计算机生成设计。我很高兴我的身份由中国软件设计语言为一枚特殊的代码，
+用于构建复杂的产品功能。…</span></code></pre>
+
+      <p>三个值得停下来的观察：</p>
+      <ol>
+        <li><b>身份随温度漂移</b>：Qwen → 通义千问 → 小明。"我是谁"不是写死的元数据，而是<b>一个个被采样出来的 token</b>——低温锁死高概率答案，高温把长尾身份词拉进候选池。</li>
+        <li><b>低温 ≠ 高质量</b>：0.1 档最稳也最啰嗦——沿最高概率的模板滑行，撞 128 token 上限（<code>finish=length</code>）才停。</li>
+        <li><b>高温提前停</b>：1.5 档 95 token 即 <code>finish=stop</code>——eos 的概率也被温度抬高，模型"自己决定"说完了；三档 latency 差异主要来自生成长度（95 vs 128）与首 token 开销，温度本身没有快慢。</li>
+      </ol>
+
+      <div class="callout tip">
+        <div class="co-title">💡 概念卡：采样分布——temperature 在重分配什么？</div>
+        <p>
+          模型每一步输出的不是"一个词"，而是<b>整个词表上的概率分布</b>。设某步的 logits（模型给词表里每个候选 token 的原始打分，softmax 归一化之前的分数）为 $z_i$，采样前先做温度缩放：$p_i(T) \propto \exp(z_i / T)$。
+        </p>
+        <ul>
+          <li><b>$T &lt; 1$ 锐化</b>：拉大 logit 差距，高概率词更垄断——输出稳定、模板化；</li>
+          <li><b>$T &gt; 1$ 平滑</b>：差距被压扁，长尾词有机会被采到——输出多样、易跑偏；</li>
+          <li><b>$T \to 0$ 等价贪心</b>：$\exp(z_i/T)$ 被最大 logit 完全主导，退化成 argmax。reborn 不用设 0.0001——<code>GenerateConfig</code> 约定 <code>temperature ≤ 0</code> 显式走贪心分支。</li>
+        </ul>
+        <p>
+          <b>top_p（核采样）是另一把刀</b>：词按概率降序排列，只保留累积概率达 $p$ 的最小前缀（$\sum_{i \in S_p} p_i \ge p$），尾部置 $-\infty$。temperature 决定分布的<b>形状</b>，top_p 决定候选池的<b>大小</b>——0.95 的 top_p 配 1.5 的温度，是"允许乱，但只乱到前 95% 概率质量以内"。同族还有 top_k（保留前 k 个，默认 50）与 repetition_penalty（已出现 token 降权，默认 1.0 关闭），M20 深讲。
+        </p>
+      </div>
+
+      <div class="callout note">
+        <div class="co-title">📐 严谨卡：采样顺序即契约</div>
+        <p>
+          五个旋钮不是随意叠加的。<code>inference/sampling.py</code> 模块注释写死了顺序：<b>temperature → repetition_penalty → top_k → top_p → 采样</b>。先平滑（温度）、再截断（top_k/top_p）——顺序不同结果不同：若先截断再升温，被截掉的长尾永远回不来。这段注释不是文档点缀，而是<b>行为契约</b>；<code>sample_token()</code> 逐行照此实现（<code>temperature ≤ 0</code> 直接 <code>torch.argmax</code>）。
+        </p>
+      </div>
+
+      <p>
+        最后是最有趣的一条：模型为什么自称 <b>Qwen / 通义千问</b>？因为它没说谎——SFT 训练数据正是从 Qwen 系列<b>蒸馏</b>来的（用大模型的回答训练小模型）。语料里充满"我是通义千问"式的自我介绍，模型把"自报家门"这个模式连同门牌号一起学了进来。一个模型的"自我认知"，就是它训练数据的一面镜子——M16 训你自己的 SFT、M18 讲蒸馏时，这条线会再接上。
+      </p>
+
+      <h2 id="build">让权重开口：MiniMindLLM.build()</h2>
+      <p>
+        上面那些输出是怎么跑出来的？只有一个入口：
+        <a href="codeview/src/minimind_reborn/inference/engine.py.html"><code>inference/engine.py</code></a>
+        里的静态工厂 <code>MiniMindLLM.build()</code>。给它一个权重名，它还你一个能生成、能对话的引擎门面——权重路径解析、模型构建、严格加载、精度回退、设备搬运，五件脏活一次收拢：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/inference/engine.py.html">src/minimind_reborn/inference/engine.py</a> · build() 主体（节选）</span><span class="lang">python</span></div><pre class="code"><code>build(weight="full_sft", *, hidden_size=768, num_hidden_layers=8, use_moe=False, ...)
+device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+cfg = MiniMindConfig(hidden_size=hidden_size, num_hidden_layers=num_hidden_layers, use_moe=use_moe)
+root = out_root if out_root is not None else envs.out_root()
+<span class="c"># 权重名 → 路径：命名约定 {weight}_{hidden_size}[_moe].pth，如 full_sft → out/full_sft_768.pth</span>
+weight_path = resolve_weight_path(weight, root, cfg.hidden_size, cfg.use_moe)
+if not weight_path.exists(): raise FileNotFoundError(f"权重文件不存在：{weight_path}。请先训练…")
+target_dtype = _resolve_dtype(dtype, device)  <span class="c"># 精度回退链：CPU 不支持 bf16 时回退 fp32，只警告一次</span>
+model = to_dtype(MiniMindForCausalLM(cfg), target_dtype)
+load_inference_weights(model, weight_path, strict=True)  <span class="c"># 严格模式：缺/多一个 key 都报错</span>
+model = to_device(model, device)
+if cfg.vocab_size != len(_load_tokenizer()):  <span class="c"># 双源断言：权重和 tokenizer 必须同源</span>
+    raise ValueError(f"模型词表({cfg.vocab_size}) 与 tokenizer 词表不一致——禁止混用")
+return cls(model, tokenizer, device, target_dtype)</code></pre></div>
+      <p>
+        三个设计点。<b>静态工厂与裸构造器分工</b>：<code>__init__</code> 只收现成组件，一切环境/路径/回退逻辑关在 <code>build()</code> 里——用户代码除 build 外不出现环境处理，门面模式（facade：给复杂子系统一个简单入口的设计模式）的教科书用法。<b>精度回退链</b>：首选 bf16，<code>_resolve_dtype()</code> 发现目标是 CPU 时回退 fp32（GPU 上 bf16 快且省显存）。<b>双源断言</b>：模型词表 6400 与 tokenizer 词表对不上直接拒绝——把"权重与 tokenizer 混用"这类最诡异的静默错误变成说人话的报错。
+      </p>
+
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：build() 与 from_pretrained</div>
+        <p>
+          HuggingFace 的 <code>from_pretrained()</code> 是同一思路的工业版：给个名字，路径/精度/设备/词表校验全部收拢。
+          官方 minimind 相反——每个脚本自己 <code>torch.load</code> + <code>.to(device)</code>，五份脚本五份重复。
+          reborn 把它收敛成库 API 后，<code>tools/chat.py</code>、<code>tools/eval_llm.py</code>、<code>tools/serve.py</code>
+          共享同一条加载语义——本课猎场正是"入口与引擎脱节"的反面教材。
+        </p>
+      </div>
+
+      <h3 id="weights-out">你手里有哪些权重</h3>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">ls out/*.pth</span>
+<span class="out">out/dpo_64.pth              out/full_sft_768_best.pth   out/pretrain_64_best.pth
+out/dpo_768.pth             out/pretrain_768_best.pth   out/pretrain_64.pth
+out/full_sft_64_best.pth    out/full_sft_64.pth         out/pretrain_768.pth
+out/full_sft_768.pth</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-29]</b> 共 10 个文件。命名即约定：<code>{阶段}_{hidden_size}[_best].pth</code>——64 是 M01 冒烟的 tiny 模型（约 0.53M 参数），768 是本课的 64M 正主（约 63.91M，账本见 M09）；<code>_best</code> 是验证集最优快照。</p>
+
+      <h3 id="build-run">跑起来：一段 15 行脚本</h3>
+      <p>这就是三档温度实验用的脚本（temperature 改成 0.1 / 0.85 / 1.5 各跑一次）：</p>
+      <div class="codeblock"><div class="code-head"><span>任意目录皆可 · 需在 Reproduce/minimind_reborn 下用 uv run 执行</span><span class="lang">python</span></div><pre class="code"><code>import torch
+from minimind_reborn.configuration.schemas import GenerateConfig
+from minimind_reborn.inference.engine import MiniMindLLM
+
+torch.manual_seed(42)          <span class="c"># 固定 torch 随机数流——采样真正消费的 RNG</span>
+llm = MiniMindLLM.build("full_sft")   <span class="c"># 权重名 → 引擎门面，一行</span>
+out = llm.generate_text(
+    [{"role": "user", "content": "你好，请介绍一下你自己"}],
+    GenerateConfig(temperature=0.85, top_p=0.95, max_new_tokens=128),
+)
+print(out["content"])           <span class="c"># 回复正文</span>
+print("[finish=%s tokens=%d latency=%sms]" % (out["finish_reason"], out["generated_tokens"], out["latency_ms"]))</code></pre></div>
+      <pre class="term"><code><span class="out">你好！作为一个AI，我实际上并不是一个真实的人，但我可以帮助你了解一些关于我的信息。
+
+我是一个由jingyaogong创建的高效小参数AI，专注于提供高效、准确的信息和帮助。我能够处理各种
+任务，从信息查询到日常问答，都是我的能力。此外，我还可以通过多种方式与用户互动，包括但不限于：
+- 通过语音或文字与用户进行交流
+- 通过文本描述和图像识别来提供信息
+[finish=length tokens=128 latency=1045.2ms]</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 你的输出字句会不同（原因见变式练习 1），但"通顺自我介绍 + 提到 jingyaogong + 结构化统计行"这三点应当一致。</p>
+      <p>
+        注意 <code>generate_text()</code> 返回的不是字符串而是<b>结构化 dict</b>：<code>content</code>、<code>reasoning_content</code>（思考段，无则 None）、<code>finish_reason</code>、<code>generated_tokens</code>、<code>latency_ms</code>，外加 <code>request_id</code> 追溯字段——对照表里那些数字的来源，不用拿秒表掐。
+      </p>
+
+      <h2 id="base-vs-sft">基座 vs SFT：只会文字接龙的模型</h2>
+      <p>
+        <code>out/</code> 里还有一位重要角色：<code>pretrain_768.pth</code>——只做过 pretrain 的<b>基座</b>。同一句「春天来了，」（seed=7，temperature=0.8，48 token），三个组合的实测：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w200">权重 + 入口路径</th><th>输出（截断）</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><code>pretrain_768.pth</code><br>bos（begin of sequence，开始符）+ 文本直拼<br>（<code>pretrain_mode=True</code>）</td>
+              <td>「天气开始变暖了。树木变得绿油油的，花儿也开始绽放。人们开始穿上轻便的衣服，去公园里散步。春天是一个充满生机和希望的季节」——<b>通顺的续写</b>，605ms</td>
+            </tr>
+            <tr>
+              <td><code>pretrain_768.pth</code><br>chat 模板路径<br>（<code>pretrain_mode=False</code>）</td>
+              <td>「reader<br><br>reader<br>reader<br>reader…」——<b>模板词堆叠</b>，48 个 token 全是同一个词，592ms</td>
+            </tr>
+            <tr>
+              <td><code>full_sft_768.pth</code><br>chat 模板路径</td>
+              <td>「春天来了，万物复苏，大地开始苏醒。春天的风轻轻吹拂，带来一丝丝的生机与希望。春天的阳光，温暖而明媚，让人感受到」——<b>按对话格式接话</b>，646ms</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130]</b> seed=7 · temperature=0.8 · top_p=0.95 · max_new_tokens=48。堆叠的具体词随 seed 漂移——另一批次实测堆出过 <code>person / user / person / content</code> 交替的角色词，但"堆叠"结构不变。</p>
+      <p>
+        基座的训练目标只有一件事：<b>给定前文预测下一 token</b>（文字接龙）。它没学过"对话"这个游戏——pretrain 语料里混着大量 chat 格式文本，所以它"见过"模板词、堆得出来，但没学过"在 assistant 标记后以助手身份回答"。用对话模板问基座，等于递给它一张对话表格让它续写，它只会把见过的表格词一个个填下去；而 <code>pretrain_mode=True</code> 的直拼路径（拼 <code>bos + 文本</code>，不套模板）只要求续写——基座唯一会玩的游戏——反而通顺。SFT 的意义就在第三行：同一张模板，full_sft 知道怎么接。<code>tools/chat.py</code> 里 <code>pretrain_mode = "pretrain" in args.weight</code> 就是在自动做这个降级。M16 你会亲手训出这两类权重再对照——这张表将从"现象"变成你自己的结论。
+      </p>
+
+      <h2 id="bug">🔍 bug 猎场：过测的桩，跑不起来的入口</h2>
+      <p>
+        本课高潮。README 的 quick start 里写着 <code>uv run python tools/chat.py --weight full_sft</code>，
+        我们照做——用管道喂一句话（免交互）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">echo "你好" | uv run python tools/chat.py --weight full_sft</span>
+<span class="out">输入问题开始对话（Ctrl-C 退出）</span>
+<span class="err">💬: Traceback (most recent call last):</span>
+<span class="err">  File ".../tools/chat.py", line 45, in main</span>
+<span class="err">    text = session.respond(query, open_thinking=args.open_thinking)</span>
+<span class="err">  File ".../src/minimind_reborn/inference/chat.py", line 73, in respond</span>
+<span class="err">    out = self.generate_fn(inputs["input_ids"], inputs["attention_mask"], self.gen)</span>
+<span class="err">TypeError: MiniMindLLM.generate_tokens() takes 3 positional arguments but 4 were given</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 路径以 <code>...</code> 缩略，其余逐字——注意：不是"输出质量差"，是<b>第一句话就崩</b>，而 <code>make test</code> 此刻全绿。</p>
+
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：keyword-only 参数遇上位置传参</div>
+        <ul class="pit-stages">
+          <li class="sym"><code>TypeError: generate_tokens() takes 3 positional arguments but 4 were given</code>——对话入口输入第一句即崩，回溯直指 <code>chat.py:73</code>。</li>
+          <li class="cause">
+            两个签名对不上。真实入口（engine.py:119 起）把 <code>attention_mask</code> 设为 <b>keyword-only</b>（星号之后）：<code>generate_tokens(self, input_ids, gen, *, attention_mask=None, ...)</code>——位置参数只有 2 个（含 self 共 3）。而 <code>ChatSession.respond()</code>（chat.py:73）用三个位置参数调用，第 2 个本想传 mask、实际落进 <code>gen</code> 槽位，第 3 个无处安放，于是报"4 were given"（self + 3）。
+          </li>
+          <li class="fix">
+            一行修复（chat.py:73，改为按引擎真实签名传参）：
+            <code>self.generate_fn(inputs["input_ids"], self.gen, attention_mask=inputs["attention_mask"])</code>。
+            但注意：只改这一行还不够——测试桩的签名也得同步（见下）。这正是本猎场的通用教训所在。
+          </li>
+        </ul>
+      </div>
+
+      <p>把两边签名并排放，缝隙一目了然：</p>
+      <div class="codeblock"><div class="code-head"><span>同一接口的两种视角 · engine.py 的定义 vs chat.py:73 的调用</span><span class="lang">python</span></div><pre class="code"><code><span class="c"># 真实入口（engine.py）：星号之后 = keyword-only，只能用关键字传</span>
+def generate_tokens(self, input_ids, gen, *, attention_mask=None, max_new_tokens=None, ...):
+<span class="c">#                          ↑位置1    ↑位置2   ↑ 不能按位置填</span>
+
+<span class="c"># 调用方（chat.py:73）：三个位置参数硬塞</span>
+out = self.generate_fn(inputs["input_ids"], inputs["attention_mask"], self.gen)
+<span class="c">#                  ↑ 填进 input_ids  ↑ 本想传 mask，实际落进 gen 槽位  ↑ 第 4 个位置参数：无处安放</span></code></pre></div>
+      <p>
+        顺带回答"为什么当初要设 keyword-only"：引擎方法后续还会长出 <code>streamer</code>、<code>cancel</code> 等可选参数，星号挡住的就是"按位置盲填、悄悄错位"——把这次的<b>静默语义错误</b>升级成<b>响亮的类型错误</b>。
+      </p>
+
+      <h3 id="why-tests-miss">为什么 49 个测试没拦住它</h3>
+      <p>
+        打开 <a href="codeview/tests/test_inference/test_chat_budget.py.html"><code>tests/test_inference/test_chat_budget.py</code></a>，
+        ChatSession 的测试全部用<b>桩函数</b>（stub）注入生成能力：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/tests/test_inference/test_chat_budget.py.html">tests/test_inference/test_chat_budget.py</a> · 桩（节选）</span><span class="lang">python</span></div><pre class="code"><code>def _stub_generate(eos_id: int):
+    <span class="s">"""恒定返回 3 个 token 后 eos 的桩生成函数。"""</span>
+    def generate_fn(input_ids, attention_mask, gen):   <span class="c"># ← 桩的签名：3 个位置参数</span>
+        ...
+    return generate_fn</code></pre></div>
+      <p>
+        桩的签名是 <code>(input_ids, attention_mask, gen)</code>——<b>恰好匹配 chat.py:73 的错误调用方式</b>，而不匹配真实引擎。于是测试验证的命题是"ChatSession 能和一个长得像调用方假设的桩合作"，而非"能与真实 <code>generate_tokens</code> 合作"。49 个测试没有任何一条把两者<b>接在一起</b>跑过——引擎有测试、ChatSession 有测试，缝隙恰好长在两者之间。这就是<b>测试桩与真实入口之间的缝隙</b>。修复必须两边同步：调用方改成关键字传参后，桩签名也要改成 <code>(input_ids, gen, attention_mask=None)</code>，否则绿灯瞬间变红灯——裂缝只是换了个方向。
+      </p>
+
+      <div class="callout danger">
+        <div class="co-title">🛑 红线：注入的依赖，接口契约必须锁定</div>
+        <p>
+          依赖注入（把 generate_fn 传给 ChatSession）换来可测性，也给了"桩可以为所欲为"的自由。契约不锁定，桩会漂离真实接口——测试照绿，线上照崩。两种低成本锁定：① <b>契约测试</b>——断言 <code>inspect.signature(MiniMindLLM.generate_tokens)</code> 与 ChatSession 的调用形式匹配；② <b>加一条真实（tiny）引擎 + ChatSession 的接线测试</b>，让缝隙每次都被踩到。M01 的 make smoke 给训练链做了接线冒烟，推理链没有对应物——此 bug 在 M02 呈现、M20 回收修复。
+        </p>
+      </div>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · 模型为什么自称 Qwen / 通义千问？温度调到 1.5 又自称小明，说明什么？</summary>
+        <div class="quiz-body">
+          <p>提示：想想 SFT 训练数据是谁生成的，「自我认知」这几个字对模型意味着什么。</p>
+          <div class="quiz-ans">
+            <p><b>答案：</b>SFT 数据是从 Qwen 蒸馏来的，语料里充满教师模型的自我介绍，模型连"门牌号"一起学了进来——自报家门暴露了数据来源。而 1.5 档自称小明说明：身份不是存储的元数据，而是<b>每步被采样出来的 token</b>，温度一高，长尾身份词就进了候选池。</p>
+            <p><b>机制：</b>「我是___」的下一个 token 分布里，「Qwen」在 SFT 语料加持下是高概率峰——温度缩放改变的正是这个分布的形状。</p>
+            <p class="back">答错回看：<a href="#temps">三档温度，三种性格</a> 的观察 1 与其后"自称 Qwen 的真相"段。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · temperature 趋近 0 等价于什么采样？reborn 里怎么触发它？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>等价于<b>贪心解码</b>（greedy / argmax）——$\exp(z_i/T)$ 被最大 logit 完全主导，每步取概率最大的 token。reborn 的约定写在 <code>GenerateConfig</code>：<code>temperature ≤ 0</code>（直接给 0 即可）显式走贪心分支，<code>sample_token()</code> 里对应 <code>torch.argmax</code>，不进多项式采样。</p>
+            <p class="back">答错回看：<a href="#temps">概念卡：采样分布</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · bug 猎场的通用教训是什么？只修 chat.py:73 一行为什么不够？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>测试桩与真实入口之间的缝隙——桩验证不了它没模拟的签名契约。只改调用方一行，测试桩 <code>(input_ids, attention_mask, gen)</code> 立刻与新的关键字传参方式错位，绿灯变红灯；修复必须连同桩签名（以及任何其他调用方）一起同步。根治靠锁定契约：签名断言，或一条真实引擎 + ChatSession 的接线测试。</p>
+            <p class="back">答错回看：<a href="#why-tests-miss">为什么 49 个测试没拦住它</a> 与 <a href="#bug">红线卡</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · 同一问题跑两次，输出会完全一样吗？</div>
+        <div class="ex-body">
+          <p>
+            用 <a href="#build-run">15 行脚本</a>以 temperature=0.1 跑两次，再以 0.85 跑两次（什么都不改，直接重跑）。先想清楚随机性从哪来：采样链消费的是 torch 的 RNG（<code>torch.multinomial</code>），而 <code>tools/chat.py</code> 里那行 <code>random.seed(random.randint(0, 2**31))</code> 重播种的是 <b>Python 标准库 random</b>——采样路径根本不经过它。
+          </p>
+          <div class="ex-predict"></div>
+          <p>写下预测：脚本里 <code>torch.manual_seed(42)</code> 固定不变，两次输出会逐字相同吗？低温对和高温对，哪对差异更大？</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>
+              <b>规则：</b>固定 torch 种子后，同机同环境理论上输出一致；不固定种子，低温档两次输出<b>差异小</b>——分布接近 argmax，随机数扰动可选项少；高温档差异<b>大</b>——长尾词都在候选池里，一个随机数就能换一条路。
+            </p>
+            <p>
+              <b>实测彩蛋</b>：作者在 GPU 上同 seed 复跑两次（seed=42，temperature=0.85），输出前十几个字相同后<b>分叉</b>。原因不在采样，在硬件：bf16 CUDA 矩阵乘的归约顺序非确定，logits 的微小抖动被自回归逐 token 放大。想逐位复现要么上 CPU，要么接受"同 seed ≈ 同输出、不保证逐位"——这也是页面引文都注明"你复跑的字句几乎必然不同"的原因。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · 把 top_p 从 0.95 压到 0.5，高温会收敛吗？</div>
+        <div class="ex-body">
+          <p>
+            取<a href="#build-run">15 行脚本</a>，把 <code>GenerateConfig(temperature=0.85, top_p=0.95, …)</code>
+            改成 <code>temperature=1.5, top_p=0.5</code>，重跑（可与 1.5/0.95 对照各跑几次）。
+          </p>
+          <div class="ex-predict"></div>
+          <p>预测：temperature 仍是 1.5，但 top_p 减半——输出会和 1.5/0.95 那段一样发散，还是更接近中低温的表现？想清楚采样顺序（先温度后截断）再下判断。</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>
+              <b>观察：</b>发散明显收敛——句子基本成话，身份回归"AI 助手"类高概率自述，1.5/0.95 档那种「1a,_a:1；2h+」式乱码碎片消失（作者实测 1.5/0.5 输出语义完整；字句以你跑的为准）。
+            </p>
+            <p>
+              <b>机制：</b>顺序是 temperature → top_k → top_p → 采样：温度先把分布<b>拉平</b>，top_p 再砍掉累积概率 50% 之后的<b>整个长尾</b>。top_p 是温度的安全网——温度决定"允许乱"，top_p 决定"乱的上界"。若顺序颠倒（先截断再升温），被砍掉的长尾永远回不来——这就是"采样顺序即契约"的原因（回看<a href="#temps">严谨卡</a>）。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M02 验收</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下执行（绕开有 bug 的 chat.py，直接走引擎门面，非交互可判定）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+import torch
+from minimind_reborn.configuration.schemas import GenerateConfig
+from minimind_reborn.inference.engine import MiniMindLLM
+torch.manual_seed(42)
+llm = MiniMindLLM.build('full_sft')
+out = llm.generate_text([{'role': 'user', 'content': '你好，请介绍一下你自己'}],
+    GenerateConfig(temperature=0.85, top_p=0.95, max_new_tokens=128))
+print(out['content'])
+print('[finish=%s tokens=%d latency=%sms]' % (out['finish_reason'], out['generated_tokens'], out['latency_ms']))"</span></code></pre>
+          <ul class="pass-criteria">
+            <li>打印出一段以「你好」或「我」开头的<b>通顺中文自我介绍</b>（字句随机，应提到 jingyaogong 或"AI"，无 reader 式堆叠）；</li>
+            <li>末行形如 <code>[finish=length tokens=128 latency=…ms]</code>——finish 与 tokens 必须是 <code>length</code> 与 <code>128</code>（latency 只看量级）；</li>
+            <li>全程无 <code>Traceback</code>；</li>
+            <li>附加项：<code>echo 你好 | uv run python tools/chat.py --weight full_sft</code> 打出与页面一致的 <code>TypeError</code>——你也复现了猎场。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按报错第一行分流）</summary>
+            <p>
+              <b>FileNotFoundError（权重文件不存在）</b> → <code>ls out/*.pth</code> 看清单；768 正主需按 README 完整训练，或退而用 <code>MiniMindLLM.build('full_sft', hidden_size=64, num_hidden_layers=2)</code> 验收 tiny 权重（finish/tokens 标准不变，通顺度会下降——tiny 模型没训够）；
+              <b>ModuleNotFoundError</b> → 确认在仓库根目录且 <code>uv sync --extra dev</code> 跑完；
+              <b>无 GPU</b> → build() 自动回退 CPU + fp32，命令照跑，延迟升到秒级，绿灯标准不变；
+              <b>chat.py 的 TypeError</b> → 不是环境问题，那就是猎场本体，去<a href="#bug">对照</a>。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>logits</dt><dd>模型对词表每个候选 token 的原始打分（softmax 归一化之前的分数）；采样旋钮全部作用在它身上。</dd>
+          <dt>采样 <span class="en">sampling</span></dt><dd>从下一个 token 的概率分布中随机抽取一个 token；temperature/top_k/top_p 都是重塑这个分布的旋钮。</dd>
+          <dt>temperature</dt><dd>温度缩放 $p_i \propto \exp(z_i/T)$：$T&lt;1$ 锐化，$T&gt;1$ 平滑，$T \to 0$ 退化为贪心；reborn 中 ≤0 显式走贪心分支。</dd>
+          <dt>top_p <span class="en">nucleus sampling</span></dt><dd>核采样：按概率降序保留累积概率达 p 的最小前缀，尾部置 $-\infty$；温度的"安全网"，默认 0.95。</dd>
+          <dt>top_k</dt><dd>只保留 logits 前 k 大的候选（默认 50），0 关闭；与 top_p 同族，按个数而非概率质量截断。</dd>
+          <dt>贪心解码 <span class="en">greedy decoding</span></dt><dd>每步取 argmax 的确定性解码：稳定但易重复，等价 temperature→0 的极限。</dd>
+          <dt>蒸馏 <span class="en">distillation</span></dt><dd>用大模型（教师）的输出训练小模型（学生）；本课模型自称 Qwen 即因 SFT 语料蒸馏自 Qwen，M18 专讲。</dd>
+          <dt>静态工厂 <span class="en">static factory</span></dt><dd>以类方法（如 <code>MiniMindLLM.build()</code>）收拢全部构造脏活、返回现成实例；裸构造器只收组件，便于注入与测试。</dd>
+          <dt>keyword-only 参数</dt><dd>Python 函数星号之后的参数，只能用关键字传递；把"按位置错位传参"变成显式类型错误。</dd>
+          <dt>测试桩 <span class="en">test stub</span></dt><dd>测试中替身被注入依赖的简化实现；桩与真实接口的契约不锁定，就会产生"测试绿、线上崩"的缝隙。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+  };
+</script>
+<script async src="assets/vendor/tex-svg.js"></script>
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

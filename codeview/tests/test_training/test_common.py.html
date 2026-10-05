@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>test_common.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
+<link rel="stylesheet" href="../../../assets/course.css?v=3">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../../index.html">← 课程地图</a>
+  <span class="cv-crumb">Reproduce/minimind_reborn/tests/test_training/test_common.py</span>
+  <span class="cv-meta">90 行 · 3KB · minimind_reborn</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>tests/test_training/test_common.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;训练基件单元测试：LR 纯函数 / decay 分组 / checkpoint 六件套。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import math
+
+import torch
+
+from minimind_reborn.training.common.lr import get_lr
+from minimind_reborn.training.common.optim import configure_optimizers
+
+
+def test_lr_official_cosine_floor_semantics():
+    &quot;&quot;&quot;官方 get_lr：lr*(0.1 + 0.45*(1+cos(pi*t)))；无 warmup 时曲线完全一致。&quot;&quot;&quot;
+    lr = 5e-4
+    for step, total in [(0, 100), (25, 100), (50, 100), (77, 100), (100, 100)]:
+        expected = lr * (0.1 + 0.45 * (1 + math.cos(math.pi * step / total)))
+        assert abs(get_lr(step, total, lr) - expected) &lt; 1e-12
+
+
+def test_lr_warmup_and_clamp():
+    base = 1e-3
+    assert abs(get_lr(0, 100, base, warmup_steps=10) - base * 0.1) &lt; 1e-12  # warmup 首步
+    assert abs(get_lr(9, 100, base, warmup_steps=10) - base * 1.0) &lt; 1e-12  # warmup 末步
+    assert abs(get_lr(100, 100, base) - base * 0.1) &lt; 1e-12  # 余弦地板
+    assert abs(get_lr(500, 100, base) - base * 0.1) &lt; 1e-12  # 越界钳制
+
+
+def test_optimizer_decay_groups():
+    &quot;&quot;&quot;≥2 维 decay；bias 与 1 维（norm）不 decay（training §3 分组不变量）。&quot;&quot;&quot;
+    model = torch.nn.Sequential(
+        torch.nn.Linear(8, 8),  # weight(2D)→decay, bias(1D)→no_decay
+        torch.nn.LayerNorm(8),  # weight/bias 均 1D → no_decay
+    )
+    opt = configure_optimizers(model, lr=1e-3, weight_decay=0.01)
+    decay_group, no_decay_group = opt.param_groups
+    assert len(decay_group[&quot;params&quot;]) == 1
+    assert len(no_decay_group[&quot;params&quot;]) == 3
+    assert decay_group[&quot;weight_decay&quot;] == 0.01
+    assert no_decay_group[&quot;weight_decay&quot;] == 0.0
+
+
+def test_checkpoint_six_pack_roundtrip(tmp_path):
+    &quot;&quot;&quot;六件套（模型/优化器/进度/配置/最佳/RNG）落盘 + 跨卡数 step 换算 + RNG 位精确恢复。&quot;&quot;&quot;
+    from minimind_reborn.training.common.checkpoint import load_checkpoint, save_checkpoint
+
+    model = torch.nn.Linear(8, 8)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    scaler = torch.amp.GradScaler(enabled=False)
+    torch.manual_seed(42)
+    save_checkpoint(
+        tmp_path / &quot;ck.pth&quot;,
+        model=model,
+        optimizer=optimizer,
+        scaler=scaler,
+        epoch=1,
+        step=7,
+        config_snapshot={&quot;a&quot;: 1},
+        best_val_loss=0.5,
+    )
+    data = load_checkpoint(tmp_path / &quot;ck.pth&quot;, world_size=2)
+    assert data[&quot;step&quot;] == 3  # 7 * world1 // world2（官方换算语义）
+    assert data[&quot;epoch&quot;] == 1
+    assert data[&quot;config&quot;] == {&quot;a&quot;: 1}
+    assert data[&quot;best_val_loss&quot;] == 0.5
+    for key in (&quot;model&quot;, &quot;optimizer&quot;, &quot;scaler&quot;, &quot;rng&quot;, &quot;world_size&quot;):
+        assert key in data
+    assert torch.equal(torch.get_rng_state(), data[&quot;rng&quot;][&quot;torch&quot;])
+
+
+def test_extra_states_roundtrip(tmp_path):
+    from minimind_reborn.training.common.checkpoint import load_checkpoint, save_checkpoint
+
+    model = torch.nn.Linear(4, 4)
+    optimizer = torch.optim.AdamW(model.parameters())
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
+    save_checkpoint(
+        tmp_path / &quot;c.pth&quot;,
+        model=model,
+        optimizer=optimizer,
+        scaler=None,
+        epoch=0,
+        step=1,
+        config_snapshot={},
+        best_val_loss=None,
+        extra_states={&quot;scheduler&quot;: scheduler},
+    )
+    data = load_checkpoint(tmp_path / &quot;c.pth&quot;)
+    assert &quot;scheduler&quot; in data</code></pre></div>
+</main>
+<script src="../../../assets/course.js?v=3"></script>
+</body>
+</html>

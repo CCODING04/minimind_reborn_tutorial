@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>verify_env.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=3">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">Reproduce/minimind_reborn/tools/verify_env.py</span>
+  <span class="cv-meta">31 行 · 1KB · minimind_reborn</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>tools/verify_env.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;环境验证脚本（env-dependencies §2：装完 torch 必跑）。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import argparse
+
+
+def main() -&gt; None:
+    parser = argparse.ArgumentParser(description=&quot;torch/CUDA 环境验证&quot;)
+    parser.add_argument(&quot;--allow-cpu&quot;, action=&quot;store_true&quot;, help=&quot;允许无 GPU 环境（CI 用）&quot;)
+    args = parser.parse_args()
+
+    import torch
+
+    print(&quot;torch:&quot;, torch.__version__, &quot;| cuda runtime:&quot;, torch.version.cuda)
+    print(&quot;GPU 可用:&quot;, torch.cuda.is_available())
+    if torch.cuda.is_available():
+        print(&quot;设备数:&quot;, torch.cuda.device_count())
+        print(&quot;设备名:&quot;, torch.cuda.get_device_name(0))
+    elif not args.allow_cpu:
+        raise SystemExit(
+            &quot;torch.cuda.is_available()=False：极可能装到了 CPU wheel 或驱动不匹配。&quot;
+            &quot;请查 nvidia-smi 的驱动 CUDA 版本后按 skills/ml-dev-spec env-dependencies §2 重装&quot;
+        )
+    x = torch.randn(1024, 1024, device=&quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;)
+    print(&quot;矩阵乘 OK:&quot;, (x @ x).sum().item() == (x @ x).sum().item())
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=3"></script>
+</body>
+</html>

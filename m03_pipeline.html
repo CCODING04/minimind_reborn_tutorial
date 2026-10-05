@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M03 · 全链路地图：一次请求的一生 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m03">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第一篇 开箱</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M03</span><span>第一篇 · 开箱：用</span></div>
+        <h1>全链路地图：一次请求的一生</h1>
+        <p class="lede">
+          M02 你已经和模型说上话了；这一课产出一张<b>七站地图</b>——从你输入一句话到 token 回来，
+          经过哪七站、每站对应 reborn 哪个文件。这张图贴在后续模块开头：
+          M05–M09 解剖⑤站，M06 专攻 KV cache，M20 深潜整条推理栈。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M02</b></span>
+          <span class="chip">时长：<b>约 50 分钟</b></span>
+          <span class="chip">新概念：<b>自回归解码 · 全链路分层</b></span>
+          <span class="chip">对照：<code>inference/</code> 全目录 + <code>models/</code> 总览</span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li><b>默画</b>七站地图：每站的名字、职责与对应源码文件；</li>
+        <li>解释<b>自回归解码</b>循环——为什么每步只喂一个新 token、为什么 decode 只解码生成段；</li>
+        <li>说出推理栈四层（sampling → generator → chat → engine）的边界与"内核只认 token"的含义；</li>
+        <li>跑一次<b>七站巡游</b>拿到七行证据，并预测 + 验证 <code>temperature=0</code> 的行为变化。</li>
+      </ul>
+
+      <h2 id="map">开篇地图：七站巡游</h2>
+      <p>先全景后细节。一次请求依次经过七站，右边标了 reborn 里真正干活的文件：</p>
+      <pre class="ascii"><code>你输入「你好」
+  ↓ ① tokenizer 编码     assets/tokenizer + HF tokenizers       「你好，世界」→ [1968, 294, 1950]
+  ↓ ② chat 模板渲染       inference/chat.py  render_chat         消息→&lt;|im_start|&gt;user\n你好&lt;|im_end|&gt;…
+  ↓ ③ engine 门面         inference/engine.py build/generate_tokens   权重 · dtype 回退 · 设备
+  ↓ ④ generator 内核      inference/generator.py generate       预分配 KV cache · 增量喂入 · 停止三重
+  ↓ ⑤ model 前向          models/model.py + attention/layers    RoPE · GQA · SwiGLU 逐层
+  ↓ ⑥ sampling 采样       inference/sampling.py 纯函数链        logits → 下一个 token id
+  ↓ ⑦ decode + 后处理     tokenizer.decode + split_reasoning    token → 文本（拆 &lt;think&gt;）
+模型输出「你好！有什么…」</code></pre>
+      <p>
+        注意方向性：①②③只在<b>请求开始时跑一次</b>；④⑤⑥组成的循环每生成一个 token 转一圈，⑦收尾。
+        tokenizer 往返可以放心依赖——「你好，世界」→ <code>[1968, 294, 1950]</code>，decode 完全还原，词表 6400
+        <span class="prov">[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130]</span>。
+      </p>
+      <p>
+        地图⑤站里那一排缩写是模型内部构件的名字，第二篇会逐个拆解——<b>RoPE</b>（旋转位置编码，让模型知道词的先后）/ <b>GQA</b>（分组查询注意力，多头注意力的省显存版）/ <b>SwiGLU</b>（门控前馈网络）/ <b>RMSNorm</b>（归一化层），分别对应 M05–M08。本课不需要打开它们，只需知道"这些零件都住在⑤站的前向里"。
+      </p>
+
+      <div class="callout tip">
+        <div class="co-title">💡 概念卡：自回归解码（autoregressive decoding）</div>
+        <p>
+          一句话：<b>用自己已经生成的输出，当作下一步的输入</b>。模型每次只预测<b>下一个 token</b>，
+          拼回序列尾部再预测下一个，直到触发停止。自回归严格串行：第 N 个 token 依赖前 N−1 个——
+          这正是 KV cache（M06）存在的原因：历史算过的，不必每步重算。
+        </p>
+      </div>
+
+      <h2 id="stations">逐站讲解</h2>
+      <p>每站三样：职责一句话、精选代码、一个"停一下"观察点。</p>
+
+      <h3 id="st1">① tokenizer：把字变成 id</h3>
+      <p>
+        <b>职责：</b>文本 ↔ id 的双向翻译。模型眼里没有字，只有 0~6399 的整数。词表在
+        <a href="codeview/assets/tokenizer/tokenizer.json.html"><code>assets/tokenizer/</code></a>，
+        特殊 token 常量在 <code>constants.py:9-11</code>：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>constants.py:9-11 · 特殊 token（与官方 minimind 一致）</span><span class="lang">python</span></div><pre class="code"><code>PAD_TEXT = "&lt;|endoftext|&gt;"   <span class="c"># pad：凑批用的填充位</span>
+BOS_TEXT = "&lt;|im_start|&gt;"  <span class="c"># bos：序列开始</span>
+EOS_TEXT = "&lt;|im_end|&gt;"    <span class="c"># eos：对话结束——④站停止三重的靶子</span></code></pre></div>
+      <p>
+        <b>停一下：</b>「你好，世界」5 个字符变成 <b>3 个 token</b>（你好 / ， / 世界）——
+        token ≠ 字符也不等于词，是 BPE 学的片段（M10 专讲）。记住 <code>294</code>，⑥站它作为 top1 再次登场。
+      </p>
+
+      <h3 id="st2">② chat 模板：把对话变成模型认识的格式</h3>
+      <p>
+        <b>职责：</b>把 <code>messages</code> 渲染成带特殊标记的文本，让模型知道"谁在说话、该谁说了"。
+        <a href="codeview/src/minimind_reborn/inference/chat.py.html"><code>inference/chat.py</code></a>
+        的 <code>render_chat</code>（chat.py:10）只调 tokenizer 自带模板：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>chat.py:10-25 · 模板进 tokenizer_config.json（单一事实源）</span><span class="lang">python</span></div><pre class="code"><code>def render_chat(tokenizer, messages, *, tools=None, open_thinking=False,
+                add_generation_prompt=True) -&gt; str:
+    """消息列表 → chat template 文本。"""
+    return tokenizer.apply_chat_template(
+        messages, tokenize=False,
+        add_generation_prompt=add_generation_prompt,
+        tools=tools, open_thinking=open_thinking,
+    )</code></pre></div>
+      <p>对 <code>[{"role": "user", "content": "你好"}]</code> 的真实渲染结果（§tour ②行同款）：
+      <code>'&lt;|im_start|&gt;user\n你好&lt;|im_end|&gt;\n&lt;|im_start|&gt;assistant\n&lt;think&gt;\n\n&lt;/think&gt;\n\n'</code>
+      <span class="prov">[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130]</span></p>
+      <p>
+        <b>停一下：</b>结尾停在 <code>&lt;|im_start|&gt;assistant\n</code> 加<b>空的</b> <code>&lt;think&gt;</code> 块——
+        模型接手"该 assistant 说话了"的语境（模板 M10 拆）。本课只需确认：<b>②站输出文本，下一步才编码成 id</b>。
+      </p>
+
+      <h3 id="st3">③ engine 门面：把脏活收拢到一个入口</h3>
+      <p>
+        <b>职责：</b>读 checkpoint → 建模型 → 加载权重 → 精度回退 → 设备搬运，一次收拢。
+        <a href="codeview/src/minimind_reborn/inference/engine.py.html"><code>inference/engine.py</code></a>
+        的静态工厂 <code>build</code>（engine.py:43）一行拿到能用的引擎：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>engine.py:59-96 · build 精选：环境脏活全在这层</span><span class="lang">python</span></div><pre class="code"><code>device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+...
+target_dtype = _resolve_dtype(dtype, device)      <span class="c"># 精度回退链（engine.py:206）</span>
+model = to_dtype(MiniMindForCausalLM(cfg), target_dtype)
+load_inference_weights(model, weight_path, strict=True)
+model = to_device(model, device)
+<span class="c"># 还有跨源校验：模型词表 ≠ tokenizer 词表直接报错（engine.py:96-100）</span></code></pre></div>
+      <p>
+        <b>停一下：</b><code>_resolve_dtype</code> 是<b>回退链</b>——首选 bf16，CPU 不支持回退 fp32 并<b>只警告一次</b>
+        （engine.py:206-212）。无 CUDA 的机器上跑巡游，③行打出 <code>dtype=torch.float32</code>——不是 bug，是链在退。
+      </p>
+
+      <h3 id="st4">④ generator 内核：自回归主循环</h3>
+      <p>
+        <b>职责：</b>只认 token id 的生成循环——预分配 KV cache、增量喂入、三重停止。
+        <a href="codeview/src/minimind_reborn/inference/generator.py.html"><code>inference/generator.py</code></a>
+        的 <code>generate</code>（generator.py:30）是全栈心脏：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>generator.py:47-99 · 主循环精选（shape 注释）</span><span class="lang">python</span></div><pre class="code"><code>cache = KVCache(num_layers=model.config.num_hidden_layers,       <span class="c"># 8 层 → 第 0 维</span>
+                max_batch_size=batch,                            <span class="c"># 1</span>
+                max_seq_len=prompt_len + steps,                  <span class="c"># 4+6=10：容量=prompt+上限</span>
+                num_kv_heads=model.config.num_key_value_heads,   <span class="c"># 4（GQA 共享 KV 组）</span>
+                head_dim=model.config.head_dim,                  <span class="c"># 96</span>
+                dtype=next(model.parameters()).dtype, device=device)
+
+for _ in range(steps):
+    past_len = cache.cur_len
+    feed = input_ids if past_len == 0 else input_ids[:, past_len:]
+    <span class="c"># 增量喂入：第 1 步喂整段 prompt (1,4)（prefill，预填充），之后每步只喂 1 列 (1,1)</span>
+    logits = model(feed, attention_mask=attention_mask,
+                   past_key_values=cache).logits[:, -1, :]   <span class="c"># (1, 6400)：只要最后一位</span>
+    ...
+    input_ids = torch.cat([input_ids, next_token], dim=-1)  <span class="c"># (1, T) → (1, T+1)</span>
+    finished |= next_token.squeeze(-1).eq(eos_token_id)     <span class="c"># 只认"生成位"的 eos</span>
+    if bool(finished.all()):                                <span class="c"># 停止三重之 2：batch 全停才 break</span>
+        break</code></pre></div>
+      <p>
+        <b>停止三重</b>（generator.py:1-7 文件头，缺一不可）：<b>token 级</b>——eos 掩码要求"生成位 ∧
+        token ∈ 停止集合"，prompt 自带的 eos 不算；<b>循环级</b>——batch 全部序列结束才 break（支持长短不一）；
+        <b>后处理级</b>——解码后按 eos 截断残留（⑦站 <code>_decode_truncated</code>，engine.py:198）：
+        已结束序列在循环里被冻结为 eos 占位（generator.py:88），decode 前再切一刀。
+      </p>
+      <p>
+        <b>停一下：</b>对照实测 <code>k.shape=(8, 1, 10, 4, 96)</code> 反推五维——8 层、batch 1、
+        容量 10（prompt 4 + 上限 6）、4 组 KV 头、head_dim 96。容量循环<b>前</b>定死、零再分配，
+        新 token 只是往空位<b>原地写入</b>一列（kv_cache.py:44 的 <code>copy_</code>）——为何快过 torch.cat，测验 2 见。
+      </p>
+
+      <h3 id="st5">⑤ model 前向：8 层 Transformer 的一次计算</h3>
+      <p>
+        <b>职责：</b>id 序列进、每个位置对 6400 词的打分（logits）出。
+        <a href="codeview/src/minimind_reborn/models/model.py.html"><code>models/model.py</code></a>：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>model.py:106-119 · MiniMindModel.forward 精选</span><span class="lang">python</span></div><pre class="code"><code>cos, sin = (self.freqs_cos[cache_start : cache_start + seq_length],   <span class="c"># RoPE 预计算表只切片</span>
+            self.freqs_sin[cache_start : cache_start + seq_length])  <span class="c">#     不重算</span>
+hidden_states = self.dropout(self.embed_tokens(input_ids))   <span class="c"># (b, seq) → (b, seq, 768)</span>
+for layer in self.layers:                                    <span class="c"># 8 × MiniMindBlock</span>
+    hidden_states = layer(hidden_states, (cos, sin),
+                          cache=past_key_values, cache_start=cache_start,
+                          attention_mask=attention_mask)
+if past_key_values is not None:
+    past_key_values.advance(seq_length)                      <span class="c"># 前向结束才统一推 KV 游标</span>
+hidden_states = self.norm(hidden_states)                     <span class="c"># final RMSNorm → (b, seq, 768)</span>
+<span class="c"># ForCausalLM 再过 lm_head（model.py:160）：(b, seq, 768) → (b, seq, 6400)</span></code></pre></div>
+      <pre class="ascii"><code>input_ids (b, seq) ─► embed_tokens(6400→768) ─► 8 × Block ─► norm ─► lm_head(768→6400)
+                                                                    └─ generator 只取 [. , -1, :] → (b, 6400)
+
+Block 内部（model.py:40-48，pre-norm 残差 ×2；embed 权重与 lm_head 共享，model.py:144）：
+x ──┬──────────────────────────┐
+    │                          ▼
+    └──► RMSNorm ─► Attention ─►(+)   x₁ = x + attn(norm(x))    # GQA · RoPE
+x₁ ──┬──────────────────────────┐
+     │                          ▼
+     └──► RMSNorm ─► FFN(SwiGLU)─►(+)  x₂ = x₁ + ffn(norm(x₁))</code></pre>
+      <p>
+        <b>停一下：</b>weight tying——<code>lm_head.weight</code> 与 <code>embed_tokens.weight</code> 是<b>同一块</b>张量
+        （model.py:144），6400×768 省约 4.9M 参数（总 63.91M 的一部分，M09 记账）。
+        RoPE 频率表同样"预计算 + 切片视图"（model.py:106-107）——与 KV cache 同宗的模式。
+      </p>
+
+      <h3 id="st6">⑥ sampling：从 6400 个候选里挑一个</h3>
+      <p>
+        <b>职责：</b>把一位 logits 变成一个 token id。
+        <a href="codeview/src/minimind_reborn/inference/sampling.py.html"><code>inference/sampling.py</code></a>
+        是一串<b>纯函数</b>——每个 ≤10 行、张量进张量出、无副作用、可独立单测（sampling.py:1 即契约）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>sampling.py · 五连纯函数（顺序即契约）</span><span class="lang">python</span></div><pre class="code"><code>def apply_temperature(logits, temperature):        <span class="c"># ① logits / T：改分布形状</span>
+    if temperature &lt;= 0: return logits               <span class="c">#    ≤0 语义是"贪心"，原样返回</span>
+    return logits / temperature
+
+<span class="c"># apply_top_k：③ 前 k 大保留，其余 -inf；apply_top_p：④ 核采样，质量 ≤ p 的前缀</span>
+
+def sample_token(logits, gen, generator=None):      <span class="c"># ⑤ 单步采样入口 → (b, 1)</span>
+    logits = apply_temperature(logits, gen.temperature)
+    logits = apply_top_k(logits, gen.top_k)
+    logits = apply_top_p(logits, gen.top_p)
+    if gen.temperature &lt;= 0:
+        return torch.argmax(logits, dim=-1, keepdim=True)  <span class="c"># 贪心：必选第一名</span>
+    probs = torch.softmax(logits, dim=-1)
+    return torch.multinomial(probs, num_samples=1, generator=generator)  <span class="c"># 按概率抽签</span></code></pre></div>
+      <p>
+        完整顺序（sampling.py:3 注释即契约）：<b>temperature → repetition_penalty → top_k → top_p → 采样</b>。
+        repetition_penalty 需要"已见序列"这个随步变化的状态，由 generator 在调用前施加
+        （generator.py:82-83；默认 1.0 = 关闭）。<b>为什么顺序是契约：</b>temperature 用除法 <code>z_i / T</code>
+        改变 logits 相对间距（分布变尖/变平），top_k/top_p 按<b>改完之后</b>的排序截断——
+        若先截断再调温，被截的尾巴会以不同比例"回来"，旋钮互相污染。先定型、再截断（测验 3 见）。
+      </p>
+      <p>
+        <b>停一下（进阶观察）：</b>并排读 generator.py:81 与 sampling.py:64——
+        <code>apply_temperature</code> 在 generate 路径上被调<b>两次</b>（实测：max_new_tokens=2 时插桩计数 4 次；
+        等效缩放 logits/T²，T=0.85 时有效温度 ≈0.72，比旋钮读数更"尖"）
+        <span class="prov">[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130 · apply_temperature 换计数包装插桩]</span>。
+        每个函数单独看都对——"纯函数都对、串起来的契约有缝隙"，M20 立案。
+      </p>
+
+      <h3 id="st7">⑦ decode 与后处理：把 id 变回字</h3>
+      <p>
+        <b>职责：</b>生成段 id → 文本，顺带拆 <code>&lt;think&gt;</code>。engine 文本层只解码<b>生成段</b>
+        （engine.py:173-175）再走两道后处理：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>engine.py:198-203 + chat.py:28-37 · 后处理两连</span><span class="lang">python</span></div><pre class="code"><code>new_tokens = out["sequences"][0, prompt_len:]   <span class="c"># 只取生成段 (n,)</span>
+text = self._decode_truncated(new_tokens)       <span class="c"># 停止三重之 3：按 eos 截断后再 decode</span>
+reasoning, content = split_reasoning(text)      <span class="c"># 拆 &lt;think&gt;...&lt;/think&gt; 前缀</span>
+
+def split_reasoning(text):                      <span class="c"># chat.py:28</span>
+    if "&lt;think&gt;" in text and "&lt;/think&gt;" in text:
+        reasoning = text.split("&lt;think&gt;", 1)[1].split("&lt;/think&gt;", 1)[0].strip()
+        content = text.split("&lt;/think&gt;", 1)[1].lstrip("\n")
+        return reasoning, content
+    return None, text                            <span class="c"># 无 think 标签：(None, 原文)</span></code></pre></div>
+      <p>
+        <b>停一下：</b>巡游里 pretrain 输出没有 think 标签，<code>split_reasoning</code> 返回
+        <code>(None, 原文)</code>——对"没有的东西"保持无操作；decode 用 <code>skip_special_tokens=True</code>，
+        模板标记不漏进答案。
+      </p>
+
+      <h2 id="layers">分层思想：内核只认 token，文本层才认字</h2>
+      <p>七站收拢成四层，每层只对上一层负责：</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">层</th><th>文件</th><th>语言</th><th>边界</th></tr></thead>
+          <tbody>
+            <tr><td><b>sampling</b></td><td><code>inference/sampling.py</code></td><td>logits → 一个 id</td><td>不知道模型与 tokenizer</td></tr>
+            <tr><td><b>generator</b>（内核）</td><td><code>inference/generator.py</code></td><td>id 序列 → id 序列</td><td>只认 token：不 decode、不渲染</td></tr>
+            <tr><td><b>chat</b>（文本/会话）</td><td><code>inference/chat.py</code></td><td>messages → 文本</td><td>模板、历史、eos 截断、think 拆分</td></tr>
+            <tr><td><b>engine</b>（门面/工厂）</td><td><code>inference/engine.py</code></td><td>一句话 → 结构化结果</td><td>权重/精度/设备脏活</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout note">
+        <div class="co-title">📐 概念卡："内核只认 token，文本层才认字"</div>
+        <p>
+          generator 的签名里只有 id 张量和结构化的 <code>GenerationOutput</code>（generator.py:21-26）——
+          它<b>完全不知道 tokenizer 的存在</b>。收益双向：内核可用假 id 序列独立单测（不用加载权重）、
+          可被任何 tokenizer 复用；所有"字的语义"上浮到 chat/engine，改模板不用碰内核。
+          这是 llm-inference 规范的核心分层：<b>数与字分离</b>。
+          反例是把 decode 写进生成循环——每生成一个 token 碰一次字符串，流式、批处理、内核单测全被绑架。
+        </p>
+      </div>
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：vLLM / SGLang 的内核-服务分层</div>
+        <p>
+          工业推理引擎同款分层：vLLM 的 engine core（调度 + paged KV cache）与前端 API server 分离，
+          SGLang 的 scheduler 与 tokenizer/frontend 分离——服务层管文本，内核层管 token。
+          reborn 把同一思想缩微到四个文件；RL 训练还给 rollout 留了可切换的 SGLang 后端
+          （<code>training/rollout.py:120</code> 的 <code>SGLangRolloutEngine</code>，
+          <code>create_rollout_engine</code> 在 rollout.py:223 按配置切换）——内核只认 token，
+          换执行引擎对训练循环透明。M19 见。
+        </p>
+      </div>
+
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：拿 pretrain 权重套 chat 模板对话</div>
+        <ul class="pit-stages">
+          <li class="sym">用 <code>out/pretrain_768.pth</code> 按 M02 姿势对话，回答驴唇不对马嘴——甚至冒英文。</li>
+          <li class="cause">base 权重没在 chat 模板格式上训练过，<code>&lt;|im_start|&gt;user</code> 对它只是普通 token；它只会文本续写。</li>
+          <li class="fix">两种都合法，但要<b>配套</b>：pretrain 权重用 <code>pretrain_mode=True</code>（bos + 裸文本，engine.py:159-160、chat.py:68）；要真对话换 <code>full_sft_768.pth</code>。实测（temperature=0 固定，排除采样随机性）：</li>
+        </ul>
+        <pre class="term"><code><span class="out">chat 模板姿势  → 'response:\n\n"I\'m sorry, but I can\'t assist with that. It\'s important to take'</span>
+<span class="ok">pretrain_mode  → '，我有一个问题想问。你好，欢迎来到这里。请问有什么问题需要我的帮助吗？我最近'</span></code></pre>
+        <p class="prov">[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130 · pretrain_768.pth · max_new_tokens=24]</p>
+      </div>
+
+      <h2 id="tour">动手巡游：七行证据</h2>
+      <p>
+        把脚本存到仓库<b>外</b>（如 <code>/tmp/tour.py</code>，临时文件不进 reborn 仓库），在
+        <code>Reproduce/minimind_reborn/</code> 下运行。权重用 <code>out/pretrain_768.pth</code>
+        （base 模型走 bos + 裸文本，见上面坑卡），七站各打印一行证据：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/tour.py · M03 巡游：一次请求的一生</span><span class="lang">python</span></div><pre class="code"><code><span class="c"># M03 巡游：一次请求的一生——七站各打印一行证据（权重 out/pretrain_768.pth）</span>
+import torch
+from torch.nn.functional import softmax
+from minimind_reborn.configuration.schemas import GenerateConfig
+from minimind_reborn.inference.chat import render_chat, split_reasoning
+from minimind_reborn.inference.engine import MiniMindLLM
+from minimind_reborn.inference.sampling import apply_temperature, apply_top_k, apply_top_p
+from minimind_reborn.models.kv_cache import KVCache
+
+llm = MiniMindLLM.build("pretrain")  <span class="c"># ③ engine 门面：权重→模型→dtype 回退→设备</span>
+ids = llm.tokenizer("你好，世界")["input_ids"]  <span class="c"># ①</span>
+print(f"① encode 「你好，世界」→ {ids} → decode 还原「{llm.tokenizer.decode(ids)}」 vocab={len(llm.tokenizer)}")
+print(f"② render {render_chat(llm.tokenizer, [{'role': 'user', 'content': '你好'}])!r}")
+print(f"③ engine device={llm.device} dtype={llm.dtype} 参数={sum(p.numel() for p in llm.model.parameters()) / 1e6:.2f}M")
+inputs = llm.tokenizer(llm.tokenizer.bos_token + "大语言模型", return_tensors="pt").to(llm.device)  <span class="c"># (1, 4)</span>
+gen = GenerateConfig(temperature=0.85, top_k=50, top_p=0.95, max_new_tokens=6)
+with torch.inference_mode():
+    out = llm.generate_tokens(inputs["input_ids"], gen)  <span class="c"># ④ generator 内核</span>
+    c = llm.model.config
+    cache = KVCache(num_layers=c.num_hidden_layers, max_batch_size=1,  <span class="c"># 复刻 generator.py 的分配参数</span>
+                    max_seq_len=4 + gen.max_new_tokens, num_kv_heads=c.num_key_value_heads,
+                    head_dim=c.head_dim, dtype=llm.dtype, device=llm.device)
+    print(f"④ generator·KV 预分配 k.shape={tuple(cache.k.shape)} 生成 {out['generated_ids'].shape[1]} tokens finish={out['finish_reasons'][0]}")
+    logits = llm.model(**inputs).logits[:, -1, :]  <span class="c"># ⑤ 一次前向 → (1, 6400)</span>
+    print(f"⑤ forward logits.shape={tuple(logits.shape)}（hidden=768 × 8 层 → 每步只留最后一位）")
+    t0 = softmax(logits[0], -1).topk(5)  <span class="c"># ⑥ 链前</span>
+    s = apply_top_p(apply_top_k(apply_temperature(logits, gen.temperature), gen.top_k), gen.top_p)  <span class="c"># 顺序契约</span>
+    fmt = lambda t: [f"{i}:{v:.3f}" for i, v in zip(t.indices.tolist(), t.values.tolist())]
+    print(f"⑥ sample 链前 top5 {fmt(t0)}\n          链后 top5 {fmt(softmax(s[0], -1).topk(5))}（temperature→top_k→top_p 后重归一化）")
+    text = llm.tokenizer.decode(out["sequences"][0, 4:].tolist(), skip_special_tokens=True)  <span class="c"># ⑦ 只解码生成段</span>
+    print(f"⑦ decode sequences[0, 4:] → {text!r} → split_reasoning={split_reasoning(text)[0]!r}")</code></pre></div>
+      <p>真实运行（<code>Reproduce/minimind_reborn/</code> 下）：</p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/tour.py</span>
+<span class="out">① encode 「你好，世界」→ [1968, 294, 1950] → decode 还原「你好，世界」 vocab=6400</span>
+<span class="out">② render '&lt;|im_start|&gt;user\n你好&lt;|im_end|&gt;\n&lt;|im_start|&gt;assistant\n&lt;think&gt;\n\n&lt;/think&gt;\n\n'</span>
+<span class="out">③ engine device=cuda dtype=torch.bfloat16 参数=63.91M</span>
+<span class="out">④ generator·KV 预分配 k.shape=(8, 1, 10, 4, 96) 生成 6 tokens finish=length</span>
+<span class="out">⑤ forward logits.shape=(1, 6400)（hidden=768 × 8 层 → 每步只留最后一位）</span>
+<span class="out">⑥ sample 链前 top5 ['294:0.080', '357:0.068', '410:0.053', '3013:0.039', '372:0.039']</span>
+<span class="out">          链后 top5 ['294:0.157', '357:0.131', '410:0.099', '3013:0.068', '372:0.068']（temperature→top_k→top_p 后重归一化）</span>
+<span class="out">⑦ decode sequences[0, 4:] → '可以用来做什么？大' → split_reasoning=None</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130 · out/pretrain_768.pth]</b>
+      ①~⑥ 确定性（重跑逐位一致）；⑦ 带随机性（multinomial 抽签），另两次运行得到 <code>'是什么？大语言模型（'</code>、
+      <code>'可以通过什么方式学习？大'</code>——属正常。CPU 上③行会是 <code>dtype=torch.float32</code>（精度回退链）。</p>
+      <p>两处证据值得多看一眼：</p>
+      <ul>
+        <li><b>⑥行数字</b>：链前 top1 是 <code>294</code>——①站「你好<b>，</b>世界」的那个逗号；截断重归一化后 top5 概率几乎翻倍（0.080→0.157），但<b>排名不变</b>——截尾改变概率质量，不改变次序。</li>
+        <li><b>⑦行 finish=length</b>：6 步没抽中 eos，按步数上限停——停止三重"前两条都没触发"的常态分支（④行形状解读见 <a href="#st4">st4 停一下</a>）。</li>
+      </ul>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · 为什么 decode 只解码 sequences[0, prompt_len:]，而不是整个序列？</summary>
+        <div class="quiz-body">
+          <p>提示：<code>sequences</code> 怎么拼出来的？回顾 generator.py:89 的 <code>torch.cat</code>。</p>
+          <div class="quiz-ans">
+            <p><b>答案：</b><code>sequences = prompt + 生成段</code>——generator 每步把新 token <code>torch.cat</code> 回输入（generator.py:89），返回<b>完整</b>序列；不切片就 decode 等于把提问复读一遍再接答案。生成段 eos 后的冻结占位残留由 <code>_decode_truncated</code>（停止三重之 3）解码前截掉。</p>
+            <p class="back">答错回看：<a href="#st7">⑦ decode 与后处理</a> 与 <a href="#st4">④ generator 内核</a> 的 cat 一行。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · KV cache 预分配为什么省时间省显存？对比"每步 torch.cat 重建整段历史"。</summary>
+        <div class="quiz-body">
+          <p>本课只要直觉答案，深挖留给 M06（5 个专门测试）。</p>
+          <div class="quiz-ans">
+            <p><b>答案：</b><code>torch.cat</code> 每步<b>新分配</b>更大张量、拷贝全部历史——到第 N 步累计拷 <code>O(N²/2)</code> 份 KV，频繁分配还让显存碎片化。预分配一次到位后：写入是原地切片 <code>copy_</code>，读取是前缀<b>视图</b>（零拷贝，kv_cache.py:47-49），全程零再分配。直觉版：先买好整面书架，每来一本书插进去，而不是每来一本重抄全部。</p>
+            <p class="back">答错回看：<a href="#st4">④ generator 内核</a> 的 KVCache 构造注释与"停一下"。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · 采样五连里，temperature 为什么必须放在 top_k / top_p 之前？</summary>
+        <div class="quiz-body">
+          <p>提示：top_k / top_p 都是排序后截断——对<b>哪个</b>分布排序？</p>
+          <div class="quiz-ans">
+            <p><b>答案：</b>契约是"先改分布形状，再截断"。temperature 用除法 <code>z_i / T</code> 改变相对间距——分布变尖或变平；top_k/top_p 随后按<b>改完之后</b>的排序决定谁留下。反过来先截断再调温：softmax 重新分配概率，被截的尾巴以不同比例"回来"，候选集随 temperature 漂移——旋钮互相污染。先定型、再截断，旋钮才正交。</p>
+            <p class="back">答错回看：<a href="#st6">⑥ sampling</a> 的"为什么顺序是契约"段。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · 把巡游脚本的 temperature 改成 0</div>
+        <div class="ex-body">
+          <p>复制 <code>/tmp/tour.py</code> 为 <code>/tmp/tour_greedy.py</code>，把 <code>temperature=0.85</code>
+            改成 <code>temperature=0</code>，重跑。</p>
+          <div class="ex-predict"></div>
+          <p>写下预测：⑥行 top5 概率分布会怎么变？⑦行文本会怎么变——每次运行还一样吗？第一个 token 是谁？</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>作者实测（同环境、同权重）：</p>
+            <pre class="term"><code><span class="out">temperature=0.85: '有多精度？大'      ← 每次不同（另一次是 '是什么？大语言模型（'）</span>
+<span class="ok">temperature=0:    '，请生成一首关于'  ← 连跑两次逐位一致</span></code></pre>
+            <p class="prov">[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130]</p>
+            <p>
+              <b>机制：</b>① 概率分布<b>不变</b>——<code>apply_temperature</code> 对 ≤0 原样返回 logits
+              （sampling.py:14-16），top5 仍是 <code>294:0.080, ...</code> 那组数；
+              ② 采样切到<b>贪心 argmax</b>（sampling.py:67-68）：必选第一名——294，
+              即①站见过的那个<b>逗号</b>「，」，实测输出恰好以「，」开头；
+              ③ <code>multinomial</code> 不再被调用，输出跨运行确定。
+              一句话：<b>分布没变，变的是"怎么挑"</b>。顺带：贪心对⑥站的双温度缝隙免疫——argmax 对正数缩放不变。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M03 验收</div>
+        <div class="acc-body">
+          <p>把 <a href="#tour">巡游脚本</a>存为 <code>/tmp/tour.py</code>，在 <code>Reproduce/minimind_reborn/</code> 下执行：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/tour.py</span></code></pre>
+          <ul class="pass-criteria">
+            <li>①~⑦ <b>七行证据齐全</b>，无 <code>Traceback</code>；</li>
+            <li>④行含 <code>k.shape=(8, 1, 10, 4, 96)</code>（768 权重；结构对得上即可）；</li>
+            <li>⑥行链前/链后各 5 项且链后数值<b>更大</b>（截断后重归一化）；</li>
+            <li>完成变式练习的预测与观察。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按报错第一行分流）</summary>
+            <p>
+              <b>FileNotFoundError（权重不存在：out/pretrain_768.pth）</b> → 跑过 M01 冒烟的用
+              <code>MiniMindLLM.build("pretrain", hidden_size=64)</code>（吃 <code>out/pretrain_64.pth</code>，
+              数字变小但结构不变）；或按 M02 取得 768 权重。
+              <b>ModuleNotFoundError（minimind_reborn）</b> → 没在 reborn 目录下运行，<code>cd Reproduce/minimind_reborn</code> 或先 <code>uv sync --extra dev</code>。
+              <b>CPU / 显存不足</b> → <code>MiniMindLLM.build("pretrain", device="cpu")</code>，
+              ③行显示 dtype 回退为 fp32——③站知识点的现场演示。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>自回归解码 <span class="en">autoregressive decoding</span></dt><dd>用已生成输出作为下一步输入、一次一个 token 滚动生成：第 N 个依赖前 N−1 个。</dd>
+          <dt>token</dt><dd>模型眼里的最小文本单元：0~6399 的整数 id；由 BPE 词表双向翻译（M10 专讲）。</dd>
+          <dt>chat 模板 <span class="en">chat template</span></dt><dd>把 messages 渲染成带特殊标记文本的约定（谁在说话、该谁说），事实源在 tokenizer_config.json。</dd>
+          <dt>KV cache</dt><dd>缓存注意力历史 Key/Value 的预分配张量组，让每步只算新增 token（M06 专讲）。</dd>
+          <dt>logits</dt><dd>模型对每个词表项的未归一化打分，(b, vocab)；softmax 之后才是概率。</dd>
+          <dt>dtype 回退链</dt><dd>精度逐级降级：首选 bf16，不支持时回退并只警告一次（CPU → fp32）。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

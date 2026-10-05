@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M21 · 评测与官方对照 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m21">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第五篇 推理与评测</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M21</span><span>第五篇 · 推理与评测</span></div>
+        <h1>评测与官方对照：给模型打分，与官方面对面</h1>
+        <p class="lede">
+          M20 把推理栈从采样纯函数一路打通到 engine 门面与 serve——"能不能生成"已经解决。
+          本课问下一个问题：<b>生成得好不好</b>？学会用三把尺给模型打分，真跑固定题评测，
+          读档多轮/长上下文套件，最后与官方 minimind 权重面对面对照——并把弱项变成下一轮改进的假设清单。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M20</b>（推理栈全通，本课给它装上仪表盘）</span>
+          <span class="chip">时长：<b>约 65 分钟</b></span>
+          <span class="chip">新概念：<b>评测指标（困惑度 / 固定题集）· 对照实验</b></span>
+          <span class="chip">对照：<code>tools/eval_llm.py</code> · <code>tools/eval_multiturn.py</code> · <code>tools/compare_official.py</code> · <code>tools/convert_model.py</code> · <code>out/official_compare.md</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>说出三把评测尺（自动指标 / 固定题集 / 专项套件）各自量什么、量不到什么，为一个弱项选对尺子；</li>
+        <li>真跑 <code>eval_llm.py</code> 拿到 8 题回答与吞吐数字，并用双跑对照暴露"不固定种子的分数漂移"有多大；</li>
+        <li>从多轮/长上下文存档里摘出跨轮记忆与长度塌缩的关键数字，指出它们为什么是数据问题而不是实现问题；</li>
+        <li>复述官方对照的方法论（同题集 + strict 载入 + 控制变量），解释 fp32 逐位一致如何给"双实现等价"盖章；</li>
+        <li>把 .pth 权重导出成 HF/Qwen3 格式并用 transformers 加载生成，把评测发现整理成可实验的弱项假设清单。</li>
+      </ul>
+
+      <h2 id="rulers">评测的三把尺</h2>
+      <p>
+        "模型变好了吗"是训练侧最常问也最容易答错的问题。M13 说过 train loss 只能和同口径的自己比，
+        M16 也只是拿它读曲线——要跨模型、跨阶段比较，需要专门的<b>评测指标</b>（本课第一个新概念：
+        把模型能力压缩成一个可比较的数字的方法）。reborn 的工具箱里躺着三把尺，先把它们摆开：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">尺子</th><th class="u-w200">怎么量</th><th>量得到</th><th>量不到（诚实边界）</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><b>① 自动指标</b><br>困惑度 / 重复率</td>
+              <td>对一批固定文本算损失换困惑度；对生成文本数重复片段</td>
+              <td>"下一个词猜得准不准"（困惑度）、"是否复读"（重复率）——便宜、可全自动、跨模型可比</td>
+              <td>答案<b>对不对</b>：猜词很准的模型可以满嘴流畅的错话（幻觉，M02 见过），两把指标都看不见</td>
+            </tr>
+            <tr>
+              <td><b>② 固定题集</b><br>eval_llm 的 8 题</td>
+              <td>同一组问题、同一种子与采样参数，逐题生成并肉眼对照</td>
+              <td>答题结构、知识性、代码能力、格式——<b>输出可直接阅读比较</b></td>
+              <td>题目是"可见"的（可被针对性优化/背题）；8 题样本小，只能定性不能打分</td>
+            </tr>
+            <tr>
+              <td><b>③ 专项套件</b><br>多轮 / 长上下文</td>
+              <td>构造有唯一正确答案的剧本（召回关键词、长度阶梯、越界输入）</td>
+              <td>跨轮记忆、长度塌缩点、边界行为——单轮评测的盲区</td>
+              <td>覆盖面窄：套件外的能力（工具调用、推理链）一概不测</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        三把尺互补而非互替——下面逐把上手。先把①的换算补齐：<b>困惑度</b>（perplexity，PPL）M16 用 e^loss
+        换算过一次（$ \mathrm{PPL} = e^{\mathcal{L}} $，"平均在多少个候选词里犹豫"），本课把它升级成
+        <b>跨模型比较的正式指标</b>：同一批评测文本上算 token 平均交叉熵再取指数，谁低谁的语言建模更准。
+        ①里的第二位是 <b>n-gram 重复率</b>：把生成文本切成 n 个连续字符的小片（n-gram），数重复的占比——
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/tools/eval_compare.py.html">tools/eval_compare.py</a> · ngram_rep_rate（字符级 3-gram）</span><span class="lang">python</span></div><pre class="code"><code>def ngram_rep_rate(text: str, n: int = 3) -> float:
+    """字符级 n-gram 重复率：1 - 去重后/总数（0=无重复，1=完全循环）。"""
+    cleaned = text.replace(" ", "").replace("\n", "")   # 先去掉空白：排版不算内容重复
+    if len(cleaned) < n + 1:
+        return 0.0
+    grams = [cleaned[i : i + n] for i in range(len(cleaned) - n + 1)]  # 滑窗切 3 字符片
+    return 1 - len(set(grams)) / len(grams)             # 去重后占比 ↓ = 重复 ↑</code></pre></div>
+      <p>
+        通顺的中文 3-gram 重复率通常在 0.1~0.2（常用词组天然重复），0.4 以上基本是复读循环，1.0 是
+        完全卡死。它自动、廉价、可量化——本课后面所有"复读了吗"的判断都用它。
+      </p>
+      <div class="callout note">
+        <div class="co-title">📐 严谨：为什么三把尺都替代不了"人看输出"</div>
+        <p>
+          工业界的完整评测分三层：自动指标（PPL、重复率）→ 客观基准（lm-evaluation-harness 上的
+          ceval / arc 等选择题集，有唯一答案可自动判分）→ 人工/模型裁判（LLM-as-judge 给开放式回答打分）。
+          官方 minimind-3 发布时用了第二层（<b>[存档 重构报告 §9.4]</b>：ceval 24.89 / arc 28.49）；
+          reborn 没有接入 harness，本课的三把尺都在第一、三层之间——每个数字都要记得它是<b>哪把尺量出来的</b>，
+          越界解读（拿 PPL 排名"谁更聪明"）是评测最常见的翻车姿势。
+        </p>
+      </div>
+
+      <h2 id="run">eval_llm 实测：8 题、吞吐与一次诚实的复跑</h2>
+      <p>
+        第二把尺的主战场是 <code>tools/eval_llm.py</code>——固定 8 题自动评测 + 吞吐统计，全文 52 行。
+        先读它的 CLI 再动手（这也是本课程的惯例：先确认参数名，别凭感觉敲）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/eval_llm.py --help</span>
+<span class="out">usage: eval_llm.py [-h] [--weight WEIGHT] [--hidden-size HIDDEN_SIZE]
+                   [--num-hidden-layers NUM_HIDDEN_LAYERS] [--use-moe]
+                   [--temperature TEMPERATURE] [--top-p TOP-P]
+                   [--max-new-tokens MAX_NEW_TOKENS] [--pretrain-mode]</span></code></pre>
+      <p>
+        正文只有两段：一个写死的 <code>PROMPTS</code> 列表（8 题：特长 / 天空为什么蓝 / 写斐波那契函数 /
+        光合作用 / 下雨出门 / 猫狗比较 / 什么是机器学习 / 推荐中国美食——刻意覆盖闲聊、知识、
+        代码、建议四类），和一段循环：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/tools/eval_llm.py.html">tools/eval_llm.py</a> · 主循环（节选）</span><span class="lang">python</span></div><pre class="code"><code>llm = MiniMindLLM.build(args.weight, hidden_size=..., num_hidden_layers=..., use_moe=...)
+gen = GenerateConfig(temperature=args.temperature, top_p=args.top_p, max_new_tokens=...)
+for prompt in PROMPTS:                                  # 8 题固定，逐题走 M20 的完整推理栈
+    result = llm.generate_text([{"role": "user", "content": prompt}], gen)
+    total_tokens += result["generated_tokens"]           # 吞吐分子
+    total_time += result["latency_ms"] / 1000            # 吞吐分母
+    print(f"💬: {prompt}\n🧠: {result['content']}\n[{result['generated_tokens']} tok | ...]")
+print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</code></pre></div>
+      <p>
+        注意两件事：<b>它复用 M20 的全部成果</b>——engine 门面（M02/M20）、KV cache 推理、采样链、
+        停止三重，评测脚本自己一行生成逻辑都没有；<b>它不设置随机种子</b>——这句话先记下，一会儿要还的。
+        真跑（默认 full_sft 权重、T=0.85、top_p=0.95、每题上限 256 token）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/eval_llm.py --weight full_sft</span>
+<span class="out">💬: 为什么天空是蓝色的</span>
+<span class="out">🧠: 天空之所以呈现出蓝色，是因为大气层对光的散射。当太阳光穿过地球大气层时，大气层中的分子和粒子会将光线分为不同颜色的光……（瑞利散射的解释框架成立，细节有错：说"蓝光波长较短、散射效率较低"——因果反了）</span>
+<span class="out">[204 tok | 1288ms | stop]</span>
+<span class="out">💬: 请用Python写一个计算斐波那契数列的函数</span>
+<span class="out">🧠: 当然可以。以下是一个简单的Python函数…… def fibonacci(n): fib_sequence = [0, 1] … return fib_sequence …… 例如 fibonacci(10) 返回 [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]</span>
+<span class="out">[216 tok | 1301ms | stop]</span>
+<span class="out">💬: 解释一下"光合作用"的基本过程</span>
+<span class="out">🧠: ……2. **暗反应**……二氧化碳和水（3碳logged）反应生成碳和氧（6氢-12碳logged q）……（前半段正确，后半段术语崩坏成"6碳logged"式的胡话）</span>
+<span class="out">[256 tok | 1573ms | length]</span>
+<span class="out">💬: 推荐一些中国的美食</span>
+<span class="out">🧠: 中国美食丰富多样，以下是一些值得尝试的中国美食：1. 北京烤鸭 2. 京兆鸡 3. 麻婆豆腐 4. 糖醋里脊 …… 28 个编号菜品，"麻婆豆腐"出现 3 次、"糖醋里脊/剁椒鱼头/炸酱面"各 2 次</span>
+<span class="out">[256 tok | 1620ms | length]</span>
+<span class="dim">……（其余 4 题略：特长题跑满 256 tok，机器学习题结构完整）……</span>
+<span class="ok">平均吞吐: 153.8 tokens/s</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · T=0.85 · top_p=0.95]</b>
+      全程 15.2 秒。两个必须交代的实情：①当时 GPU 正被一场并行长训占着（利用率 99%），吞吐绝对值偏低，
+      专用卡会明显更高——<b>吞吐数字离开负载环境没有意义</b>；②<code>out/full_sft_768.pth</code> 正是那场长训
+      （runs/sft_full_mt/20261001_010937，多轮增强语料 sft_t2t_mt、训练窗 1536）的中途快照（2026-10-01 10:59
+      保存，epoch 1 进行到 277k/421k 步）——<b>被测对象是移动靶</b>。旧存档报告里的 full_sft 数字对应更早的
+      era1 权重（已归档 out/archive/era1/），两者不可混比。诚实标注时间戳，是评测的第一课。</p>
+      <p>
+        输出本身已经是一张<b>弱项速写</b>：斐波那契题完整正确（代码可运行、示例输出也对）；"天空蓝"
+        框架对细节错；光合作用题后半段术语崩坏（小模型的典型幻觉：格式完美、内容虚构）；美食题 28 项
+        编号列表出现成对重复且跑满 256 token（<code>finish=length</code>：被长度上限掐停而不是自己说了
+        EOS，M20 的停止三重之二）。这些观察先记账，<a href="#weakness">第 6 节</a>会变成假设清单。
+      </p>
+
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：不固定种子，"分数"会漂——同一命令跑两遍，重复率差 25%</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            想拿 3-gram 重复率当回归指标，于是把今天和昨天的两次 <code>eval_llm.py</code> 输出各算一个数对比，
+            "从 0.168 恶化到 0.210"——但模型一个字没改。作者实测同一命令背靠背跑两遍（同权重同参数）：
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th class="u-w130">同一命令第 N 次</th><th class="u-w130">3-gram 重复率</th><th class="u-w130">平均长度</th><th class="u-w130">stop / length</th><th>平均吞吐</th></tr></thead>
+                <tbody>
+                  <tr><td>第 1 遍</td><td>0.168</td><td>326 字</td><td>3 / 5</td><td>153.8 tok/s</td></tr>
+                  <tr><td>第 2 遍</td><td>0.210</td><td>371 字</td><td>1 / 7</td><td>178.8 tok/s</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </li>
+          <li class="cause">
+            <code>eval_llm.py</code> 走 M20 的采样生成（temperature 0.85：每步按概率抽样），且全程没有
+            <code>torch.manual_seed</code>——题目固定了，<b>采样路径</b>没固定。所有派生数字（重复率、长度、
+            吞吐）因此都是随机变量的单次抽样：差距小的"改进"完全会被这层噪声淹没。
+          </li>
+          <li class="fix">
+            三选一：<b>固定种子</b>（对齐 <code>eval_multiturn.py</code> 的做法——它每轮生成前
+            <code>torch.manual_seed(SEED)</code>，SEED=42 写死，所以存档数字可复现）；<b>贪心解码</b>
+            （temperature=0，M20 讲过贪心每步取最大概率、输出确定，代价是更易复读，见本课变式练习）；
+            <b>多样本取均值</b>（官方 eval_compare 的做法：3 个 seed × 9-10 个 prompt 再平均）。拿单次
+            采样输出当分数用，是评测里最隐蔽的一个坑。
+            <span class="prov"><b>[作者实测 · 2026-10-01 · 同环境 · 同权重同参数背靠背两跑]</b>
+            重复率由 3-gram 脚本对两次输出分别计算；第 2 遍 Q2 的答案与第 1 遍从第一句起就不同
+            （"天空是蓝色的原因是由于光的散射" vs "天空之所以呈现出蓝色……"）——采样路径不同，肉眼可见。</span>
+          </li>
+        </ul>
+      </div>
+
+      <h2 id="multiturn">多轮与长上下文：读档四套件</h2>
+      <p>
+        第三把尺由 <code>tools/eval_multiturn.py</code> 扛着，四个套件各有明确靶子——
+        多轮记忆与长上下文是单轮评测的盲区，也是 M02 对话实验里你多半已经隐约感到的短板：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">套件</th><th class="u-w200">测什么</th><th>怎么判分</th></tr></thead>
+          <tbody>
+            <tr><td><b>A 跨轮记忆</b></td><td>首轮注入信息（姓名/数字/暗号/书名），后续轮追问召回</td><td>召回关键词命中率（4 剧本 × 共 12 个关键词，客观可数）</td></tr>
+            <tr><td><b>B 长度压力</b></td><td>构造 256→2048 token 的合成多轮历史后提问</td><td>在题与否 + 3-gram 重复率 + 生成长度（敷衍短句 = 变相跑题）</td></tr>
+            <tr><td><b>C 长程稳定</b></td><td>单会话连续 12 轮固定问题链</td><td>前 3 轮 vs 末 3 轮重复率漂移、角色漂移（越说越像用户口吻）</td></tr>
+            <tr><td><b>D 边界行为</b></td><td>超 32768 token 的越界 prompt（守卫缺口验证）</td><td>报错类型：预期是清晰的守卫错误，实际是裸形状异常</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        这套件全量要跑三个权重 × 数百次生成（GPU 小时级），本课走<b>读档分析路线</b>——M01 就说过，
+        读真实评测报告是正式学习路径。存档 <a href="codeview/out/multiturn_eval.md.html">out/multiturn_eval.md</a>
+        （2026-09-26，era1 权重）的结论表摘录：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w200">套件</th><th class="u-w130">ours（dpo/sft）</th><th class="u-w130">official full_sft</th><th>读数</th></tr></thead>
+          <tbody>
+            <tr><td><b>A 跨轮记忆召回率</b></td><td><b>16.7%</b>（2/12）</td><td>33.3%（4/12）</td><td>两个都很差；单轮内算术（35×17=525）反而对——是"跨轮"问题，不是"推理"问题</td></tr>
+            <tr><td><b>C 末 3 轮重复率</b></td><td>0.081 → <b>0.454</b></td><td>0.131 → <b>0.588</b></td><td>10 轮后双双进入复读循环——官方比我们塌得更快</td></tr>
+            <tr><td><b>B 2048 tok 回答</b></td><td>10 token 敷衍短句</td><td>5 token + 跑题</td><td>有效上下文远短于标称 32K：训练窗只有 768（SFT）/ 380（pretrain）</td></tr>
+            <tr><td><b>D 越界（39990 tok）</b></td><td colspan="2">裸 RuntimeError：size of tensor a (39990) must match b (32768)</td><td>RoPE 表 32768 上限（M05）无守卫，炸在最底层而非入口</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[存档 out/multiturn_eval.md · 2026-09-26 · 2×RTX 4090 · seed=42 · T=0.7 · era1 权重]</b>
+      同份报告的归因：SFT 语料随机采样 10 万行中多轮样本仅 19.4%，且 768 截断会砍掉多轮对话的后半段；
+      官方权重用同一套 sft_t2t 语料训练，缺陷 1/3 同样出现且更差——<b>缺陷随数据继承，不是 reborn
+      推理实现引入</b>（实现侧唯一新增问题是 D 的守卫缺口）。</p>
+      <p>
+        套件给出的失败样例比数字更直观。Suite A 案例 0：用户首轮说"我叫李小明，今年 28 岁，程序员，
+        最喜欢 Rust"，第三轮问"请介绍一下我自己"——era1 模型答（召回 1/6）：
+      </p>
+      <pre class="term"><code><span class="out">[用户 3] 请根据前面我告诉你的信息，介绍一下我自己。</span>
+<span class="out">[模型 3] 好的，作为一名程序员，我有很多经验和知识，我可以给你一些建议。</span>
+<span class="out">          首先，你需要了解编程的基本概念，包括变量、数据类型、控制结构……</span>
+<span class="dim">（只召回"程序员"；姓名/年龄/Rust/爬山/猫全丢，且把"我"当成了模型自己）</span></code></pre>
+      <p>
+        Suite C 的第 12 轮则展示了复读循环的样子：问"用一句话鼓励初学者"，答"学习路线"列表，
+        第 2~8 条逐字重复"向量和矩阵是机器学习算法的基础"（重复率 0.653）。
+        <b>这个故事有一个带数字的续集</b>：M12 修的数据管线（C1 轮次截断、C5 哈希分桶验证集等五处）落地后，
+        用 1536 训练窗重训 SFT+DPO（era2），同套件复测——
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w200">指标</th><th class="u-w130">era1（重训前）</th><th class="u-w130">era2（重训后）</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>Suite A 跨轮记忆召回率</td><td>16.7%（2/12）</td><td><b>50.0%</b>（6/12）</td><td>暗号、书名/作者全对；案例 0 召回 3/6，但"李小明"仍被说成"李明"——部分幻觉</td></tr>
+            <tr><td>Suite C 末 3 轮重复率</td><td>0.454</td><td><b>0.283</b></td><td>前 3 轮 0.062 → 末 3 轮 0.283，塌缩幅度减半</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[存档 out/multiturn_eval_v2.md · 2026-09-30 · 同 seed 42 同套件 · era2 = 数据修复 + 1536 窗口重训的 dpo_768]</b>
+      同一套件、同一把尺、只换"数据 + 训练窗"两个变量——这正是下一节要正式命名的方法（对照实验）的活例子。</p>
+      <p>
+        长上下文还有一个"零训练成本"的对照实验值得一读：不重训，只开 YaRN 推理外推
+        （M05 的折叠加深读，<code>--rope-scaling</code> 把训练窗 380 插值外推到 2280）重跑 Suite B——
+        <b>[存档 out/multiturn_eval_yarn.md · 2026-09-28]</b>：≤1024 tok 全部在题（重复率 0.000），
+        但 1536 tok 重复率 <b>0.842</b>、2048 tok <b>0.980</b>（192 token 跑满纯复读）。
+        结论很干净：<b>位置编码外推能买到"不报错"，买不到"会处理"</b>——长上下文能力的根在预训练
+        底座见过多长的序列，这正是当前 sft_full_mt 之后还有长上下文底座续训计划的原因
+        （<code>tools/eval_cont_train.py</code> 给续训定了双指标验收门：短文档劣化 ≤5% 且长文档显著更低，防遗忘与目标兼得）。
+      </p>
+      <p>
+        🎮 <b>有 GPU 可以自跑简版</b>（单权重、只跑 Suite A，几分钟）：注意把 <code>--out</code> 指到
+        /tmp，免得追加进正式存档（这个脚本用 append 模式写报告）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/eval_multiturn.py --suites A --weights ours_dpo --device cuda:0 --out /tmp/m21_mt.md</span></code></pre>
+      <p class="prov"><b>[说明]</b> 权重名可选 ours_dpo / ours_full_sft / official_full_sft（后者需 out/official/ 的官方权重）；
+      无 GPU 就读 out/multiturn_eval*.md 完成同等分析——两条路都是验收块承认的正式路径。</p>
+
+      <h2 id="official">官方对照：同题集、strict 载入、控制变量</h2>
+      <p>
+        本课的高潮：和官方 minimind 面对面。<b>本课第二个新概念：对照实验</b>——比较两个对象时，
+        用控制变量法把"不关心的差异"全部冻结，只留要研究的那一个。官方对照
+        （<code>tools/compare_official.py</code> + <code>tools/eval_compare.py</code>）的冻结清单：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w200">冻结项</th><th>怎么冻</th><th>为什么必须冻</th></tr></thead>
+          <tbody>
+            <tr><td>题目</td><td>同一组 PROMPTS 写死在脚本里</td><td>不同题目难度不同，分数不可比</td></tr>
+            <tr><td>随机性</td><td>贪心解码 / 固定 seed 多次取中位</td><td>上一节坑卡的教训</td></tr>
+            <tr><td>结构</td><td>官方 .pth 以 <code>strict=True</code> 载入我们的模型</td><td>见下方测验 3——松加载会静默丢键，比的就不是同一个东西了</td></tr>
+            <tr><td>精度</td><td>双实现统一 fp16（或都 fp32）</td><td>精度不同 = 数值路径不同（M05 的 fp32 纪律）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        唯一留下的变量——"谁的权重、谁的实现"——分两个 Phase。<b>Phase A 权重互通</b>（M09 里程碑 A
+        的自动化版：当年你手工 <code>load_inference_weights(strict=True)</code> 过官方 pretrain_768.pth，
+        这里把两份官方权重各验一遍）：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w200">权重</th><th class="u-w130">strict 载入</th><th>结论</th></tr></thead>
+          <tbody>
+            <tr><td>官方 pretrain_768.pth</td><td>✅ strict 通过</td><td>键级完全兼容（63.9M）</td></tr>
+            <tr><td>官方 full_sft_768.pth</td><td>✅ strict 通过</td><td>键级完全兼容（63.9M）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[存档 out/official_compare.md · 2026-09-24 · 2×RTX 4090 · fp16]</b>
+      两边结构逐项一致（hidden 768 / 8 层 / 8 注意头 4 KV 头 / head_dim 96 / 词表 6400，91 个
+      state_dict 键逐一对上——[存档 重构报告 §9.1]）。这意味着重构没造生态孤岛：官方权重能直接进
+      我们的推理/训练栈，我们的权重官方也能吃。</p>
+      <p>
+        <b>Phase B 双实现一致性</b>：同一份官方 full_sft_768 权重，分别用我们的 generator（M20，
+        KV cache 预分配）和官方原版 <code>generate()</code>（每步 torch.cat）做<b>贪心</b>生成——
+        贪心没有随机性，同数学的两条路应该逐位相同。fp16 实测：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w200">prompt（贪心 128 tok）</th><th class="u-w130">一致前缀 / 总生成</th><th>一致率</th></tr></thead>
+          <tbody>
+            <tr><td>推荐两道中国菜并说明做法</td><td>9/34</td><td>26.5%</td></tr>
+            <tr><td>为什么天空是蓝色的？</td><td>9/9</td><td>100.0%</td></tr>
+            <tr><td>解释一下什么是机器学习</td><td>5/70</td><td>7.1%</td></tr>
+            <tr><td>请用 Python 写斐波那契函数</td><td>14/142</td><td>9.9%</td></tr>
+            <tr><td>比较猫和狗作为宠物的优缺点</td><td>13/14</td><td>92.9%</td></tr>
+            <tr><td><b>平均</b></td><td></td><td><b>47.3%</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[存档 out/official_compare.md · 2026-09-24 · fp16 · 同权重]</b>
+      同档还有吞吐对比：reborn 344 tok/s vs official 318（1.08×，长 prompt 贪心 384 token 三次取中位）；
+      显存列两行都记成 0 MB——测量代码失效的产物，<b>跑分脚本本身也会被跑分</b>，报告要带着怀疑读。</p>
+      <p>
+        47.3% 是"双实现不一致"吗？<b>不是</b>——这里是本课最值得学的一手：换精度做<b>决定性检验</b>。
+        fp16 下官方 prefill（对 prompt 的首次前向，M20 的术语）走 SDPA 融合（M07 的路径三）、
+        我们走 manual fp32 打分，两条浮点路径的
+        舍入差被 8 层放大；把一致率最低的两例换到 <b>fp32 重跑，逐位一致率 100%</b>
+        （<b>[存档 重构报告 §9.2 · 2026-09]</b>）。逻辑差异是刚性的（换精度也不消失），浮点差异是
+        柔性的（升精度即消失）——这正是 M07 验证 manual/SDPA 三条路径等价时用过的同款思路：
+        <b>等价性要用"能放大差异的口径"去攻击，攻击不倒才算数</b>。顺带地，贪心输出对上了，
+        也反向验证了 M20 推理栈的正确性——KV cache 预分配没有偷偷改数学。
+      </p>
+      <p>
+        第三张表是<b>质量横评</b>（<code>tools/eval_compare.py</code>：4 组 prompt × 3 seed，T=0.8；
+        损失在固定评测语料上算）——五份权重同台，第一、二把尺同时上：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w200">权重</th><th class="u-w130">CE loss ↓</th><th class="u-w130">PPL ↓</th><th>3-gram 重复率 ↓</th></tr></thead>
+          <tbody>
+            <tr><td>ours pretrain（base 直拼）</td><td><b>2.179</b></td><td><b>8.84</b></td><td>0.311</td></tr>
+            <tr><td>official pretrain（base 直拼）</td><td>2.348</td><td>10.46</td><td>0.277</td></tr>
+            <tr><td>ours full_sft</td><td>1.592</td><td>4.91</td><td>0.269</td></tr>
+            <tr><td>official full_sft</td><td><b>1.433</b></td><td><b>4.19</b></td><td><b>0.193</b></td></tr>
+            <tr><td>ours dpo</td><td>1.592</td><td>4.91</td><td>0.257</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[存档 重构报告 §9.3 · 2026-09-24 · 评测语料 = mini pretrain val 20 batch + sft val 10 batch · era1 权重]</b>
+      两个反直觉读数要展开：①pretrain 我们"反超"官方（2.18 vs 2.35）——不是代码更强，是<b>混杂因素</b>
+      （对照实验没冻住的外来变量）：官方在 full 10GB 语料训练，对 mini 语料的 val 切片分布不匹配，
+      我们在同一份 mini 语料上训练天然占便宜，评测集换到 full 语料结论会反转。②SFT 官方领先 0.16 CE——
+  数据量差距（14GB vs 1.7GB）直接兑现为质量差距，重复率同序（0.193 vs 0.269）。DPO 的 CE 与 SFT
+  持平属正常：DPO 优化偏好方向，不以降 CE 为目标（M17）。</p>
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：拿模型去考"别人出的卷子"</div>
+        <p>
+          与官方对照是"自命题卷"；工业界更常引用的是公共基准（lm-evaluation-harness 的 ceval/arc、
+          MMLU、HumanEval……）——题目别人出、答案自动判，天然免疫"自己出题自己考"的偏置。代价是
+          小模型在这些卷子上常常接近乱猜水平（官方 minimind-3 的 ceval 24.89，四选一乱猜也有 25），
+          区分度低。所以实践是分层用：训练期用便宜的自动指标做回归，里程碑用固定题集 + 专项套件做定性，
+          发布前上公共基准对外报数——本课三把尺的顺序，就是这条流水线的缩影。
+        </p>
+      </div>
+
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：验证集的 iid 假设——M16 那个 1.96，一部分是尺子歪了</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            M16 读档时 sft_full 的 val 钉在 1.96 不动，当时解读为"过拟合信号"。后来数据画像发现这把尺本身
+            有问题：SFT 验证集是从<b>文件尾部</b>切的，而数据文件按类别有序——前段 100% 单轮、
+            尾段多轮占 39.4%，验证集的多轮占比是训练集的 2 倍多。
+          </li>
+          <li class="cause">
+            验证集默认假设 iid（independent and identically distributed，独立同分布：验证样本和训练样本
+            来自同一分布）。尾切破坏了这个假设——模型在一个"偏难的多轮子分布"上被计分，1.956 的绝对值
+            与 mini 时代 0.539 根本不可比，"val 高"里混进了"val 偏"。
+          </li>
+          <li class="fix">
+            修复五（C5，M12 提过）：按内容哈希分桶切分（与文件顺序无关），构建期断言验证集与训练集的
+            多轮占比差 ≤2 个百分点，违反即报错。<b>教训</b>：指标异常时，先审尺子再信读数——
+            对照实验的"冻结清单"里，评测集的分布也是必须冻的一项。
+          </li>
+        </ul>
+      </div>
+
+      <h2 id="export">convert_model：实验室通往生态的桥</h2>
+      <p>
+        对照做完，最后一步是让成果走出实验室。<code>tools/convert_model.py</code> 的
+        <code>to-qwen</code> 子命令把 .pth 转成 HF transformers 的 Qwen3 结构目录（safetensors 权重——
+        HF 生态的安全序列化格式，取代 pickle 的 .bin——加 config 与 tokenizer 一件套），
+        结构参数逐项搬运，键名恰好对齐（M09 保真移植的红利）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/convert_model.py to-qwen --torch-path out/full_sft_768.pth --out /tmp/m21_qwen3</span>
+<span class="out">Writing model shards: 100%|██████████| 1/1 [00:00&lt;00:00, 25.21it/s]</span>
+<span class="ok">已保存 HF(Qwen3) 格式：/tmp/m21_qwen3（63.9M）</span>
+<span class="out">（产出：model.safetensors · config.json · tokenizer.json · chat_template.jinja …）</span>
+<span class="p">$ </span><span class="cmd">uv run python /tmp/m21_verify_qwen.py   # 用 transformers 裸加载并生成，验证桥通了</span>
+<span class="out">架构: ['Qwen3ForCausalLM'] | 参数: 63.9M</span>
+<span class="ok">生成: 我是由jingyaogong创建的高效小参数AI模型，专注于提供精准、快速的信息</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · CPU · torch 2.14.0+cu130 · transformers 加载 90 个权重张量]</b>
+      验证脚本 13 行（/tmp/m21_verify_qwen.py）：<code>AutoModelForCausalLM.from_pretrained("/tmp/m21_qwen3")</code>
+      起 2.9 秒出全文生成。为什么值得单独一节：导出之后你的权重就进入了 HF 生态——transformers 直接吃，
+      vLLM/ollama 这类推理引擎按 Qwen3 结构识别即可加载（它们不认识 minimind_reborn，但认识 Qwen3）。
+      这是"实验室通往工业的桥"：训练栈是自己的（可控、可教、可改），交付格式是行业的（可被一切工具消费）。
+      另一个子命令 <code>merge-lora</code> 一句话带过：M18 训出的 LoRA 适配器合并回基模存成普通 .pth
+      （base + lora 两路径 → 合并产物），合并后同样可以走 to-qwen 出生态。</p>
+
+      <h2 id="weakness">弱项清单：评测的终点不是分数，是假设</h2>
+      <p>
+        把本课两把尺照出来的东西汇总。评测的目的从来不是"得到一个分数然后开心"，而是产出一份
+        <b>下一轮改进的假设清单</b>——每条弱项配一个可实验的假设，这正是 M22 毕业实验的入口：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">弱项</th><th class="u-w200">证据（本课实测/存档）</th><th>改进假设（可对照实验）</th></tr></thead>
+          <tbody>
+            <tr><td>长答案复读</td><td>美食题 28 项列表 3 处重复、跑满 256 tok（finish=length）；era1 Suite C 末 3 轮 0.454</td><td>解码侧：repetition_penalty（M20 采样链已有旋钮）；数据侧：混入长而多样的回答</td></tr>
+            <tr><td>事实幻觉</td><td>光合作用题后半段"6碳logged"式术语崩坏；era2 仍把"李小明"说成"李明"</td><td>数据侧事实密度不足（1.2GB vs 官方 10GB）——重复率与 CE 差距同源</td></tr>
+            <tr><td>贪心复读循环</td><td>T=0.1 下 8/8 题跑满上限、重复率 0.257 全场最高（变式练习实测）</td><td>对比采样温度作为"复读抑制剂"的边界——不可复现性与质量的权衡</td></tr>
+            <tr><td>长上下文塌缩</td><td>YaRN 下 1536 tok 重复率 0.842、2048 tok 0.980 [存档]</td><td>底座续训长序列（eval_cont_train 的双指标验收门防遗忘）</td></tr>
+            <tr><td>评测自身的债</td><td>eval_llm 不设种子（漂移 25%）；越界输入裸 RuntimeError</td><td>给评测脚本补种子与贪心模式；engine 入口加长度守卫</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        注意这张表的形状：<b>弱项 → 证据 → 假设</b>，每条都能变成一个控制变量实验（改一个旋钮、
+        冻结其他、同尺复测）——era1→era2 的召回率 16.7%→50% 就是这个循环跑通一次的样子。
+        M22 的毕业实验，就是让你亲手把这个循环再跑一圈。
+      </p>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · PPL 和 loss 是什么关系？ours full_sft 的 CE 是 1.592，PPL 是多少、什么含义？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>$ \mathrm{PPL} = e^{\mathcal{L}} $（M16 的换算）：把 token 平均交叉熵折算成"每个位置平均在多少个候选词里犹豫"的等效词数。1.592 → e^1.592 ≈ <b>4.91</b>：模型每个位置大约在 5 个词里犹豫（对照乱猜 = 词表 6400，即 loss 8.76）。跨模型比较必须同评测语料同口径——换语料 PPL 的含义就变了（见坑卡二）。</p>
+            <p class="back">答错回看：<a href="#rulers">评测的三把尺</a> 与 <a href="#official">质量横评表</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · 题目写死在脚本里了，为什么"固定题集"还要固定种子？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>固定的是"输入"，没固定的是"采样路径"——temperature&gt;0 时每步按概率抽样，不设 <code>torch.manual_seed</code> 的话每次运行走不同路径，所有派生数字（重复率、长度、吞吐）都是随机变量的单次抽样。实测同一命令两遍：重复率 0.168 vs 0.210（差 25%）、stop 3/8 vs 1/8。固定种子（eval_multiturn 的 SEED=42）、贪心解码或多样本平均，三招任选其一，否则小改进会被这层噪声淹没。</p>
+            <p class="back">答错回看：<a href="#run">坑卡：分数漂移</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · 官方对照为什么必须 strict=True 载入？松一点会怎样？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>对照实验要冻结"结构"这个变量：strict=True 要求 checkpoint 的键集合与模型完全相等（M09 的语义），是"两边比的是同一个数学对象"的机器证明。若松加载（strict=False），不匹配的键会被<b>静默</b>跳过——比如某层没载上、保持随机初始化，模型照样能生成，你却在拿"半随机初始化的模型"和官方比，结论整体作废还不报错。跑得动 ≠ 载对了，这是最危险的无声失败。</p>
+            <p class="back">答错回看：<a href="#official">官方对照：同题集、strict 载入、控制变量</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · ours pretrain 的 CE（2.18）比 official（2.35）低，能宣布"我们的 pretrain 更强"吗？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>不能。评测语料是 mini 语料的 val 切片——我们恰好在 mini 语料上训练，分布匹配天然占便宜；官方在 full 10GB 语料训练，对 mini 切片反而不匹配。这是<b>混杂因素</b>（没冻住的外来变量）：换到 full 语料评测结论会反转。SFT 段官方领先（1.43 vs 1.59）才是数据量差距的真实兑现。判读对照表前先问：除了要研究的变量，还有什么没冻住？</p>
+            <p class="back">答错回看：<a href="#official">质量横评</a> 的两个反直觉读数。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · temperature 0.1 vs 0.9：哪个重复率更低？</div>
+        <div class="ex-body">
+          <p>
+            只动一个旋钮：<code>--temperature</code>（top_p 0.95、题集、权重全不动），各跑一遍
+            <code>eval_llm.py</code>，用 3-gram 重复率算分——把 <a href="#rulers">尺子一节</a>的
+            <code>ngram_rep_rate</code> 包一个小驱动（/tmp/m21_rep_rate.py：正则抠出每题 🧠: 到
+            [N tok 之间的回答，逐题算重复率再平均，顺带数 stop/length）。
+          </p>
+          <div class="ex-predict"></div>
+          <p>写下预测：低温 0.1（更"稳"）和高温 0.9（更"放飞"），哪个的平均重复率更低？先押一边再动手：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/eval_llm.py --weight full_sft --temperature 0.1 &gt; /tmp/t01.txt</span>
+<span class="p">$ </span><span class="cmd">uv run python tools/eval_llm.py --weight full_sft --temperature 0.9 &gt; /tmp/t09.txt</span>
+<span class="p">$ </span><span class="cmd">python3 /tmp/m21_rep_rate.py /tmp/t01.txt /tmp/t09.txt</span>
+<span class="out">/tmp/t01.txt: 答案 8 | 平均3gram重复率 0.257 | 平均长度 376 字 | stop 0 / length 8</span>
+<span class="out">/tmp/t09.txt: 答案 8 | 平均3gram重复率 0.197 | 平均长度 363 字 | stop 1 / length 7</span></code></pre>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>
+              <b>反直觉：低温 0.1 的重复率（0.257）反而全场最高</b>——比 T=0.9（0.197）和默认 0.85
+              （0.168/0.210）都高，且 8 题全部跑满 256 token 上限（stop 0/8，永远等不到自己说 EOS）。
+            </p>
+            <p>
+              <b>机制：</b>temperature → 0 时采样退化为贪心——每步取概率最大的那个词。而复读是
+              <b>自强化</b>的：一旦生成过"麻婆豆腐"，它再次出现的条件概率被上下文抬高，贪心永远顺着
+              最大概率走，等于永远顺着复读轨道走；适度的随机性（高温）反而能把序列"踢"出轨道。
+              小模型的概率分布尖，这个效应比大模型猛得多。这也是官方横评固定用 T=0.8、而双实现
+              <b>一致性</b>检验必须用贪心的原因：贪心可复现（同权重同输出，fp32 逐位相同）但易复读，
+              采样多样但不可复现——<b>可复现性与生成质量是两把不同的尺，别混用</b>。顺带一提：
+              想同时要"可复现 + 不复读"，工业界的答案是固定种子 + 采样 + repetition_penalty
+              （M20 采样链里的现成旋钮），而不是压温度。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M21 验收：eval_llm 真跑 + 官方对照表完成</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下执行（GPU 忙时也跑得动，模型只有 ~140MB；纯 CPU 慢一个量级但仍可完成）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/eval_llm.py --weight full_sft</span>
+<span class="out">💬: 你有什么特长？</span>
+<span class="out">🧠: 我是一个高效的小参数AI模型，专注于提供精准、快速的信息和帮助。……</span>
+<span class="dim">……（8 题逐题输出）……</span>
+<span class="ok">平均吞吐: 153.8 tokens/s</span></code></pre>
+          <p>第二步，官方对照表（无 GPU 走存档路线：打开 <code>out/official_compare.md</code>，摘 Phase A 两行 + Phase B 平均一致率；有 GPU 可 <code>uv run python tools/compare_official.py --device cuda:0</code> 重跑，需 reference/minimind 与 out/official/ 权重在位）。</p>
+          <ul class="pass-criteria">
+            <li>eval_llm 输出含 <b>8 个 💬 题块</b>（每题带 [N tok | Xms | finish] 行）与末行 <code>平均吞吐: … tokens/s</code>；</li>
+            <li>对照表至少填齐三格：官方 pretrain strict <b>通过</b>、官方 full_sft strict <b>通过</b>、fp16 贪心平均一致率 <b>47.3%</b>（存档值），并能为每格说出"它证明了什么"；</li>
+            <li>加做（推荐）：同一命令连跑两遍，算出你自己的漂移差（重复率差 / stop 数差）——把"分数是随机变量"钉进肌肉记忆。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按症状分流）</summary>
+            <p>
+              <b>FileNotFoundError: out/full_sft_768.pth</b> → 权重名按 <code>{名}_{hidden}.pth</code> 约定解析，
+              <code>--weight</code> 换成 out/ 里实际存在的名字（如 dpo、pretrain；pretrain 要配
+              <code>--pretrain-mode</code> 走 bos 直拼，M02）；<b>加载报 size mismatch</b> → 结构参数与权重不符，
+              <code>--hidden-size/--num-hidden-layers</code> 对上训练配方（64 系小权重常见，见 M16 坑卡）；
+              <b>吞吐明显低于本页数字</b> → 正常，吞吐取决于显卡与当时负载（本页数字本身就是在被占用的卡上测的），
+              只比相对值；<b>compare_official 找不到 reference/minimind</b> → 该对照依赖官方原版代码目录与
+              out/official/ 官方权重，缺任一就走存档路线（读 out/official_compare.md 是正式路径，不是降级）；
+              <b>eval_multiturn 报 CUDA OOM</b> → 64M 模型很少 OOM，多为并行训练占满显存，等空闲或加
+              <code>--device cpu</code>（慢）。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        三把尺都上了手，弱项清单也列成了假设——评测的循环（量 → 归因 → 改一个变量 → 再量）你已经看过
+        它跑通一轮（16.7% → 50%）。M22 毕业课把这个循环交到你手里：全链路跑通、八范式冒烟、
+        然后用本课的清单设计并完成你的第一个对照实验。🏁C 见。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>评测指标 <span class="en">evaluation metric</span></dt><dd>把模型能力压缩成可比较数字的方法。三把尺：自动指标（PPL/重复率，便宜可全自动但看不见对错）、固定题集（输出可肉眼对照但样本小、题目可见）、专项套件（覆盖多轮/长上下文盲区但面窄）。每个数字都要记得它是哪把尺量出来的。</dd>
+          <dt>困惑度 <span class="en">perplexity, PPL</span></dt><dd>token 平均交叉熵的指数换算 $e^{\mathcal{L}}$（见 M16），本课升级为跨模型比较指标：同一批评测文本上谁低谁的语言建模更准。ours full_sft 1.592 → 4.91；前提是同语料同口径，否则不可比。</dd>
+          <dt>n-gram 重复率 <span class="en">n-gram repetition rate</span></dt><dd>生成文本切成 n 连续字符片后重复占比（1 − 去重数/总数）：0 无重复，1 完全复读。通顺中文约 0.1~0.2，≥0.4 基本复读循环。eval_compare/eval_multiturn 的量化"复读"都用它。</dd>
+          <dt>固定题集评测 <span class="en">fixed prompt set eval</span></dt><dd>写死一组题目、同种子同参数逐题生成对照（eval_llm 的 8 题）。输出直接可读、可跨版本对比；但题目"可见"可被针对性优化，且样本小只能定性——必须配固定种子/贪心，否则分数漂移（实测同命令两遍重复率差 25%）。</dd>
+          <dt>对照实验 <span class="en">controlled experiment</span></dt><dd>比较两个对象时冻结全部不关心的变量（题目/种子/结构/精度/评测集分布），只留要研究的一个。官方对照的冻结清单四行；没冻住的外来变量叫混杂因素（如评测语料偏向我方训练分布），会让结论反转。</dd>
+          <dt>混杂因素 <span class="en">confounder</span></dt><dd>对照实验中未被冻结、同时影响结果的外来变量。例：质量横评的评测集取自 mini 语料，我方在其上训练天然占优——pretrain"反超"0.17 CE 是分布效应而非代码优势。判读对照表先问：还有什么没冻住？</dd>
+          <dt>贪心解码 <span class="en">greedy decoding</span></dt><dd>temperature=0 的采样特例：每步取概率最大的词，输出确定可复现。用途是等价性/一致性检验（fp32 下双实现逐位一致 100%）；代价是复读自强化——小模型贪心路径最易进循环（T=0.1 重复率全场最高）。</dd>
+          <dt>严格加载 <span class="en">strict load</span></dt><dd>checkpoint 键集合与模型完全相等才放行的载入方式（见 M09）。官方对照用它冻结"结构"变量；松加载会静默跳过不匹配键，让比较对象悄悄变成另一个模型——对照结论作废且无报错。</dd>
+          <dt>HF 格式导出 <span class="en">HF export</span></dt><dd>convert_model.py to-qwen：.pth → Qwen3 结构的 safetensors+config+tokenizer 目录。导出即进入 HF 生态（transformers/vLLM/ollama 可加载）——训练栈自有、交付格式行业标准。merge-lora 子命令则把 M18 的适配器合并回基模。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+  };
+</script>
+<script async src="assets/vendor/tex-svg.js"></script>
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

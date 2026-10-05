@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M12 · Dataset 家族与 loss_mask | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m12">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第三篇 数据</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M12</span><span>第三篇 · 数据</span></div>
+        <h1>Dataset 家族与 loss_mask</h1>
+        <p class="lede">
+          M11 的访问层把"货架"修好了：registry 按名字找到文件、字节偏移索引 O(1) 取出任意一行。
+          本课回答下一问——<b>这一行 jsonl 怎么变成一个可训练样本</b>；同时回收 M09 的伏笔：
+          移位交叉熵里那个 <code>-100</code>（"这一格不算账"）的第二处来源，正是本课主角 loss mask 写下的。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M11</b>（M09 移位交叉熵、M10 锚点建议在手边）</span>
+          <span class="chip">时长：<b>约 80 分钟</b></span>
+          <span class="chip">新概念：<b>loss mask · SFT 样本构造</b></span>
+          <span class="chip">对照：<code>data/datasets.py</code> · <code>data/loss_mask.py</code> · <code>data/manifest.py</code> · <code>tests/test_data/</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>画出 SFT 样本的逐 token 着色图，说清"只在 assistant 回答上算损失"与 <code>-100</code> 的关系（回收 M09 的 ignore_index）；</li>
+        <li>✏️ 补全 <code>scan_response_spans</code> 的三个关键位（区间起点 / 扫描推进 / 区间收口），自测输出与 reborn 逐位一致；</li>
+        <li>走完 <code>SFTDataset.__getitem__</code> 的七步旅程（读行→增强→渲染→encode→截断→扫描→labels），用真实语料第一条逐 token 标注；</li>
+        <li>复述 C1–C5 五处管线缺陷的现象数字与修复思路，把 17 个管线测试逐一归位；</li>
+        <li>说出 Pretrain / DPO / RLAIF 三种样本形态与 SFT 的差异，解释 DPO"配对公平"的机制。</li>
+      </ul>
+
+      <h2 id="bridge">从"一行"到"一个样本"：本课地图</h2>
+      <p>
+        M09 组装好模型（容器），M10 定了语言与协议（词表 + chat 模板），M11 修好了仓库（registry + 字节偏移索引）。
+        本课是第三篇的最后一课：把三者接起来，造出 DataLoader（取数据的迭代器，M13 见）每一步吐出的那个字典
+        <code>{"input_ids": …, "labels": …}</code>。第三篇三课各管一段，本课管最长的这段：
+      </p>
+      <pre class="ascii"><code>一行 jsonl ──────────────── 一个训练样本（本课主线：__getitem__ 七步）──────────────────────→ 下一课
+M11 访问层（已完工）       ① load_line   读出 {"conversations": [...]}                      M13 训练层
+registry 找文件           ② pre_proc    运行时增强 A：概率注入 system（0.2）              DataLoader 拿样本
+O(1) 取第 i 行 ──────→    ③ render      chat 模板渲染（M10 协议）+ 增强B：概率移除空 think   ──→ 进 Trainer
+                          ④ encode      tokenizer → token id 序列（M10 的刀）
+                          ⑤ fit_turns   C1 轮次边界截断（超窗才触发；罕见硬截兜底）
+                          ⑥ scan_spans  C2 逐 token 扫 assistant 区间（残段不计监督）
+                          ⑦ build_labels 区间外 -100 / 区间内原 id；C3/C4/C5 在视图层兜底</code></pre>
+      <p>
+        承担这一切的文件是 <a href="codeview/src/minimind_reborn/data/datasets.py.html"><code>data/datasets.py</code></a>：
+        五个数据集类（Pretrain / SFT / DPO / RLAIF / AgentRL）共用 M11 的索引基类，各自实现一个 <code>encode</code>。
+        而 ②~⑦ 里最要命的一环——"回答区间怎么找"——被单独抽成
+        <a href="codeview/src/minimind_reborn/data/loss_mask.py.html"><code>data/loss_mask.py</code></a>
+        （docstring 自报家门：从官方两份重复实现<b>合并为一处</b>），并且——
+      </p>
+      <div class="callout danger">
+        <div class="co-title">🛑 红线：loss mask 是"全系统最脆的耦合"</div>
+        <p>
+          源码注释原话："这是<b>全系统最脆的耦合</b>（依赖模板恰好产出该格式），tests/test_data/test_loss_mask.py
+          用真实 tokenizer 逐 token 断言锁定"（loss_mask.py docstring 与 constants.py 注释双处声明）。
+          脆在哪：它靠<b>模式匹配</b>在渲染产物里找 <code>"&lt;|im_start|&gt;assistant\n"</code> 开头、<code>"&lt;|im_end|&gt;\n"</code> 收口的区间——
+          模板哪怕改一个字符（M10 坑卡实测过：多一个空格，锚点序列就再也对不上），监督区间会<b>静默变空</b>，训练照跑、loss 照降，
+          只是模型什么都没学。所以红线是：<b>改模板或改锚点常量前，先跑 <code>test_loss_mask.py</code> 的 7 个测试</b>；
+          过了这关，数据还要重造（渲染产物全变）。本课的第一件事就是把这个"脆耦合"拆开看懂。
+        </p>
+      </div>
+
+      <h2 id="concept">loss mask：只在 assistant 说话的地方算账</h2>
+      <p>
+        SFT（supervised fine-tuning，监督微调——用问答语料教预训练基座学会"以助手身份对话"，M02 对照表里
+        full_sft 那一行）的训练目标很朴素：<b>给定对话前文，模型要学会续写 assistant 的回答</b>。但一条渲染后的
+        样本里混着四种东西——用户的话、模板零件（<code>&lt;|im_start|&gt;</code> 之类）、assistant 的回答、凑批填充——
+        其中只有第三种是"该学着重现的"：教模型背出"用户接下来会问什么"毫无意义，还会稀释梯度。
+      </p>
+      <div class="callout tip">
+        <div class="co-title">💡 概念卡：loss mask（损失掩码）</div>
+        <p>
+          与 input_ids 等长的一张"着色表"：<b>该学的位置亮色（label = 原 token id，照常算交叉熵），不该学的位置灰色（label = -100，
+          损失直接跳过）</b>。-100 是 PyTorch 交叉熵的 <code>ignore_index</code> 约定（M09 讲过"这一格不算账"）——必须取词表外的值，
+          因为 0~6399 每个数都是合法 token id（0 号就是 <code>&lt;|endoftext|&gt;</code>，拿 0 当掩码等于"在每个填充位学习预测 pad"）。
+          M09 见过它的第一处来源（凑批填充位），本课补上第二处也是主要来源：<b>非回答区间</b>。
+        </p>
+      </div>
+      <p>拿本课马上要真跑的语料第一条的第一轮，把 token 涂上色（区间下标来自下文实验的真实输出）：</p>
+      <pre class="ascii"><code>下标    0 ························· 25 ·························· 50
+        ├─────── 忽略（灰，label=-100）──────┼────── 监督（亮，label=原 id）──────┤
+token   &lt;|im_start|&gt;user\n 你背后的模型是哪个版本？…  …&lt;|im_start|&gt;ass·ist·ant\n   &lt;think&gt;\n\n&lt;/think&gt;\n\n 我是由jingyaogong开发的…&lt;|im_end|&gt;\n
+        └── 用户的话 ──┘└─ 模板件 ─┘└─ 锚点(也算模板件)─┘        └─ think 块 ─┘└──── 回答正文 ────┘└ 收尾 ─┘
+labels  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░（25 个 -100）              ████████████████████████████（25 个原 id）
+        ░ = -100，交叉熵跳过                                    █ = 原 token id，进交叉熵</code></pre>
+      <p>
+        两个容易被忽略的细节，都体现在图上：<b>锚点本身是灰的</b>——<code>&lt;|im_start|&gt;assistant\n</code> 这 5 个 token 是"递话头"的模板件，
+        模型不需要"学会主动说这句话"；<b>收尾的 <code>&lt;|im_end|&gt;\n</code> 是亮的</b>——模型必须学会在该停的地方发出 eos（M03 ④站生成停止的靶子），
+        不学它，模型就会刹不住车。think 块也在监督区内：样本带 reasoning_content 时（M10 见过渲染格式），"怎么想"和"怎么答"一起学。
+      </p>
+      <p>
+        从"着色表"到代码只有一步：<b>先找区间（哪些 token 亮），再刷颜色（区间外填 -100）</b>。这两步正是
+        loss_mask.py 的 81 行全部内容——找区间的 <code>scan_response_spans</code>（下一节填空主角）与刷颜色的两个孪生函数：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/loss_mask.py.html">src/minimind_reborn/data/loss_mask.py</a> · 刷颜色的两个孪生函数（全文）</span><span class="lang">python</span></div><pre class="code"><code>def build_labels(input_ids, spans, ignore_index: int = -100) -&gt; list[int]:
+    """区间内保留原 token id，区间外填 ignore_index。"""     # SFT 用：-100 哨兵
+    labels = [ignore_index] * len(input_ids)                 # 先全灰
+    for start, stop in spans:
+        for j in range(start, stop):
+            labels[j] = input_ids[j]                         # 区间内刷亮
+    return labels
+
+def build_mask(input_ids, spans) -&gt; list[int]:
+    """区间内 1，区间外 0（DPO 用）。"""                      # DPO 用：0/1 权重
+    mask = [0] * len(input_ids)
+    for start, stop in spans:
+        for j in range(start, stop):
+            mask[j] = 1
+    return mask</code></pre></div>
+      <p>
+        为什么要两个版本？SFT 的损失是 <code>CrossEntropyLoss(ignore_index=-100)</code>（M09），认 -100 哨兵；
+        DPO 的损失要拿每个 token 的对数概率<b>加权求和</b>（M17 详讲），需要的是 0/1 权重而不是哨兵——同一个"着色"语义，两种消费格式。
+        而锚点序列本身（<code>prefix = [1, 1388, 570, 811, 234]</code>、<code>suffix = [2, 234]</code>，M10 实测过）由
+        <code>pattern_ids(tokenizer)</code> 单处定义——encode 一次、全程复用，不许各处自己算。
+      </p>
+
+      <h2 id="fillblank">✏️ 填空：亲手写一遍区间扫描</h2>
+      <p>
+        读过不等于会写。loss_mask.py 的心脏是 <code>scan_response_spans</code>——从左到右扫 token 序列，
+        撞见前缀锚点就进入"找下文"状态，找到完整后缀锚点就收一个区间；扫到头也没等到后缀的是<b>残段</b>（C2，稍后详讲），只计数不监督。
+        下面是它的独立复刻版，<b>三处空</b>正是三条命脉：区间从哪起算、扫描何时停、区间收到哪。把空填上，与 reborn 参照答案对账：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m12_fill.py · 区间扫描三空版（把 ____ 换成你的答案）</span><span class="lang">python</span></div><pre class="code"><code>"""M12 填空：把 scan_response_spans 的三个关键位补全（对照 reborn 参照答案）。"""
+from transformers import AutoTokenizer
+
+from minimind_reborn.data.loss_mask import find_response_spans, pattern_ids
+
+tok = AutoTokenizer.from_pretrained("assets/tokenizer")
+PREFIX, SUFFIX = pattern_ids(tok)  # ([1, 1388, 570, 811, 234], [2, 234])
+
+
+def match_at(seq, pat, i):
+    return seq[i : i + len(pat)] == pat  # 越界切片得短列表 → 自然 False
+
+
+def my_scan(ids):
+    """返回 (spans, dangling)：完整回答的 [start, stop)，残段只计数。"""
+    spans, dangling, i, n = [], 0, 0, len(ids)
+    while i &lt; n:
+        if match_at(ids, PREFIX, i):
+            start = <span class="fb-blank">____</span>                               # 空① 回答首 token 的下标
+            end = start
+            while end &lt; n and not <span class="fb-blank">____</span>:                 # 空② 满足什么条件就继续推进
+                end += 1
+            if end &lt; n:
+                spans.append((start, <span class="fb-blank">____</span>))             # 空③ 区间终点（半开区间）
+                i = spans[-1][1]
+            else:
+                dangling += 1                       # 扫到头也没等到 suffix
+                i = n
+        else:
+            i += 1
+    return spans, dangling
+
+
+msgs = [
+    {"role": "user", "content": "Q1"}, {"role": "assistant", "content": "A1"},
+    {"role": "user", "content": "Q2"}, {"role": "assistant", "content": "A2"},
+]
+text = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
+ids = tok(text).input_ids
+spans_full, dg_full = my_scan(ids)
+assert spans_full == find_response_spans(ids, PREFIX, SUFFIX) and dg_full == 0
+spans_cut, dg_cut = my_scan(ids[:-4])             # 模拟拦腰截断：末轮尾巴被砍
+print("两轮完整：", len(spans_full), "个区间", spans_full)
+print("砍掉末 4 token：", len(spans_cut), "个区间 +", dg_cut, "个残段（残段不计监督）")
+print("与 reborn find_response_spans 逐位一致：ALL PASS")</code></pre></div>
+      <p>卡住了按层揭提示——每层只多给一点：</p>
+      <details>
+        <summary>提示 1 · 方向（先想 30 秒再看）</summary>
+        <p>
+          空①：前缀锚点本身是模板件（灰色），回答的第一个 token 在锚点<b>之后</b>——起点相对 <code>i</code> 偏移多少？
+          空②：进入回答段后要一路向右找后缀锚点——只要"当前位置<b>不是</b>后缀锚点的开头"就继续走；想想要调哪个函数、传哪三个参数。
+          空③：后缀锚点必须完整落进监督区（模型要学发 eos）——终点在 <code>end</code> 基础上加多少？
+        </p>
+      </details>
+      <details>
+        <summary>提示 2 · API（具体到表达式）</summary>
+        <p>
+          空①：<code>i + len(PREFIX)</code>——锚点 5 个 token，回答从第 6 个开始。
+          空②：<code>match_at(ids, SUFFIX, end)</code>——与找前缀同一个函数，换成 SUFFIX、在 <code>end</code> 处试探；
+          外面再套 <code>not</code>（不是后缀开头就继续推进）与 <code>end &lt; n</code>（别扫出界）。
+          空③：<code>end + len(SUFFIX)</code>——<code>end</code> 停在后缀锚点首 token，收口要含它的全部 2 个 token。
+        </p>
+      </details>
+      <details>
+        <summary>完整答案（先跑自己的版本再对照）</summary>
+        <div class="codeblock"><div class="code-head"><span>三空答案</span><span class="lang">python</span></div><pre class="code"><code>start = i + len(PREFIX)                             # 空① = i + len(PREFIX)
+while end &lt; n and not match_at(ids, SUFFIX, end):   # 空② = match_at(ids, SUFFIX, end)
+    end += 1
+spans.append((start, end + len(SUFFIX)))            # 空③ = end + len(SUFFIX)</code></pre></div>
+        <p>
+          三个空各守一道关：空① 若写成 <code>i</code>（含锚点）——锚点被监督，模型学会"抢答"自己递话头；若写成 <code>i + 1</code>——
+          错位 4 个 token，监督区间切进模板件。空② 若忘了 <code>not</code>——循环条件颠倒，<code>end</code> 一步都不走，
+          区间恒空；若换成匹配 PREFIX——刚进回答段就"收口"，监督只剩 7 个 token。空③ 若写成 <code>end</code>——收尾
+          <code>&lt;|im_end|&gt;\n</code> 变灰，模型永远学不会闭嘴（生成的"刹不住车"由此而来）；写成 <code>end + 1</code> 则少监督换行符。
+          填错大多<b>不报错</b>，只是悄悄学错——这就是它需要 7 个测试锁定的原因。
+        </p>
+      </details>
+      <p>填完后的自测验收（作者环境真实输出，填对即复现）：</p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m12_fill.py</span>
+<span class="out">两轮完整： 2 个区间 [(13, 23), (36, 46)]</span>
+<span class="out">砍掉末 4 token： 1 个区间 + 1 个残段（残段不计监督）</span>
+<span class="out">与 reborn find_response_spans 逐位一致：ALL PASS</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径 · torch 2.14.0+cu130]</b> 两轮对话 46 token 扫出恰好 2 个区间；砍掉末尾 4 个 token 后，末轮变成残段——区间数掉到 1、dangling=1，残段整段不计监督（C2 语义的直接体感）。任何一空填错，assert 立刻红或区间数字对不上——对错机器可判。</p>
+
+      <h2 id="sft">SFTDataset 精读：一行 jsonl 的七步旅程</h2>
+      <p>
+        扫描器在手，现在把它装回完整流水线。<code>SFTDataset</code> 继承 M11 的 <code>JsonlIndexedDataset</code>
+        （字节偏移索引基类：<code>load_line(i)</code> 一次 seek+read 取出第 i 行），自己只做"行 → 样本"的翻译。
+        取一个样本的完整代码只有这几行：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/datasets.py.html">src/minimind_reborn/data/datasets.py</a> · SFTDataset.encode（行级编码统一入口）</span><span class="lang">python</span></div><pre class="code"><code>def encode(self, index: int) -&gt; dict[str, torch.Tensor]:
+    """行级编码（IndexListView / __getitem__ 的统一入口）。"""
+    sample = self.load_line(index)                      # ① O(1) 取行（M11 的字节偏移索引）
+    conversations = pre_processing_chat(sample["conversations"], self.add_system_ratio)  # ② 增强A
+    out = encode_sft_sample(                            # ③~⑦ 主流程抽成模块级函数
+        self.tokenizer, self.prefix_ids, self.suffix_ids, conversations, self.max_length
+    )
+    return {
+        "input_ids": torch.tensor(out["input_ids"], dtype=torch.long),
+        "labels": torch.tensor(out["labels"], dtype=torch.long),
+    }</code></pre></div>
+      <p>
+        ③~⑦ 住在模块级函数 <code>encode_sft_sample</code> 里——抽出来不是洁癖：画像工具 <code>tools/len_profile.py</code>
+        与它<b>共享同一实现</b>（源码注释："工具同源约束，保证「测量的」与「训练的」永远是同一语义"）。全流程：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/datasets.py.html">src/minimind_reborn/data/datasets.py</a> · encode_sft_sample（节选）</span><span class="lang">python</span></div><pre class="code"><code>full_ids = tokenizer(render(conversations)).input_ids       # ③④ 渲染+编码（含增强B）
+spans_before, _ = scan_response_spans(full_ids, prefix_ids, suffix_ids)
+complete_before = len(spans_before)                         # 截断前的完整回复数（画像用）
+
+fitted = conversations
+if len(full_ids) &gt; max_length:                             # ⑤ 超窗才触发 C1 轮次适配
+    fitted = _fit_turns(tokenizer, conversations, max_length, ...)
+
+# 未触发轮次适配的样本（约 81%）直接复用 full_ids——此前无条件重新渲染+tokenize，
+# 常态样本编码成本白白 ×2（2026-09-29 perf_analysis 案 A 主因之一）
+ids = full_ids if fitted is conversations else tokenizer(render(fitted)).input_ids
+hard_truncated = False
+if len(ids) &gt; max_length:                                   # 仅当单条 assistant 回复自身超预算
+    hard_truncated = True
+    ids = ids[:max_length]                                  # 罕见的最后手段：硬截
+ids = ids + [tokenizer.pad_token_id] * (max_length - len(ids))   # 凑批填充（label 随 C2 自然为 -100）
+
+spans, dangling = scan_response_spans(ids, prefix_ids, suffix_ids)  # ⑥ C2 语义扫描
+labels = build_labels(ids, spans)                           # ⑦ 着色
+stats = {"full_len": ..., "fitted": ..., "hard_truncated": ...,
+         "complete_before/after": ..., "dangling": ..., "zero_loss": not spans}</code></pre></div>
+      <p>
+        注意两个设计：stats 字典把每一步的"体检指标"带出来（C1–C5 的可观测性都靠它，len_profile 吃同一份）；
+        硬截是<b>最后手段</b>——只在"单条回复自身超预算"这个 _fit_turns 无解的极端场景发生，落地即残段、即零损失，
+        交给 C3 过滤兜底。整条链路的常态路径是：不超窗 → 原样保留（约 81% 样本，源码注释）。
+      </p>
+
+      <h3 id="augment">两个运行时增强：每个 epoch 重新抽签</h3>
+      <p>
+        ②与③里各藏一次概率抽签，都发生在<b>每次取样本时</b>（不是预处理一次定死）——同一个样本，每个 epoch（全数据过一遍）
+        见到的形态都不同。这就是"运行时增强"：不加一行数据，白拿训练分布的多样性：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/datasets.py.html">src/minimind_reborn/data/datasets.py</a> · 两个增强函数（全文）</span><span class="lang">python</span></div><pre class="code"><code>def pre_processing_chat(conversations, add_system_ratio: float = 0.2) -&gt; list[dict]:
+    """首条非 system 时按概率插入；工具调用数据完整保留不处理。"""
+    if any(conv.get("tools") for conv in conversations):
+        return conversations
+    if conversations[0].get("role") != "system" and random.random() &lt; add_system_ratio:
+        return [{"role": "system", "content": random.choice(SYSTEM_PROMPTS)}] + conversations
+    return conversations                                    # 增强A：10 条中英混合 system 池随机插
+
+def post_processing_chat(prompt_content, empty_think_ratio=0.2, remove_empty_think=None):
+    """按概率移除空思考标签（保留 20% 样例带空 think 格式，让模型两种都会）。
+
+    remove_empty_think 显式给值时跳过随机——DPO 用它保证 chosen/rejected 配对公平。
+    """
+    if EMPTY_THINK in prompt_content:                       # "&lt;think&gt;\n\n&lt;/think&gt;\n\n"
+        if remove_empty_think is None:
+            remove_empty_think = random.random() &gt; empty_think_ratio   # 增强B：80% 移除
+        if remove_empty_think:
+            prompt_content = prompt_content.replace(EMPTY_THINK, "")
+    return prompt_content</code></pre></div>
+      <p>
+        <b>增强 A（system 注入，0.2）</b>：语料大多没有 system 消息，但真实用户会设人设——按 20% 概率从 10 条
+        中英混合池里随机插一条。学到的不是某条人设，而是"见到 system 段要遵循"这件事本身。
+        <b>增强 B（空 think 移除，0.8）</b>：模板给每轮 assistant 都渲染空 think 块（M10 实验见过），80% 的样本把它删掉、
+        20% 保留——模型对"带空块"与"不带"两种格式都要会答，因为推理侧两种都会遇到（open_thinking 开关，M20）。
+        两个增强的影响可以直接量出来：语料第一条（6 个空 think 块）保留空块 549 token，移除后 513——差 36 = 6 块 × 6 token。
+      </p>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径]</b> 同一行样本分别以 remove_empty_think=False/True 各渲染一次采集（该行第 2 轮带真 reasoning、其余 6 轮空块，空块 "<think>\n\n</think>\n\n" 恰 6 个 token：25,234,234,26,234,234）。默认 0.2/0.8 两个比例来自 <code>configuration/schemas.py</code> 的 DataConfig 默认值。</p>
+      <p>
+        随机性还牵出一条工程纪律：增强抽签用的是 Python <code>random</code>，而 DataLoader 的多进程 worker（取数进程，M13 见）
+        各有自己的随机态——不治理就会"同一样本在不同 worker 里抽签不一致、复跑结果漂移"。reborn 的修法是
+        <code>utils/seed.seed_worker</code> 给每个 worker 播种（datasets.py 模块头注明"这是原版的可复现性缺陷修复点"），
+        <code>test_chat_preprocessing_deterministic_under_seed</code> 锁的正是"同 seed 同结果"。
+      </p>
+
+      <h3 id="real-sample">逐 token 真跑：语料第一条，哪段 -100</h3>
+      <p>空谈到此为止，拿真实语料第一条（14 条消息、7 轮问答，含一条真 reasoning）完整走一遍：</p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m12_first.py · 第一条样本逐 token 着色（段内文本打印截短）</span><span class="lang">python</span></div><pre class="code"><code>"""M12 实验：sft_t2t_mini.jsonl 第一条 → 渲染 → encode → 逐段标注哪段 -100。"""
+import json
+
+from transformers import AutoTokenizer
+
+from minimind_reborn.data.datasets import encode_sft_sample, render_conversations
+from minimind_reborn.data.loss_mask import build_labels, pattern_ids, scan_response_spans
+
+tok = AutoTokenizer.from_pretrained("assets/tokenizer")
+line = open("/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/sft_t2t_mini.jsonl", "rb").readline()
+convs = json.loads(line)["conversations"]
+
+text = render_conversations(tok, convs, remove_empty_think=False)  # 固定抽签：空 think 原样保留
+ids = tok(text).input_ids
+prefix_ids, suffix_ids = pattern_ids(tok)
+spans, dangling = scan_response_spans(ids, prefix_ids, suffix_ids)
+labels = build_labels(ids, spans)
+
+supervised = sum(1 for l in labels if l != -100)
+print(f"渲染 {len(text)} 字符 → {len(ids)} token；{len(spans)} 个 assistant 区间，dangling={dangling}")
+print(f"监督 token {supervised}/{len(ids)} = {supervised/len(ids):.0%}；区间：{spans}")
+
+def brief(s):  # 段内文本截短展示（数据原样，只是打印截断）
+    return (s[:38] + "…") if len(s) &gt; 40 else s
+
+segs, cur, start = [], labels[0] != -100, 0       # 连续同色段合并
+for j in range(1, len(labels) + 1):
+    hot = j &lt; len(labels) and labels[j] != -100
+    if j == len(labels) or hot != cur:
+        segs.append((cur, start, j)); start, cur = j, hot
+for hot, a, b in segs:
+    print(f"[{a:3},{b:3}) {'监督' if hot else '忽略'} {brief(tok.decode(ids[a:b]))!r}")
+
+out = encode_sft_sample(tok, prefix_ids, suffix_ids, convs, 256, remove_empty_think=False)
+print("同一样本 C1 演示（预算 256）：", out["stats"])</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m12_first.py</span>
+<span class="out">渲染 1241 字符 → 549 token；7 个 assistant 区间，dangling=0</span>
+<span class="out">监督 token 414/549 = 75%；区间：[(25, 50), (68, 277), (295, 348), (367, 396), (414, 453), (472, 504), (522, 549)]</span>
+<span class="out">[  0, 25) 忽略 '&lt;|im_start|&gt;user\n你背后的模型是哪个版本？它由谁开发？&lt;|i…'</span>
+<span class="out">[ 25, 50) 监督 '&lt;think&gt;\n\n&lt;/think&gt;\n\n我是由jingyaogong开发的高效…'</span>
+<span class="out">[ 50, 68) 忽略 '&lt;|im_start|&gt;user\n你模型的训练数据来源是什么？&lt;|im_en…'</span>
+<span class="out">[ 68,277) 监督 '&lt;think&gt;\n好的，用户问我的模型训练数据来源。首先，我需要确认用户的问题…'</span>
+<span class="out">[277,295) 忽略 '&lt;|im_start|&gt;user\n训练数据的来源和多样性如何？&lt;|im_en…'</span>
+<span class="out">[295,348) 监督 '&lt;think&gt;\n\n&lt;/think&gt;\n\n我的训练数据来源广泛，涵盖多个领域，确…'</span>
+<span class="out">[348,367) 忽略 '&lt;|im_start|&gt;user\n训练数据如何保障信息准确性？&lt;|im_en…'</span>
+<span class="out">[367,396) 监督 '&lt;think&gt;\n\n&lt;/think&gt;\n\n我的训练数据通过多轮验证和质量控制流程…'</span>
+<span class="out">[396,414) 忽略 '&lt;|im_start|&gt;user\n训练数据如何确保来源透明？&lt;|im_end…'</span>
+<span class="out">[414,453) 监督 '&lt;think&gt;\n\n&lt;/think&gt;\n\n我的训练数据来源透明，所有数据均来自公…'</span>
+<span class="out">[453,472) 忽略 '&lt;|im_start|&gt;user\n训练数据如何保障多语言支持？&lt;|im_en…'</span>
+<span class="out">[472,504) 监督 '&lt;think&gt;\n\n&lt;/think&gt;\n\n我的训练数据支持多语言，涵盖多种语言的…'</span>
+<span class="out">[504,522) 忽略 '&lt;|im_start|&gt;user\n你最近在忙什么？&lt;|im_end|&gt;\n&lt;|…'</span>
+<span class="out">[522,549) 监督 '&lt;think&gt;\n\n&lt;/think&gt;\n\n我目前专注于优化和提升自身的性能，持续…'</span>
+<span class="out">同一样本 C1 演示（预算 256）： {'full_len': 549, 'fitted': True, 'hard_truncated': False, 'complete_before': 7, 'complete_after': 4, 'dangling': 0, 'n_messages': 14, 'zero_loss': False}</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径 · torch 2.14.0+cu130]</b> 逐段着色由脚本真实打印（段内文本仅显示层截短，数据原样）。三个读点：① 忽略/监督严格交替 14 段——每轮"用户段+锚点"灰、回答含收尾亮；② 第二轮的监督段长 209 token（68~277），因为那条样本带真 reasoning_content，"怎么想"也在学；③ C1 演示把预算从 1024 压到 256：丢最旧 3 轮（complete 7→4）、dangling=0、末轮完整存活——下一节讲它为什么这样截。</p>
+
+      <h2 id="fixes">C1–C5：五处缺陷的存档账本与修复</h2>
+      <p>
+        这套七步流水线不是一次写成的。<a href="codeview/docs/retrain_plan_longctx_multiturn.md.html"><code>docs/retrain_plan_longctx_multiturn.md</code></a>
+        （重训计划，2026-09-28）用工具实测给旧管线记了一笔账，编号 C1–C5 的五处"代码处理不当"（改代码即消失，区别于数据本身的缺陷 D 组）。
+        这份存档是 C1–C5 的动机证明，也本课最有工程味道的教材——<b>数据管线的 bug 不报错、不炸 loss，只是悄悄浪费数据</b>：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">编号</th><th>缺陷（旧管线行为）</th><th class="u-w130">实测基线</th><th class="u-w130">修复后目标</th></tr></thead>
+          <tbody>
+            <tr><td><b>C1</b> 拦腰截断</td><td>超窗样本 <code>ids[:max_length]</code> 一刀切，切口落在回复中间</td><td>完整回复保留率 45.6%</td><td>100%</td></tr>
+            <tr><td><b>C2</b> 残段计损</td><td>被切断的"半截回复"被兜底划入损失区间</td><td>0.82 残段/受损样本</td><td>0</td></tr>
+            <tr><td><b>C3</b> 零损失样本</td><td>截断后无任何完整回复 → labels 全 -100 → 梯度为零，GPU 照算</td><td>占多轮样本 5.7%</td><td>0（过滤+计数）</td></tr>
+            <tr><td><b>C4</b> 回复重复</td><td>不同问题共享同一回答的样本全部入训</td><td>回复精确重复率 8.6%</td><td>&lt;1%</td></tr>
+            <tr><td><b>C5</b> 尾切验证集</td><td>从文件尾切验证集，而文件按类别有序</td><td>多轮占比差约 21 个百分点</td><td>≤2 个百分点</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[存档 docs/retrain_plan_longctx_multiturn.md · 2026-09-28]</b> 五行基线数字均取自该文档 §3.1/§4.1 实测表（工具 len_profile / data_profile，同种子同口径）；45.6% 保留率意味着多轮监督信号只剩名义值约 37%。本课各节引用的其余存档数字——50.6%/82.3%（超长会话占比）、39.4%（文件末段多轮占比）、19.4%（多轮样本占比）、45.2%（预训练 token 未训率）——同出 §3.1；预训练那条属 D 组缺陷（窗口与数据长度不匹配，靠续训解决，M16/M22 再见）。归因结论也值得记住：官方权重用同一份数据训练，缺陷同样存在——<b>问题主要来自数据与截断处理，不是训练框架实现引入</b>。</p>
+
+      <h3 id="c1">C1 轮次边界截断：二分丢整轮，保尾不保头</h3>
+      <p>
+        修复思路一句话：<b>与其在 token 层面拦腰切，不如在轮次层面丢整轮</b>。超窗时从最旧的"一问一答"成对丢弃（system 恒留），
+        装得下为止；只剩最后一轮还超，就左截那轮 user 的内容（保尾部，可截到空）——assistant 回复永不在这里截。
+        "丢 k 对轮"的单调性天然适合二分（丢得越多越短）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/datasets.py.html">src/minimind_reborn/data/datasets.py</a> · _fit_turns（节选）</span><span class="lang">python</span></div><pre class="code"><code>head: list[dict] = []
+body = list(conversations)
+if body and body[0].get("role") == "system":
+    head, body = [body[0]], body[1:]              # system 恒留，永不参与丢轮
+
+# 二分找最少丢弃的对数（保底保留最后 2 条）
+max_drop = max(0, (len(body) - 2)) // 2
+if max_drop &gt; 0:
+    def fits(k):                                  # 丢 k 对后是否装得下（k 越大越短 → 单调）
+        return n_tokens(head + body[2 * k :]) &lt;= budget
+
+    if fits(max_drop):
+        lo, hi = 0, max_drop
+        while lo &lt; hi:                            # 标准二分：找最小可行的 k
+            mid = (lo + hi) // 2
+            if fits(mid): hi = mid
+            else: lo = mid + 1
+        body = body[2 * lo :]                     # 从第 2k 条起留——整轮成对丢，切口永不落进回复
+    else:
+        body = body[2 * max_drop :]
+
+# 仍超预算：左截最后一轮的 user 内容保尾部（可截至空——assistant 监督目标完整性优先；
+# 32 字符级保底会把「回复巨大、提问短」的样本挤过预算线落到硬截，白丢整条监督目标）
+if len(body) &gt; 2 and body[-2].get("role") == "user":
+    user = body[-2]
+    content = str(user.get("content", ""))
+    while content and n_tokens(head + body) &gt; budget:
+        content = content[max(1, len(content) // 5) :]   # 每次砍掉头部 4/5
+        user["content"] = content
+return head + body</code></pre></div>
+      <p>
+        <b>为什么保尾不保头</b>：一条多轮会话的监督信号散布在各轮回答里，但"接着聊"最完整的语境在末轮——丢掉旧轮损失的是
+        一部分上下文，丢掉末轮损失的是最新鲜的问答本身；且旧轮信息密度最低（往往被后文复述）。这个策略与推理侧
+        ChatSession 的滑动窗口<b>同构</b>（历史超预算丢最旧轮、system 恒留——源码注释明说"两侧口径一致"）：训练见过的截断方式，
+        推理时用同一种，模型不会"认生"。注释里那句"32 字符保底"是阶段 1 验收时抓到的回归：给 user 内容留固定下限，
+        会把"回复 ≈607 字符 + 短提问"的样本挤过预算线落到硬截——白丢整条监督目标，已由
+        <code>test_fit_prefers_completing_big_reply_over_user_floor</code> 锁定。
+      </p>
+
+      <h3 id="c2">C2 悬空段不监督：扫不到完整结尾，整段不算</h3>
+      <p>
+        拦腰截断的另一半毒在 loss 判定：旧实现找不到 <code>&lt;|im_end|&gt;\n</code> 结尾时把残段<b>兜底划入</b>损失区间——
+        模型在反复学"没有结尾的半截话"，与生成实测中"回答戛然而止、复读"直接对应（存档原文）。修复就是你在填空里写过的语义：
+        <b>后缀锚点完整匹配才计入区间；残段只计数（dangling）不监督</b>。真跑一遍完整链路——预算压到 30（连末轮回复都装不下）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+import json
+from transformers import AutoTokenizer
+from minimind_reborn.data.datasets import encode_sft_sample
+from minimind_reborn.data.loss_mask import pattern_ids
+tok = AutoTokenizer.from_pretrained('assets/tokenizer')
+convs = json.loads(open('/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/sft_t2t_mini.jsonl','rb').readline())['conversations']
+out = encode_sft_sample(tok, *pattern_ids(tok), convs, 30, remove_empty_think=False)
+print(out['stats'])
+print('labels 全 -100：', all(l == -100 for l in out['labels']))"</span>
+<span class="out">{'full_len': 549, 'fitted': True, 'hard_truncated': True, 'complete_before': 7, 'complete_after': 0, 'dangling': 1, 'n_messages': 14, 'zero_loss': True}</span>
+<span class="out">labels 全 -100： True</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径]</b> C1 先丢轮（fitted=True）仍装不下（末轮回复自身超 30）→ 硬截（hard_truncated=True）→ 末段变残段（dangling=1）→ 区间 0 个、labels 全 -100——C2 的输出正好是 C3 的输入，两条修复在这里咬合。锁定的测试是 <code>test_truncated_response_dangling_not_supervised</code>（残段 spans=[]、dangling=1、labels 全 -100）与 <code>test_dangling_after_complete_spans_partial</code>（完整区间之后的残段：A1 在监督、半截话不在）。</p>
+
+      <h3 id="c3">C3 零损失样本过滤：确定性前向重映射</h3>
+      <p>
+        labels 全 -100 的样本损失恒 0、梯度恒 0，但前向计算一分不少——纯烧 GPU（旧报告称"白训"，基线占多轮样本 5.7%）。
+        修复放在<b>训练视图</b>的取数路径上——IndexListView 是 M11 讲过的行号视图（只持底层引用与行号数组、零数据复制的薄壳），
+        过滤逻辑藏在它的 <code>__getitem__</code> 里（惰性架构约束：511 万行不可能构建期全量分词，见 M11）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/datasets.py.html">src/minimind_reborn/data/datasets.py</a> · IndexListView.__getitem__（C3 核心）</span><span class="lang">python</span></div><pre class="code"><code>def __getitem__(self, index: int) -&gt; dict[str, torch.Tensor]:
+    pos = index % len(self._indices)
+    item = self._base.encode(self._indices[pos])
+    if not self._filter_zero_loss:
+        return item                               # 直接索引不过滤（口径：过滤只在训练视图）
+    probes = 0
+    while not bool((item["labels"] != -100).any()):   # 全 -100 = 零损失样本
+        self.remap_events += 1                     # 触发次数记入数据卡（D5 可观测）
+        pos = (pos + 1) % len(self._indices)       # 确定性前向重映射：不是随机跳
+        item = self._base.encode(self._indices[pos])
+        probes += 1
+        if probes &gt;= len(self._indices):
+            raise ValueError("视图内全部样本均为零损失（无任何完整 assistant 区间）")
+    return item</code></pre></div>
+      <p>
+        两个讲究：<b>确定性</b>——同一视图同一位置恒定映射到同一目标，双卡 DDP（分布式数据并行，M15 详讲）的两个进程才会看到
+        一致的数据流，随机跳会导致两卡各喂各的；<b>计数</b>——重映射次数进 <code>data_card()</code>（数据卡：把数据的指纹、
+        剔除量、分布统计写进运行配置快照，供事后审计，存档 D5 项）。视图长度不变（len 恒 2，只是位置 0 实际吐出位置 1 的样本），
+        <code>test_sft_dataset_filters_zero_loss_with_remap</code> 把这条口径连同"直接索引不过滤"一起锁定。
+      </p>
+
+      <h3 id="c45">C4 回复去重 + C5 哈希分桶：manifest 旁车清单</h3>
+      <p>
+        最后两处缺陷不在截断，在<b>样本选择</b>，而且都需要"全量信息"——去重要知道所有回复、切分要给每行定归属，
+        这与惰性加载（一次只碰一行）天然冲突。解法正是 M11 结尾造好的<b>旁车清单</b>（manifest：一次全量扫描，解析 jsonl
+        但<b>不做分词</b>，把每行的派生信息存成 <code>.manifest.npz</code> 伴生缓存；md5 稳定哈希防跨进程漂移、mtime+size
+        指纹防旁车脏读——机制 M11 详讲过，本课直接回收）。清单四列各管一事：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/manifest.py.html">src/minimind_reborn/data/manifest.py</a> · 构建期扫描核心（节选）</span><span class="lang">python</span></div><pre class="code"><code># 去重键：最后一条 assistant 回复（C4 对齐 dataeng 的「回复精确重复」口径——
+# 复读的训练侧源头是不同问题共享同一回答 8.6%，对话级哈希会漏掉这种模式）
+reply_hashes.append(stable_hash(normalize_text(reply_text(convs))))          # keep 列依据
+n_messages.append(len(convs))                                                # 多轮占比断言用
+is_eval_flags.append(stable_hash(normalize_text(text)) % 1000 &lt; bucket_take) # C5 分桶
+
+# C4：规范化回复哈希首现保留（跨全文件去重，先于分桶——重复行不因分桶翻倍）
+keep = np.ones(n, dtype=bool)
+first_seen: dict[int, int] = {}
+for i, h in enumerate(reply_hashes):
+    if h in first_seen:
+        keep[i] = False
+    else:
+        first_seen[h] = i</code></pre></div>
+      <p>
+        <b>C4 的键选得极准</b>：不是整条对话的哈希，而是"最后一条 assistant 回复"——因为复读的源头是<b>不同问题共享同一回答</b>
+        （8.6%），按对话级去重恰好漏掉这种模式。规范化（小写 + 去空白标点）保证"同一答案换个标点"也逃不掉。
+        <b>C5 换掉了尾切</b>：每行按规范化内容的稳定哈希取模分桶（与文件顺序无关），因为 sft 文件按构造有序——
+        前段 100% 单轮、末段多轮占 39.4%，旧"从尾部切验证集"切出来的验证集多轮占比是训练集的 2 倍多，
+        SFT 验证损失 1.956 与 mini 时代 0.539 不可比，根因在此。构建期还断言两桶多轮占比差 ≤2 个百分点（容差在小数据集上
+        自动放宽到 3.5 倍抽样噪声），违反即报错。
+      </p>
+      <p>
+        再回收一条 M11 的结论：分桶哈希用 <code>hashlib.md5</code> 而非内建 <code>hash()</code>（后者受 PYTHONHASHSEED
+        盐值影响每个进程值都不同，M11 实测过），稳定哈希 + 行内容做键 = <b>同一行内容永远落同一侧</b>，与文件顺序、进程、
+        机器都无关——C5 的"无偏"靠的就是这个（否则双卡两个进程会切出两个不同的验证集）。
+      </p>
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：脆弱的不是做法，是"没测试的做法"</div>
+        <p>
+          token 级模板匹配不是 reborn 独创：HF 的 trl 库 <code>DataCollatorForCompletionOnlyLM</code> 同款思路——把
+          response_template 编码成 token 序列再匹配定位监督区。更普遍的教训在 C1–C5 这类缺陷：全都不报错、不炸 loss，
+          只表现为"多轮能力莫名差"——直到有人拿测量工具（len_profile）去数 token 才现形。reborn 配齐了四件套：
+          先量化（45.6% / 0.82 / 5.7% / 8.6% / 21pp），再修，每处修复配测试锁定，剔除量与指纹写入数据卡——
+          改代码即生效，不重训也让下一次训练自动受益。官方权重同样带着这些缺陷训练出来（同一份数据同一套旧管线）。
+        </p>
+      </div>
+
+      <h3 id="c-tests">17 个管线测试的归属表</h3>
+      <p><code>test_sft_pipeline.py</code> 的 17 个用例按 C 组归属（作者逐个核对）：</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w200">用例</th><th class="u-w44">归属</th><th>锁定的行为</th></tr></thead>
+          <tbody>
+            <tr><td>test_fit_turns_drops_oldest_complete_turns</td><td>C1</td><td>超预算丢最旧整轮：早轮提问消失、末轮在场、无残段</td></tr>
+            <tr><td>test_fit_keeps_system_and_last_turn</td><td>C1</td><td>system 恒留 + 最后一轮完整保留</td></tr>
+            <tr><td>test_fit_truncates_user_content_keeps_assistant</td><td>C1</td><td>左截 user 保尾部（含"问题结尾标记"），回复不硬截</td></tr>
+            <tr><td>test_fit_prefers_completing_big_reply_over_user_floor</td><td>C1</td><td>回复 ≈590 字 + 短提问：user 截到空也不落硬截（32 字符保底回归）</td></tr>
+            <tr><td>test_single_oversized_reply_hard_truncates_to_zero_loss</td><td>C1→C3</td><td>单条回复自身超窗 → 硬截 → 零损失（交 C3 接手）</td></tr>
+            <tr><td>test_short_sample_untouched</td><td>C1</td><td>不超预算的常态样本：零扰动、stats 逐字段锁定</td></tr>
+            <tr><td>test_multi_turn_survival_is_full_under_budget</td><td>C1</td><td>任意预算（128~384）下多轮样本无残段、末轮必存活</td></tr>
+            <tr><td>test_manifest_dedup_keeps_first_and_buckets</td><td>C4+C5</td><td>重复回复只留首现；指纹失效自动重建</td></tr>
+            <tr><td>test_stable_hash_is_process_independent</td><td>C4/C5</td><td>规范化 + 稳定哈希：大小写与标点不影响、跨进程一致</td></tr>
+            <tr><td>test_split_balance_report_and_assertion_inputs</td><td>C5</td><td>均衡数据 gap 小；断言输入（占比差）计算正确</td></tr>
+            <tr><td>test_sft_dataset_filters_zero_loss_with_remap</td><td>C3</td><td>训练视图重映射 + 计数；直接索引不过滤</td></tr>
+            <tr><td>test_sft_dataset_dedups_and_splits_by_hash</td><td>C4+C5</td><td>端到端：42 行去重 2、train+eval 恰 40、视图内回复唯一</td></tr>
+            <tr><td>test_sft_ordered_file_eval_not_tail_biased</td><td>C5</td><td>核心回归：80 单轮 + 20 多轮的有序文件，eval 桶两类都有</td></tr>
+            <tr><td>test_manifest_rebuilds_when_file_changes</td><td>D5</td><td>数据文件变更 → 指纹失效 → 旁车自动重建、行数对齐</td></tr>
+            <tr><td>test_oversample_repeat_counts</td><td>D1</td><td>单轮 ×1、多轮 ×2、深多轮 ×3（多轮上采样档二）</td></tr>
+            <tr><td>test_sft_dataset_train_view_expands_multi_turn</td><td>D1</td><td>训练视图按倍数展开、data_card 记录有效占比</td></tr>
+            <tr><td>test_sft_dataset_eval_view_never_expanded</td><td>D1</td><td>验证视图永不重复（诚实测量）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[事实核对]</b> 17 个用例名逐一对着 <code>tests/test_data/test_sft_pipeline.py</code> 抄录；末三行 D1（多轮上采样，存档档二：治"多轮占比 19.4% 过低"）与 D5（数据卡）超出 C1–C5 编号但同在这份文件里——重复上限 3、验证视图不展开的语义都写在测试与源码注释里。</p>
+
+      <h2 id="others">其余三张数据集：Pretrain / DPO / RLAIF·Agent</h2>
+      <p>五个数据集类共享 M11 的索引基类，差异全在 encode 语义。剩三张各用一分钟看懂形态差异：</p>
+
+      <h3 id="pretrain">PretrainDataset：没有 loss mask 的世界</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/datasets.py.html">src/minimind_reborn/data/datasets.py</a> · PretrainDataset.encode（全文）</span><span class="lang">python</span></div><pre class="code"><code>def encode(self, index: int) -&gt; dict[str, torch.Tensor]:
+    sample = self.load_line(index)
+    text = str(sample["text"])
+    tokens = self.tokenizer(
+        text, add_special_tokens=False, max_length=self.max_length - 2, truncation=True
+    ).input_ids                                    # -2：给 bos/eos 留位（截断不吞哨兵）
+    tokens = [self.tokenizer.bos_token_id] + tokens + [self.tokenizer.eos_token_id]
+    input_ids = tokens + [self.tokenizer.pad_token_id] * (self.max_length - len(tokens))
+    input_ids = torch.tensor(input_ids, dtype=torch.long)
+    labels = input_ids.clone()
+    labels[input_ids == self.tokenizer.pad_token_id] = -100   # 唯一的 -100：填充位
+    return {"input_ids": input_ids, "labels": labels}</code></pre></div>
+      <p>
+        <b>为什么它不需要区间扫描</b>：预训练是纯语言建模——整篇文档处处都是"该学的正文"，每个位置的"下一词预测"都是
+        有效监督信号，没有"别人说的话"要排除。样本形态是 <code>bos + 正文 + eos</code> 三明治（bos/eos 的职责见 M10），
+        labels 与 input_ids 逐位相同，唯一的 -100 是填充位。真跑一条短文档（64 窗口）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m12_pre.py · Pretrain 短样本：pad 位的 label 处理</span><span class="lang">python</span></div><pre class="code"><code>"""M12 · Pretrain 短样本：pad 位的 label 处理。"""
+from transformers import AutoTokenizer
+
+from minimind_reborn.data.datasets import PretrainDataset
+
+tok = AutoTokenizer.from_pretrained("assets/tokenizer")
+pd = PretrainDataset("/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/pretrain_t2t_mini.jsonl", tok, max_length=64)
+best = min(range(50), key=lambda i: len(tok(pd.load_line(i)["text"]).input_ids))  # 前 50 行里挑最短的
+it = pd[best]
+ids, labs = it["input_ids"].tolist(), it["labels"].tolist()
+n_real = sum(1 for l in labs if l != -100)
+print(f"第 {best} 行 @max_length=64：真实 {n_real} token，pad {64 - n_real} 个")
+print("ids    转折点前后：", ids[n_real - 2:n_real + 3])
+print("labels 转折点前后：", labs[n_real - 2:n_real + 3])
+print("首 token：", ids[0], "（bos）；最后一个真实 token：", ids[n_real - 1], "（eos）；pad id：", ids[-1])
+print("正文区 label==id：", labs[:n_real] == ids[:n_real], "；pad 区全 -100：", all(l == -100 for l in labs[n_real:]))</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m12_pre.py</span>
+<span class="out">第 25 行 @max_length=64：真实 44 token，pad 20 个</span>
+<span class="out">ids    转折点前后： [49, 2, 0, 0, 0]</span>
+<span class="out">labels 转折点前后： [49, 2, -100, -100, -100]</span>
+<span class="out">首 token： 1 （bos）；最后一个真实 token： 2 （eos）；pad id： 0</span>
+<span class="out">正文区 label==id： True ；pad 区全 -100： True</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径]</b> 转折点一刀两断：eos（id 2）是最后一个亮的 token——模型要学"文档到此结束"；其后 20 个 pad（id 0）全灰。顺带注意 pretrain 的验证集切分仍是尾部固定切片——因为语料文件已打散（聚簇率 0.07%，datasets.py 模块头引用 dataeng §3.7），尾切无偏，无需 C5 的哈希分桶；SFT 文件按构造有序，才必须分桶。</p>
+
+      <h3 id="dpo">DPODataset：一对样本，共享一次抽签</h3>
+      <p>
+        DPO（direct preference optimization，直接偏好优化，M17 推导）的样本是"同一 prompt 的两个回答"：
+        chosen（人更喜欢的）与 rejected（较差的）。数据集要为两边各造一份 token 序列与 0/1 mask（build_mask 那位孪生兄弟），
+        关键在抽签的归属：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/datasets.py.html">src/minimind_reborn/data/datasets.py</a> · DPODataset.__getitem__（节选）</span><span class="lang">python</span></div><pre class="code"><code>def __getitem__(self, index: int) -&gt; dict[str, torch.Tensor]:
+    sample = self.load_line(index)
+    remove_empty_think = random.random() &gt; self.empty_think_ratio  # 每行抽一次签
+    chosen_ids, chosen_mask = self._encode_side(sample["chosen"], remove_empty_think)
+    rejected_ids, rejected_mask = self._encode_side(sample["rejected"], remove_empty_think)
+    # 同一个签喂两边——配对公平：两序列的差异只剩"回答内容"一个变量
+    return {
+        "x_chosen": torch.tensor(chosen_ids[:-1]),      # x 去尾、y 去头：移位在数据集里就做完
+        "y_chosen": torch.tensor(chosen_ids[1:]),
+        "mask_chosen": torch.tensor(chosen_mask[1:]),
+        "x_rejected": torch.tensor(rejected_ids[:-1]),
+        "y_rejected": torch.tensor(rejected_ids[1:]),
+        "mask_rejected": torch.tensor(rejected_mask[1:]),
+    }</code></pre></div>
+      <p>
+        <b>配对公平</b>是本类的灵魂：DPO 损失比较的是两条序列的对数概率<b>差</b>——若 chosen 恰好抽到"带空 think"、
+        rejected 抽到"不带"，两边的格式差异（36 token 的模板件）就会混进偏好信号，模型可能学到"带 think 的回答更好"这种假规律。
+        把同一行的一次抽签同时喂给两边，格式变量被钉死，剩下的差异才可归因为"内容好坏"。真跑验证：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+import random
+from transformers import AutoTokenizer
+from minimind_reborn.data.datasets import DPODataset
+tok = AutoTokenizer.from_pretrained('assets/tokenizer')
+ds = DPODataset('/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/dpo.jsonl', tok, max_length=128)
+random.seed(3)
+agree = keep = 0
+for _ in range(30):
+    it = ds[0]
+    ch, rj = tok.decode(it['x_chosen'].tolist()), tok.decode(it['x_rejected'].tolist())
+    c, r = '&lt;think&gt;' in ch, '&lt;think&gt;' in rj
+    agree += c == r; keep += c
+print(f'30 次抽样：chosen/rejected think 处理同进退 {agree}/30；其中保留 think 的抽样 {keep} 次')"</span>
+<span class="out">30 次抽样：chosen/rejected think 处理同进退 30/30；其中保留 think 的抽样 5 次</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径]</b> 30 次抽样 chosen/rejected 的 think 处理 30/30 同进退；5 次两边同时保留、25 次两边同时移除（期望 20%×30=6，抽样涨落正常）。注意另一处差异：SFT 的移位交叉熵在 Trainer 里做（M09），DPO 的 x/y 去尾去头在数据集里就做完了——两种消费方式各自顺手的位置。</p>
+
+      <h3 id="rlaif">RLAIF / AgentRL：prompt-only，答案留白</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/datasets.py.html">src/minimind_reborn/data/datasets.py</a> · RLAIFDataset.__getitem__（全文）</span><span class="lang">python</span></div><pre class="code"><code>def __getitem__(self, index: int) -&gt; dict[str, str]:
+    sample = self.load_line(index)
+    conversations = pre_processing_chat(sample["conversations"])
+    use_thinking = random.random() &lt; self.thinking_ratio       # 0.5：一半带 think 留白
+    prompt = self.tokenizer.apply_chat_template(
+        conversations[:-1], tokenize=False, open_thinking=use_thinking, add_generation_prompt=True
+    )
+    return {"prompt": prompt, "answer": ""}      # 答案空着：由模型 rollout 自己生成</code></pre></div>
+      <p>
+        RL（强化学习）阶段的样本没有 labels 也没有 mask——它只给<b>起点</b>：砍掉最后一轮回答（<code>[:-1]</code>），
+        以 <code>add_generation_prompt=True</code> 渲染出"该 assistant 说话了"的话头（M10 实验的 A/D 两种形态，各 50%），
+        <code>answer</code> 字段空着——答案由模型 rollout（让模型自己生成完整回答的过程）现场生成、由奖励信号打分，
+        全套机制 M19 展开。AgentRLDataset 同理但带工具：返回 <code>messages[:-1] + tools + gt</code>（真值），
+        给 Agent 轨迹 rollout 用。五个类一张表收束：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">数据集</th><th>输入行</th><th>产出</th><th class="u-w200">loss mask 用法</th></tr></thead>
+          <tbody>
+            <tr><td>PretrainDataset</td><td><code>{"text": …}</code></td><td>bos+正文+eos，pad 灰</td><td>无区间（全文监督，仅 pad=-100）</td></tr>
+            <tr><td>SFTDataset</td><td><code>{"conversations": …}</code></td><td>input_ids + labels</td><td>区间扫描 → build_labels（-100）</td></tr>
+            <tr><td>DPODataset</td><td><code>{"chosen"/"rejected": …}</code></td><td>x/y/mask × 2（预移位）</td><td>区间扫描 → build_mask（0/1，配对同签）</td></tr>
+            <tr><td>RLAIFDataset</td><td><code>{"conversations": …}</code></td><td>prompt 文本</td><td>无（答案由 rollout 生成，M19）</td></tr>
+            <tr><td>AgentRLDataset</td><td>conversations+tools+gt</td><td>messages+tools+gt</td><td>无（Agent 轨迹，M19）</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 id="pit">坑卡：字符串 find 与"手数 token"</h2>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：为什么必须逐 token 匹配——字符下标不是 token 下标</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            症状：自己写数据管线时最顺手的做法是 <code>text.find("&lt;|im_start|&gt;assistant\n")</code> 拿字符下标当区间边界，
+            或者肉眼数 token（"锚点 3 个 token：im_start、assistant、换行"）。产物往往<b>看起来能跑</b>：
+            loss 正常下降、生成正常——直到发现监督区间整体平移了几十个 token，模型一直在学错位的段落。
+          </li>
+          <li class="cause">
+            <b>token ≠ 字符</b>，两把尺子不可互译。真跑语料第一条：第一个 assistant 回答的起点，字符下标是
+            <b>68</b>、token 下标是 <b>25</b>——68 个字符只折合 25 个 token（中文 2 字 1 token、'assistant' 一个词 3 个 token，M10 实测）。
+            把 68 直接当 token 下标用，"区间起点"已经越过第一个回答的结尾（真实区间是 [25,50)）——切掉的监督 token 不是 18 个而是整段。
+            手数同理必错：'assistant' 在这把 6400 词表下是 <code>ass·ist·ant</code> 三瓣。另一个隐藏失败：字符串 find 找不到后缀返回 -1
+            后怎么处理？旧实现的兜底"监督到结尾"正是 C2 的 0.82 残段来源——残段语义在字符串层面根本没法定义。
+          </li>
+          <li class="fix">
+            逐 token 模式匹配（scan_response_spans + pattern_ids 单处定义），外加测试锁定。作者实测过一个扎心细节：
+            在前 300 行真实数据上，"字符串 find + 重新分词前缀换算"的朴素实现与逐 token 扫描<b>恰好零失配</b>——
+            不是因为它可靠，而是因为锚点恰是特殊 token（强制切分对齐）。"恰好对"意味着<b>没有任何东西保证它对</b>：
+            模板一改（哪怕只动一个空格）、或数据里混入锚点字面量，它就静默错位。脆的东西要用测试钉住，而不是赌它一直对。
+          </li>
+        </ul>
+      </div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+import json
+from transformers import AutoTokenizer
+from minimind_reborn.constants import ASSISTANT_PREFIX_TEXT
+from minimind_reborn.data.datasets import render_conversations
+tok = AutoTokenizer.from_pretrained('assets/tokenizer')
+convs = json.loads(open('/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/sft_t2t_mini.jsonl','rb').readline())['conversations']
+text = render_conversations(tok, convs, remove_empty_think=False)
+ids = tok(text).input_ids
+c = text.find(ASSISTANT_PREFIX_TEXT) + len(ASSISTANT_PREFIX_TEXT)
+print('第一个 assistant 回答的起点：字符下标', c, '；token 下标', 25)
+print('若把字符下标当 token 下标：监督区间从 68 起，而真实区间是 (25, 50)——第一段回答整体丢失')"</span>
+<span class="out">第一个 assistant 回答的起点：字符下标 68 ；token 下标 25</span>
+<span class="out">若把字符下标当 token 下标：监督区间从 68 起，而真实区间是 (25, 50)——第一段回答整体丢失</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径]</b> 同一行数据同环境两次采集；68/25 的换算来自 M12 逐 token 实验（区间列表 [(25,50), …]）。300 行零失配的朴素对照也真跑过（脚本以 300 行滚动 find+前缀重分词对比 find_response_spans），结论只用于坑卡"恰好对"的论证。</p>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · 掩码为什么用 -100，用 0 不行吗？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>不行。0 是合法 token id（词表 0 号就是 <code>&lt;|endoftext|&gt;</code>，M10 的 pad）——拿 0 当掩码，交叉熵会把它当成"该位置的正确答案"认真计算，等于在每个掩码位学习预测一个真实存在的 token。-100 是 PyTorch <code>CrossEntropyLoss(ignore_index=-100)</code> 的约定哨兵：词表只有 0~6399，-100 永远不可能与任何真实标签撞车，损失函数直接跳过。M09 说过的"这一格不算账"，兑现处正是本课的 build_labels。</p>
+            <p class="back">答错回看：<a href="#concept">loss mask 概念卡</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · C1 轮次截断为什么"保尾不保头"？丢 system 行不行？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>保尾：一条多轮会话里最完整的"接着聊"语境在末轮，丢末轮等于丢掉最新鲜的问答对；旧轮只承担上下文职责，且信息常被后文复述，丢得起。system 恒留（<code>_fit_turns</code> 先把 system 摘进 head 再丢轮）：人设指令对每一轮的约束都有效，丢了它，末轮回答可能"换了个人"。还有一层：这套"丢最旧轮、system 恒留、仍超则左截末轮 user 保尾部"与推理侧 ChatSession 滑动窗口同构——训练与推理用同一种截断口径，模型不会认生。</p>
+            <p class="back">答错回看：<a href="#c1">C1 轮次边界截断</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · DPO 为什么 chosen/rejected 必须共享同一次 remove_empty_think 抽签？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>DPO 损失比较的是两条序列的对数概率<b>差</b>（M17 推导）。若两边独立抽签，可能出现 chosen 带空 think、rejected 不带——36 token 的格式差异混进偏好信号，模型可能学出"带 think 的回答更好"的假规律。每行抽一次签、同一个布尔值喂两边（<code>_encode_side(…, remove_empty_think)</code>），格式变量被钉死，剩下的差异才可归因为内容好坏。实测 30 次抽样 30/30 同进退。这正是"控制变量"在数据管线里的形态。</p>
+            <p class="back">答错回看：<a href="#dpo">DPODataset：一对样本，共享一次抽签</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · PretrainDataset 为什么不做区间扫描，SFT 为什么必须做？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>取决于样本里有没有"不该学的部分"。预训练是纯语言建模：整篇文档处处是有效监督信号（每个位置都有"下一词"要学），labels 与 input_ids 逐位相同，唯一要灰掉的是凑批填充位。SFT 样本里混着四种东西——用户的话、模板件、assistant 回答、填充——前两种和最后一种不该学（用户的话不是模型要重现的内容；模板件是"递话头"的固定协议），所以必须先用锚点扫描划出回答区间再着色。一句话：<b>loss mask 的复杂度与"样本里不该学的内容占比"成正比</b>。</p>
+            <p class="back">答错回看：<a href="#pretrain">PretrainDataset：没有 loss mask 的世界</a> 与 <a href="#concept">loss mask 概念</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 1 · 把 add_system_ratio 调成 1.0：监督信号变多还是变少？</div>
+        <div class="ex-body">
+          <p>
+            增强A 的默认是 0.2（20% 的样本注入随机 system）。现在把它调到 1.0（每条必注入），同一行样本反复取 6 次，
+            观察渲染形态、token 数与监督 token 数。先跑再看：
+          </p>
+          <div class="codeblock"><div class="code-head"><span>变式 1 实验脚本（核心逻辑，完整版见 /tmp/m12_variant.py）</span><span class="lang">python</span></div><pre class="code"><code>random.seed(0)
+texts = set()
+for _ in range(6):                                  # 同一行抽 6 次
+    c = convs
+    if c[0].get("role") != "system" and random.random() &lt; ratio:
+        c = [{"role": "system", "content": random.choice(SYSTEM_PROMPTS)}] + c
+    texts.add(render_conversations(tok, c, remove_empty_think=False))
+ids = tok(sorted(texts)[0]).input_ids
+spans, _ = scan_response_spans(ids, prefix_ids, suffix_ids)
+labels = build_labels(ids, spans)
+print(f"渲染变体 {len(texts)} 种；全长 {len(ids)} token；监督 {sum(1 for l in labels if l != -100)}")</code></pre></div>
+          <div class="ex-predict"></div>
+          <p>写下预测：① 监督 token 的<b>绝对数</b>会变吗？② 全长与监督占比会怎么变？③ 6 次抽样会得到几种渲染？④ labels 的开头一段是什么颜色？</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>
+              <b>观察（作者实测，同环境）：</b>ratio=0.0：1 种渲染、549 token、监督 414（75%）；ratio=1.0：6 次抽样
+              <b>5 种渲染</b>、全长 562（抽中英文 system 的那种）、监督 <b>414（一个没多）</b>、占比 74%——labels 开头一段依然全 -100。
+            </p>
+            <p>
+              <b>机制：</b>① system 段渲染在第一个 assistant 锚点<b>之前</b>，永远落在区间外——注入多少都不产生新的监督信号，
+              监督绝对数纹丝不动；② 全长 +13（英文 system 的 token 数），占比 75%→74% 只是分母变大；③ 10 条池里抽 6 次几乎不重样——
+              同一行样本在多轮训练中以 10 种"人设"出现，这就是"运行时增强白拿多样性"；④ 也提醒了另一面：推理侧 ChatSession
+              默认<b>不注入</b> system（裸 user 开局），ratio=1.0 会让训练分布（永远带 system）与推理分布（永远不带）开局错位。
+              0.2 的默认值是折中：多数样本保持无 system 形态，少数学到"遵循人设"。调这个旋钮改的不是监督量，是<b>分布</b>。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M12 验收</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下两步。第一步，数据侧两组测试全绿（作者真实输出）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_data/test_loss_mask.py tests/test_data/test_sft_pipeline.py -q</span>
+<span class="ok">........................                                                 [100%]</span>
+<span class="ok">24 passed in 0.08s</span></code></pre>
+          <ul class="pass-criteria">
+            <li><code>24 passed</code>——test_loss_mask.py 的 7 个（锚点形状 / 单轮区间 / 多轮双区间 / C2 残段两用例 / 增强确定性 / 增强 B 语义）+ test_sft_pipeline.py 的 17 个（C1×7、C4/C5 基础×3、C3/C4/C5 集成×4、D1×3，归属表见上文）；</li>
+            <li>✏️ 填空自测：<code>uv run python /tmp/m12_fill.py</code> 打出 <code>2 个区间 [(13, 23), (36, 46)]</code> 与 <code>ALL PASS</code>——与 reborn <code>find_response_spans</code> 逐位一致，砍尾 4 token 后区间 1 + 残段 1；</li>
+            <li>逐 token 实验：<code>/tmp/m12_first.py</code> 打出 7 区间、414/549=75%、忽略/监督交替 14 段——能与概念节的着色图逐段对上；</li>
+            <li>变式 1 完成"先预测再观察"，能说清"监督绝对数不变、分布变了"。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按症状分流）</summary>
+            <p>
+              <b>fill 脚本 assert 失败</b> → 三空至少一空错位：对照"完整答案"卡里每个空的错误后果（抢答/区间空/不闭嘴）定位是哪个；
+              <b>区间数量对但位置偏</b> → 空① 大概率写成了 <code>i</code> 或 <code>i + 1</code>——锚点 5 个 token 要整段跳过；
+              <b>pytest 有 failed</b> → 先 <code>git status</code> 确认没改过 <code>loss_mask.py</code>/<code>constants.py</code>/模板字符串（本课只读仓库）；
+              改过就是"脆耦合"警报，这正是那 7 个测试存在的意义；
+              <b>FileNotFoundError: sft_t2t_mini.jsonl</b> → 数据未下载：跑 <code>uv run python tools/download_data.py --name sft_t2t_mini</code>（M01/M11）；
+              <b>逐 token 数字与页面不同</b> → 检查是否换了语料行或动了 remove_empty_think（None 是随机抽签，False/True 才是定值）。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        至此第三篇收官：文本有了刀（M10）、仓库有了索引（M11）、样本有了着色法（本课）——<code>{"input_ids", "labels"}</code>
+        已经是 Trainer 能直接消费的形态。下一课 M13 打开第四篇：训练基座 Trainer 的生命周期、学习率纯函数、AMP 混合精度，
+        以及本课埋下的伏笔如何被消费——DataLoader 的 worker 种子、stats 与数据卡怎么进训练侧的可观测。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>loss mask <span class="en">损失掩码</span></dt><dd>与 input_ids 等长的着色表：该学的位置 label=原 token id（进交叉熵），不该学的 label=-100（跳过）。SFT 只在 assistant 回答区间算损失；两个孪生产出 build_labels（-100 哨兵，SFT 用）与 build_mask（0/1 权重，DPO 用）。</dd>
+          <dt>监督区间 <span class="en">response span</span></dt><dd>[start, stop) 半开 token 区间：从前缀锚点（"&lt;|im_start|&gt;assistant\n"，5 token）之后起，到后缀锚点（"&lt;|im_end|&gt;\n"，2 token）含尾收口——模型要学的除回答正文外还包括 think 块与"何时闭嘴"的收尾。</dd>
+          <dt>残段 <span class="en">dangling</span></dt><dd>有前缀锚点开头、后缀锚点被截断丢失的半截回复。C2 修复后不计监督（只计数供诊断）；旧行为兜底划入损失区间，是"回答戛然而止、复读"的训练侧源头（基线 0.82 残段/受损样本，存档 docs/retrain_plan §3.1）。</dd>
+          <dt>零损失样本 <span class="en">zero-loss sample</span></dt><dd>截断后不含任何完整回复 → labels 全 -100 → 损失恒 0、零梯度，GPU 前向照算（"白训"）。C3 在训练视图取数路径上确定性前向重映射跳过，触发次数计入数据卡。</dd>
+          <dt>拦腰截断 / 轮次边界截断</dt><dd>旧新两种超窗策略：前者 <code>ids[:max_length]</code> 一刀切（切口落进回复中间，残段与零损失的温床）；后者 C1 的 _fit_turns——丢最旧整轮（system 恒留）→ 左截末轮 user 保尾部 → 单回复超窗才硬截兜底。</dd>
+          <dt>运行时增强 <span class="en">runtime augmentation</span></dt><dd>每次取样本时重新抽签的两处随机性：增强A 概率注入 system（0.2，10 条池）；增强B 概率移除空 think 块（保留 0.2）。不加数据白拿分布多样性；随机性由 seed_worker 治理（同 seed 同结果）。</dd>
+          <dt>配对公平 <span class="en">pairing fairness</span></dt><dd>DPO 每行抽一次 remove_empty_think 签、chosen/rejected 共用——把"格式"这个无关变量钉死，两序列的对数概率差才可归因为内容好坏（M17）。</dd>
+          <dt>manifest 旁车清单 <span class="en">sidecar manifest</span></dt><dd>构建期一次全量扫描（不做分词）产出的 .manifest.npz：每行的回复哈希（C4 去重键）、keep、is_eval（C5 分桶）、n_messages。哈希用 md5 不用内建 hash()（跨进程稳定），指纹 mtime+size 失效重算（M11 详讲）。</dd>
+          <dt>哈希分桶切分 <span class="en">hash-bucket split</span></dt><dd>训练/验证归属按整行规范化内容的稳定哈希取模决定，与文件顺序无关——治"有序文件尾切验证集分布偏移"（C5，基线多轮占比差约 21pp → 断言 ≤2pp）。</dd>
+          <dt>prompt-only 样本</dt><dd>RL 阶段（RLAIF/AgentRL）的数据形态：只渲染"该 assistant 说话了"的话头（add_generation_prompt=True），answer 留空——答案由 rollout 现场生成、奖励打分（M19）。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

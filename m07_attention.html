@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M07 · Attention：GQA、QK-Norm 与三条路径 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m07">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第二篇 模型：造</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M07</span><span>第二篇 · 模型：造</span></div>
+        <h1>Attention：GQA、QK-Norm 与三条路径</h1>
+        <p class="lede">
+          M06 的 KV cache 让"每步只算新 token"成为可能，真正允许它这么干的是⑤站核心零件 attention：
+          只对历史列查询、挡住未来、无视 padding。这一课把它整个拆开——手算 Q/K/V 检索、GQA 砍半 KV cache
+          （回收 M04 的整除伏笔）、QK-Norm 踩刹车，再精读同一语义下的三条执行路径并亲手证明等价。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M06 KV Cache 预分配</b></span>
+          <span class="chip">时长：<b>约 80 分钟</b></span>
+          <span class="chip">新概念：<b>GQA（分组查询注意力）· QK-Norm</b></span>
+          <span class="chip">对照：<code>models/attention.py</code> · <code>models/layers.py</code> · <code>tests/test_models/</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li><b>手算</b>一遍 4 token 的注意力（打分 → softmax → 加权求和），说出 Q/K/V 的检索角色与 $\sqrt{d}$ 缩放的原因；</li>
+        <li>画出 <b>8 Q 头共享 4 组 KV</b> 的 GQA 结构图，算清 KV cache 减半的显存账，解释 M04 整除约束为什么是<b>硬</b>的；</li>
+        <li>解释 <b>QK-Norm</b> 为什么作用在 head_dim 维、放在 RoPE 之前，防的是哪种爆炸；</li>
+        <li>默写<b>三条执行路径</b>的判定条件与场景，动手证明同权重 fp32 下三路径 allclose；</li>
+        <li>✏️ 补全路径③的三个关键行（缩放 / 因果 mask / softmax 维度），自测脚本验证与路径①一致。</li>
+      </ul>
+
+      <h2 id="qkv">Q/K/V：先把注意力当一次检索</h2>
+      <p>注意力（attention）要解决的问题是：生成第 $t$ 个 token 时，前文 $t$ 个 token <b>各自该贡献多少</b>。最直觉的模型是一次检索：</p>
+
+      <div class="callout tip">
+        <div class="co-title">💡 概念卡：Q/K/V = 查询 / 索引 / 内容</div>
+        <p>
+          把每个 token 想成图书馆里的一本书：<b>K</b>（Key，索引）是书脊标签，<b>V</b>（Value，内容）是正文，
+          <b>Q</b>（Query，查询）是你想找的主题。当前 token 拿 Q 与每个位置的 K 比对得分数，经 softmax（把一组分数变成和为 1 的概率）
+          变成权重，再按权重把各位置的 V <b>加权求和</b>——这就是它"读完全文后"的新表示：
+          $$\mathrm{Attention}(Q,K,V)=\mathrm{softmax}\!\left(\frac{QK^\top}{\sqrt{d}}\right)V$$
+          <b>多头</b>（multi-head）是同一件事做 8 遍：把 hidden 768 切成 8 份 head_dim=96（M04 的派生参数），各自独立检索再拼接——
+          8 个头学会关注不同关系（指代、邻近、语法……）。
+        </p>
+      </div>
+
+      <h3 id="hand-example">手算：4 个 token，一个头，数字真算</h3>
+      <p>
+        取「春 天 来 了」，1 个头，head_dim $d=4$，q/k/v 全部手写；V 特意用 one-hot（只有自己那位是 1）——
+        加权求和的结果就<b>直接等于权重本身</b>。看「了」这一行（它能看到全部 4 个位置）：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">步骤</th><th>春</th><th>天</th><th>来</th><th>了</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>原始打分 $q\cdot k$</td><td>4</td><td>3</td><td>2</td><td>5</td><td>逐项手算，如 春：$1{\times}2+1{\times}0+2{\times}1+0=4$</td></tr>
+            <tr><td>缩放 $\div\sqrt{4}=2$</td><td>2.0</td><td>1.5</td><td>1.0</td><td>2.5</td><td>logits 压回 O(1) 量级</td></tr>
+            <tr><td>$e^{s}$</td><td>7.389</td><td>4.482</td><td>2.718</td><td>12.182</td><td>和为 26.772</td></tr>
+            <tr><td><b>softmax 权重</b></td><td><b>0.276</b></td><td><b>0.167</b></td><td><b>0.102</b></td><td><b>0.455</b></td><td>各项除以 26.772，和恒为 1</td></tr>
+            <tr><td>输出 $=\sum w_i v_i$</td><td>0.276</td><td>0.167</td><td>0.102</td><td>0.455</td><td>one-hot V 下输出=权重本身</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        「了」最在意自己（0.455），其次「春」（0.276）。因果性（causality，只看前文）体现在 <b>mask</b>（掩码）上：
+        第 $i$ 行只允许前 $i{+}1$ 列有权重，其余列 softmax 前置 $-\infty$。完整 4×4 权重矩阵（脚本核对；行=查询，列=被看）：
+      </p>
+      <pre class="ascii"><code>            春      天      来      了
+   春     1.000   0.000   0.000   0.000     ← 第 1 个 token 只能看自己
+   天     0.731   0.269   0.000   0.000     ← 对角线右上方恒 0 = 因果 mask
+   来     0.155   0.422   0.422   0.000        （每行和=1，被 mask 的列精确为 0）
+   了     0.276   0.167   0.102   0.455     ← 手算主角，与上表逐位一致</code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 全部数字由脚本逐个核算（q/k/v 手写、矩阵由 <code>softmax + triu(1)</code> 计算），并与 <code>F.scaled_dot_product_attention(is_causal=True)</code> 对照 allclose=True。自检锚点：<b>第一行权重恒为 1.0</b>（第 1 个 token 只能看自己，softmax 单点归一）——记住它，一眼看出因果 mask 写没写反。</p>
+
+      <div class="callout note">
+        <div class="co-title">📐 严谨卡：为什么要除以 $\sqrt{d}$？</div>
+        <p>
+          两个各维独立、零均值、单位方差的随机向量点积，期望 0、方差恰为 $d$——维度越高打分越容易跑出 $\pm 3\sqrt{d}$。
+          $d=96$ 时不缩放打分动辄 $\pm 30$，softmax 里 $e^{30}\approx 10^{13}$，分布直接<b>坍缩成 one-hot</b>
+          （训练早期等于随机挑一个 token 全信，梯度近乎为零）。除以 $\sqrt{d}$ 把方差拉回 1，让"softmax 真的在比较"——
+          这与 QK-Norm 是同一条纪律的两个层次，后者连范数漂移一起管（见下文）。
+        </p>
+      </div>
+
+      <p>进代码前固定记号——本课 shape 注释全程用 <b>(B, H, T, D)</b>（批 / 头数 / 序列长 / 头维度）。64M 配置下的主干变换：<code>x (B, T, 768)</code> → 投影 <code>xq (B, T, 8, 96)</code>、<code>xk/xv (B, T, 4, 96)</code> → 转置复制 <code>(B, 8, T/total, 96)</code> → 打分 <code>scores (B, 8, T, total)</code>（total = 历史列 + 新列，M06 的游标语义）。</p>
+
+      <h2 id="gqa">GQA：8 个 Q 头共享 4 组 KV</h2>
+      <p>
+        上表里藏着一个不对称：Q 有 <b>8</b> 个头，K/V 却只有 <b>4</b> 组。这就是 <b>GQA</b>（Grouped-Query Attention，
+        分组查询注意力）：不是每个 Q 头配一套自己的 K/V，而是每 <b>2 个 Q 头共用一组 KV</b>。
+        为什么值得？回到 M06 的显存账——KV cache 缓存的是每个 token 的 K 和 V：
+      </p>
+
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/attention.py.html">src/minimind_reborn/models/attention.py</a> · __init__ 头数与投影（节选）</span><span class="lang">python</span></div><pre class="code"><code>self.num_kv_heads = config.num_key_value_heads        # 4：KV 组数
+self.num_heads = config.num_attention_heads           # 8：Q 头数
+self.n_rep = self.num_heads // self.num_kv_heads      # 8 // 4 = 2：每组 KV 服务 2 个 Q 头
+self.head_dim = config.head_dim                       # 96（M04 派生：768 // 8）
+self.q_proj = nn.Linear(config.hidden_size, self.num_heads * self.head_dim, bias=False)     # 768→768
+self.k_proj = nn.Linear(config.hidden_size, self.num_kv_heads * self.head_dim, bias=False)  # 768→384
+self.v_proj = nn.Linear(config.hidden_size, self.num_kv_heads * self.head_dim, bias=False)  # 768→384
+self.q_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)   # QK-Norm 专用（下节）
+self.k_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)</code></pre></div>
+
+      <p>
+        KV 头数减半，<b>两头账单同时缩水</b>：K/V 投影参数从 768×768 变 768×384（每层省约 59 万 ×2）；推理时 KV cache 每 token 只存 4 组——
+        M06 那本账的关键一行，本课把数字算实：
+      </p>
+      <pre class="ascii"><code>   Q 头（8 个，各自独立计算）          KV 组（4 组，被共享）
+     q0 ─────────────────► ◆ kv0 ◄───────────── q1      n_rep = 2：
+     q2 ─────────────────► ◆ kv1 ◄───────────── q3        相邻两个 Q 头
+     q4 ─────────────────► ◆ kv2 ◄───────────── q5        共享同一组 KV
+     q6 ─────────────────► ◆ kv3 ◄───────────── q7
+
+   repeat_kv(n_rep=2) 之后的 KV 列序：kv0 kv0 kv1 kv1 kv2 kv2 kv3 kv3 —— 8 列对齐 8 个 Q 头</code></pre>
+      <p>共享是"相邻成对"：q0/q1 挂 kv0，q2/q3 挂 kv1，以此类推。扩张由一个 7 行的函数完成：</p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/layers.py.html">src/minimind_reborn/models/layers.py</a> · repeat_kv 全文</span><span class="lang">python</span></div><pre class="code"><code>def repeat_kv(x: torch.Tensor, n_rep: int) -&gt; torch.Tensor:
+    """GQA：把 kv 头复制 n_rep 份对齐 q 头数。
+    x: (b, seq, kv_heads, head_dim) → (b, seq, kv_heads·n_rep, head_dim)；n_rep=1 原样返回。
+    """
+    batch, seq_len, kv_heads, head_dim = x.shape
+    if n_rep == 1:
+        return x
+    return (
+        x[:, :, :, None, :]                                  # (b, seq, kv, 1, d) 先插一维
+        .expand(batch, seq_len, kv_heads, n_rep, head_dim)   # 广播出 n_rep 份（零拷贝）
+        .reshape(batch, seq_len, kv_heads * n_rep, head_dim) # 摊平成 4×2=8 个头
+    )</code></pre></div>
+      <p>
+        <code>expand</code> 是零拷贝广播、<code>reshape</code> 才落盘——摊平不是"真复制 8 份"，成本很低。代价照付的地方在<b>显存账</b>：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">结构</th><th class="u-w120">kv_heads（n_rep）</th><th>每 token KV cache</th><th>2048 token</th><th>32768 token（max_seq）</th></tr></thead>
+          <tbody>
+            <tr><td><b>GQA（reborn 默认）</b></td><td>4（n_rep=2）</td><td>2×8层×4×96×2B = <b>12 KB</b></td><td>24 MB</td><td><b>384 MB</b></td></tr>
+            <tr><td>MHA（无共享）</td><td>8（n_rep=1）</td><td><b>24 KB</b></td><td>48 MB</td><td><b>768 MB</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 公式 $2(K{+}V)\times 8\text{层}\times kv\text{头}\times 96\times 2\text{B(fp16)}$；并用 <code>KVCache(8, 1, 32768, kv, 96, fp16)</code> 真分配核对：k+v 合计 384 MB（kv=4）/ 768 MB（kv=8）。M06 讲过的预分配账，GQA 直接把基数砍半。</p>
+
+      <h3 id="gqa-divide">回收 M04 伏笔：整除约束为什么是硬的</h3>
+      <p>
+        M04 守门人那条 <code>num_attention_heads % num_key_value_heads == 0</code>（GQA 约束）此刻兑现：它硬在
+        <code>repeat_kv</code> 最后一行——<code>reshape</code> 目标头数是 <code>kv_heads × n_rep</code>，而
+        <code>n_rep = num_heads // num_kv_heads</code> 是<b>整除截断</b>。若 8 Q 头配 3 组 KV：<code>n_rep = 8 // 3 = 2</code>，
+        reshape 得 <b>6</b> 个 KV 头 ≠ 8 个 Q 头——错误要拖到运行期第一次矩阵乘才爆：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+import torch
+from minimind_reborn.models.layers import repeat_kv
+q = torch.randn(1, 5, 8, 96)          # 8 个 Q 头
+k = repeat_kv(torch.randn(1, 5, 3, 96), 8 // 3)   # 3 组 KV，n_rep=8//3=2 → 只摊平出 6 头
+print('repeat 后 kv 头数 =', k.shape[2])
+q.transpose(1, 2) @ k.transpose(1, 2).transpose(-2, -1)"</span>
+<span class="out">repeat 后 kv 头数 = 6</span>
+<span class="err">RuntimeError: The size of tensor a (8) must match the size of tensor b (6) at non-singleton dimension 1</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30]</b> M04 变式 2 已在装配期见过守门人版本：<code>ValueError: num_attention_heads(7) 必须被 num_key_value_heads(2) 整除（GQA 约束）</code>。同一种错：M04 拦在训练开始前一秒，这里是没守门人时它在运行期的样子——深处、难懂、晚好几拍。"除不尽就没有分组方案"不是数学洁癖，是 reshape 对不上 shape。</p>
+
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：GQA 是 MHA 与 MQA 的折中</div>
+        <p>
+          频谱两端：<b>MHA</b>（每 Q 头独享 KV，质量最好、cache 最贵）与 <b>MQA</b>（全部 Q 头共享 1 组 KV，最省但质量明显掉）。
+          GQA 取中间档：Llama 2 70B、Llama 3、Qwen 系均采用；reborn 8Q/4KV 与官方 minimind 同构——M09 官方权重 strict 互通
+          靠的就是形状逐键一致。KV 头数既是<b>推理成本的旋钮</b>，也是<b>权重形状的一部分</b>，定了就锁死。
+        </p>
+      </div>
+
+      <h2 id="qknorm">QK-Norm：进 RoPE 之前先踩一脚刹车</h2>
+      <p>
+        <code>__init__</code> 里那两行 <code>q_norm / k_norm</code> 是本课第二个新概念。<b>QK-Norm</b>：对 q、k 各做一次
+        RMSNorm（M05 读过的实现：fp32 归一化、<code>type_as</code> 回落），作用维度是 <b>head_dim</b>——每个头、每个位置各自归一，然后才进 RoPE：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/attention.py.html">src/minimind_reborn/models/attention.py</a> · forward 前置段（节选）</span><span class="lang">python</span></div><pre class="code"><code>xq = self.q_proj(x).view(bsz, seq_len, self.num_heads, self.head_dim)      # (B, T, 8, 96)
+xk = self.k_proj(x).view(bsz, seq_len, self.num_kv_heads, self.head_dim)   # (B, T, 4, 96)
+xv = self.v_proj(x).view(bsz, seq_len, self.num_kv_heads, self.head_dim)   # (B, T, 4, 96)
+xq, xk = self.q_norm(xq), self.k_norm(xk)     # QK-Norm：每个头内、head_dim 维踩刹车
+cos, sin = position_embeddings
+xq, xk = apply_rotary_pos_emb(xq, xk, cos, sin)   # RoPE（M05）：转的是"位置"，v 不转</code></pre></div>
+      <p>
+        为什么需要？打分 $s = q\cdot k / \sqrt{d}$，由柯西–施瓦茨不等式 $|q\cdot k| \le \|q\|\|k\|$——量级被 q、k 的<b>范数</b>直接放大。
+        训练中范数若不受控漂移，logits 爆炸、softmax 坍缩成 one-hot、注意力锁死在单点、梯度近乎消失。实测一笔账（head_dim=96，权重默认全 1）：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w200">q/k 状态</th><th>缩放后 logit 最大值</th><th>后果</th></tr></thead>
+          <tbody>
+            <tr><td>随机初始化（σ=1）</td><td>3.86</td><td>健康：softmax 还有分布形状</td></tr>
+            <tr><td>范数漂移（σ=3）</td><td><b>34.29</b></td><td>$e^{34}\approx 10^{15}$：softmax 完全饱和成 one-hot</td></tr>
+            <tr><td><b>RMSNorm 之后</b></td><td>3.51</td><td>无论输入范数多大，$\|q\|\|k\|=d$ 封顶 → logit $\le\sqrt{96}\approx 9.8$</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 5000 对随机 q/k 的 $|q\cdot k|/\sqrt{96}$ 统计；RMSNorm 后每向量 RMS=1（$\|v\|=\sqrt{96}$），柯西–施瓦茨给出硬上界 96，缩放后 $\approx 9.8$。<code>weight</code> 是可学习逐维增益——模型仍能按需放大，但放大被参数显式控制，不再随范数漂移。</p>
+      <p>
+        两个易错点：<b>位置</b>——norm 在 RoPE <b>之前</b>，先把范数钉死、再旋转位置；放 RoPE 后，旋转/YaRN 缩放引入的范数变化会跟归一化打架。<b>维度</b>——是 head_dim（头内）而非 hidden_size：8 个头的分布各自稳，不做跨头平均。实现直接复用 <code>layers.py</code> 的 RMSNorm（M05 的"敏感算子纪律"原样生效：fp32 归一化、<code>type_as</code> 回落）。
+      </p>
+
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：QK-Norm 已是现代标配</div>
+        <p>
+          ViT-22B 论文（Dehghani 等，2023）把 q/k 归一化带进主流，Qwen3、Gemma 3 同款采用。小模型尤其需要：
+          数据少、训练短，范数漂移没有机会被海量数据磨平，一个不稳的头就能拖垮 loss 曲线——64M 的小模型选它是"小更要稳"的典型决策。
+        </p>
+      </div>
+
+      <h2 id="paths">三条执行路径：一份语义，三台发动机</h2>
+      <p>
+        前置段算完 q/k/v，forward 下半场是本课主体：<b>同一套注意力语义</b>（GQA + QK-Norm + RoPE + 因果 + pad 抑制）有三个实现，
+        按序判定、择一执行——训练全段、推理带 cache、没有融合算子的老环境，各自的最优发动机不同：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/attention.py.html">src/minimind_reborn/models/attention.py</a> · 路径分派（节选）</span><span class="lang">python</span></div><pre class="code"><code>if cache is not None:                     # M06：写入本步新 k/v，零拷贝前缀读回
+    cache.write(layer_idx, xk, xv, cache_start)
+    total_len = cache_start + seq_len
+    xk_full, xv_full = cache.k[layer_idx, :, :total_len], cache.v[layer_idx, :, :total_len]
+else:
+    xk_full, xv_full = xk, xv
+xq = xq.transpose(1, 2)                                   # (B, 8, T, 96)
+xk_full = repeat_kv(xk_full, self.n_rep).transpose(1, 2)  # (B, 8, total, 96)
+xv_full = repeat_kv(xv_full, self.n_rep).transpose(1, 2)
+
+use_sdpa = (
+    self.flash                            # sdpa_available() 且配置 flash_attn=True
+    and cache is None                     # 条件一：无 cache（训练/整段编码）
+    and (attention_mask is None or bool(torch.all(attention_mask == 1)))  # 条件二：无 padding
+)
+if use_sdpa:
+    ...                                    # ① SDPA is_causal
+elif self.flash:
+    ...                                    # ② SDPA + 显式 additive mask（带 cache / 有 padding）
+else:
+    ...                                    # ③ manual 显式打分（flash_attn=False 或无 SDPA）</code></pre></div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w44">路径</th><th class="u-w200">触发条件</th><th>典型场景</th><th class="u-w130">打分矩阵</th></tr></thead>
+          <tbody>
+            <tr><td><b>①</b></td><td>flash ✓ 且 cache=None 且 mask 全 1</td><td>训练全段 / 无 pad 整段编码</td><td>不物化（融合核内）</td></tr>
+            <tr><td><b>②</b></td><td>flash ✓ 且（带 cache 或有 pad）</td><td>推理 prefill/decode、rollout 拼批</td><td>不物化（融合核内）</td></tr>
+            <tr><td><b>③</b></td><td>flash ✗（<code>flash_attn=False</code> 或无 SDPA）</td><td>数值基线 / 教学参考 / 老环境</td><td>物化 (B,8,T,total) fp32</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        "物化"（materialize）指真的把中间矩阵写进显存——③会把整个 $T\times total$ 打分矩阵摆上台面；①②的融合 kernel
+        （GPU 上一次调用执行的计算单元，SDPA 内部自动在 flash / memory-efficient / math 后端里挑）分块在片上算完，从不完整落盘。
+        SDPA 指 <code>torch.nn.functional.scaled_dot_product_attention</code>（PyTorch 2.0 起内置）；
+        <code>sdpa_available()</code> 用 <code>hasattr</code> 探测一次、全项目复用。
+      </p>
+
+      <h3 id="path1">路径①：SDPA is_causal——训练全段</h3>
+      <p>条件最苛刻（无 cache、无 pad），语义也最简单——因果下三角直接交给算子的 <code>is_causal</code> 开关：</p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/attention.py.html">src/minimind_reborn/models/attention.py</a> · 路径①（节选）</span><span class="lang">python</span></div><pre class="code"><code>output = F.scaled_dot_product_attention(
+    xq, xk_full, xv_full,
+    dropout_p=self.dropout if self.training else 0.0,   # 训练期才开 attention dropout
+    is_causal=self.is_causal,        # True：第 i 行只见前 i+1 列——与手算例的 mask 同语义
+)</code></pre></div>
+
+      <h3 id="path2">路径②：SDPA + 显式 mask + cache——prefill / decode</h3>
+      <p>
+        带 cache 时不能用 <code>is_causal</code>：它假设 query 与 key <b>等长对齐</b>，而 decode 步只有 1 个新 query、
+        却面对 total 个 key——causal 语义变成"历史列<b>全部可见</b>，因果限制只落在<b>新块内部</b>"。所以改喂显式
+        加性 mask（additive mask：加到打分上的矩阵，$-\infty$ 的位置 softmax 后权重为 0）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/attention.py.html">src/minimind_reborn/models/attention.py</a> · 路径② mask 构造（节选）</span><span class="lang">python</span></div><pre class="code"><code>total_len = cache_start + seq_len
+neg_min = torch.finfo(xq.dtype).min                    # 精度下限（fp16/fp32 各自取，防下溢）
+mask = torch.zeros(bsz, 1, seq_len, total_len, device=xq.device, dtype=xq.dtype)  # (B,1,T,total)
+if seq_len &gt; 1:                                        # decode 步 seq=1：新块只有 1 列，无块内因果
+    causal = torch.zeros(seq_len, total_len, device=xq.device, dtype=xq.dtype)
+    causal[:, cache_start:] = torch.full(              # 只在"新块列"上放因果墙：
+        (seq_len, seq_len), neg_min, device=xq.device, dtype=xq.dtype
+    ).triu(1)                                          # 上三角（含偏移1）= 屏蔽"块内未来"
+    mask = mask + causal                               # 历史列全 0 = 全可见
+if attention_mask is not None:                         # pad 列抑制（0 的列整列封死）
+    mask = mask.masked_fill(attention_mask[:, None, None, :total_len] == 0, neg_min)
+output = F.scaled_dot_product_attention(
+    xq, xk_full, xv_full, dropout_p=self.dropout if self.training else 0.0, attn_mask=mask
+)</code></pre></div>
+      <p>
+        三处讲究：<b>triu(1)</b>——上三角跳过对角线，第 $i$ 行屏蔽块内第 $i{+}2$ 列起的"未来"而保留自己；偏移写 1 不是 0，
+        就是源码注释里的 off-by-one（差一位）杀手位：写 0 连"自己看自己"都屏蔽，行内全 $-\infty$，softmax 出 NaN。
+        <b>masked_fill 而非加法</b>——pad 列用"覆盖"：若在已有因果墙的格子上再 <code>+</code> 一个下限值，fp16 下两下限相加会
+        <b>下溢翻转</b>成 $+\infty$，掩码变通道。<b>形状 (B,1,T,total)</b>——中间两个 1 广播到 8 头：pad 是序列级事实，不按头区分。
+      </p>
+
+      <h3 id="path3">路径③：手动显式打分——fp32 数值基线</h3>
+      <p>
+        <code>flash_attn=False</code> 或无 SDPA 环境的回退路径，也是理解①②的"参考实现"——所有语义摊开在矩阵上，可打印、可手算
+        （开头的手算例子就是它的缩小版）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/attention.py.html">src/minimind_reborn/models/attention.py</a> · 路径③（节选）</span><span class="lang">python</span></div><pre class="code"><code>scores = (xq @ xk_full.transpose(-2, -1)).float() / math.sqrt(self.head_dim)  # (B,8,T,total) 升 fp32
+if self.is_causal:
+    # 与路径②同一论证：因果墙只作用于"当前步的新位置块"（最后 seq_len 列），历史列全可见
+    scores[:, :, :, -seq_len:] += torch.full((seq_len, seq_len), float("-inf"), device=scores.device).triu(1)
+if attention_mask is not None:
+    scores += (1.0 - attention_mask.unsqueeze(1).unsqueeze(2).to(scores.dtype)) * -1e9  # pad 加性抑制
+output = self.attn_dropout(F.softmax(scores, dim=-1).type_as(xq)) @ xv_full  # softmax 后回落精度</code></pre></div>
+      <p>
+        与②的两处对照：③ 的因果墙用切片 <code>[:, :, :, -seq_len:]</code> 落位（②用 <code>causal[:, cache_start:]</code>——同一个"最后 seq_len 列"，两种写法）；
+        ③ 的 pad 抑制用<b>加性</b> $-10^9$ 而非覆盖——fp32 打分不怕下溢。数值纪律是 M05 纪律的延伸：<b>打分升 fp32、softmax 后 <code>type_as</code> 回落</b>——
+        softmax 的指数与除法在半精度下最易失真，升精度算、算完回落。
+      </p>
+
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：mask 忘了 pad 列——泄漏不在 prefill，在下一步</div>
+        <ul class="pit-stages">
+          <li class="sym">右 padding 批次（M06 的 rollout / 批量对话）里喂了带 pad 的 <code>input_ids</code> 却没传 <code>attention_mask</code>：prefill 期"看起来没事"，若干步后输出渐渐跑偏，无任何报错。</li>
+          <li class="cause">prefill 期因果 mask 恰好挡住 pad 列（pad 在未来），<b>有效位置毫发无损</b>——这正是它阴险之处；但 pad 位置的 K/V 已写进 cache。decode 步一来，pad 列变成"过去"，因果墙不再挡——垃圾 K/V 从此混进每次加权求和。实测（tiny 模型）：丢 mask 后 pad 位 logits 漂移 max|Δ|=0.0425、首个 decode 步偏差 7e-4——随机权重下数字不大，但"逐位一致"的契约已破。</li>
+          <li class="fix">mask 跟着 input_ids 走：<code>model(x, attention_mask=mask, past_key_values=cache)</code>，pad 列在②被 <code>masked_fill</code> 封死、在③被 $-10^9$ 压平。回归锁定是 <code>test_sdpa_prefill_path_matches_manual</code> 的第三个断言（padding mask 下双路径 allclose）——mask 语义错了，等价性测试立刻红。</li>
+        </ul>
+      </div>
+
+      <div class="callout note">
+        <div class="co-title">📐 严谨卡：fp16 下双路径分叉是预期，契约以 fp32 为准</div>
+        <p>
+          模块 docstring 写明：<b>"fp16 双路径贪心分叉属预期浮点行为：数值验证以 fp32 为准"</b>——①②的融合 kernel 与③的显式矩阵乘
+          浮点归约顺序不同，半精度末位差异会被自回归逐 token 放大，贪心 top1 可能分道扬镳，这不是 bug。作者实测 tiny 模型 fp16 ①vs③：
+          12 个种子 max|Δ| 均为 4.9e-4、top1 未分叉（2 层小模型太宽容）；fp32 下 max|Δ|≈9e-8（float32 舍入极限量级）、argmax 全等——
+          所以一切等价性断言都跑在 fp32。
+        </p>
+      </div>
+
+      <h3 id="equiv">等价性：真跑三路径，同权重 fp32</h3>
+      <p>空口无凭，跑。两份同权重模型，一个 <code>flash=True</code>（①②按条件生效）、一个逐层 <code>flash=False</code>（逼走③）：</p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m07_equiv.py · 三路径等价性（tiny 配置，CPU 可跑）</span><span class="lang">python</span></div><pre class="code"><code>import torch
+
+from minimind_reborn.models import KVCache
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+
+torch.manual_seed(7)
+cfg = MiniMindConfig(hidden_size=32, num_hidden_layers=2, num_attention_heads=2,
+                     num_key_value_heads=1, vocab_size=64, max_position_embeddings=128, dropout=0.0)
+a = MiniMindForCausalLM(cfg).eval()   # flash=True：无 cache 走①，带 cache 走②
+b = MiniMindForCausalLM(cfg).eval()
+b.load_state_dict(a.state_dict())     # 同一份权重，只换执行路径
+for layer in b.model.layers:
+    layer.self_attn.flash = False     # 关掉 SDPA，逼走③
+
+x = torch.randint(0, 64, (2, 7))
+with torch.no_grad():
+    out1 = a(x).logits                                           # ① 无 cache、无 mask
+    cache = KVCache(2, 2, 24, 1, 16, torch.float32, "cpu")
+    out2 = a(x[:, :5], past_key_values=cache).logits             # ② prefill 写 5 列
+    for i in (5, 6):                                             # ② 两步 decode，每步 1 列
+        out2 = torch.cat([out2, a(x[:, i:i + 1], past_key_values=cache).logits], dim=1)
+    out3 = b(x).logits                                           # ③ manual 全段
+
+for name, u, v in [("① vs ③", out1, out3), ("② vs ③", out2, out3), ("② vs ①", out2, out1)]:
+    print(f"{name}  allclose={torch.allclose(u, v, atol=1e-5)}  max|Δ|={(u - v).abs().max().item():.2e}")
+print("贪心稳定性——①与③ argmax 全等:", bool((out1.argmax(-1) == out3.argmax(-1)).all()))</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m07_equiv.py</span>
+<span class="out">① vs ③  allclose=True  max|Δ|=5.96e-08
+② vs ③  allclose=True  max|Δ|=7.45e-08
+② vs ①  allclose=True  max|Δ|=7.45e-08
+贪心稳定性——①与③ argmax 全等: True</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130 · CPU 执行]</b> 三路径两两 allclose（atol=1e-5），最大偏差 7.45e-8（fp32 舍入极限量级），argmax 逐位全等。②的 5+1+1 拼接能对齐①③整段，靠的正是因果性：位置 $i$ 的输出只依赖前 $i{+}1$ 列。同款断言在 <a href="codeview/tests/test_models/test_model.py.html">tests/test_models/test_model.py</a>（训练路径）与 <a href="codeview/tests/test_models/test_kv_cache.py.html">tests/test_models/test_kv_cache.py</a>（prefill/decode/padding 三断言）里各有一份——跑测试就是跑等价性。</p>
+
+      <h3 id="hunt">🔍 bug 猎场：等价性先行的性能纪律（c2e43ff）</h3>
+      <p>三条路径不是一次写成的——git 史里躺着一次教科书级的性能优化，先看提交信息与账单：</p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">git log --oneline | grep c2e43ff</span>
+<span class="out">c2e43ff perf(models): 路径2 SDPA 融合 prefill/decode（显式 additive mask，显存 573→237MB、长上下文吞吐 344 tok/s 反超官方）；路径3 manual 实现保留作数值基线与教学参考；新增双路径等价性回归测试</span>
+<span class="p">$ </span><span class="cmd">git show c2e43ff --stat</span>
+<span class="out"> src/minimind_reborn/models/attention.py | 40 +++++++++++++++++++++++++++------
+ tests/test_models/test_kv_cache.py      | 34 ++++++++++++++++++++++++++++
+ 2 files changed, 67 insertions(+), 7 deletions(-)</span></code></pre>
+      <p>
+        <b>症状（优化前）</b>：旧代码的 <code>use_sdpa</code> 要求 <code>cache is None</code>——SDPA 的 <code>is_causal</code> 表达不了
+        "历史全可见 + 因果只作用新块 + pad 抑制"，带 cache 的 prefill/decode 全部落进③ manual，每层物化 (heads, seq, total) 的
+        fp32 打分矩阵：长上下文显存峰值 <b>573MB</b>、吞吐被拖住。<b>定位</b>：瓶颈不在算法在"发动机选择"——语义喂不了 is_causal，
+        但可以自己构造 additive mask 喂 <code>attn_mask</code>。<b>修复</b>：c2e43ff 增加 <code>elif self.flash:</code> 分支（路径②40 行），
+        融合 kernel 吃显式 mask、不再物化打分矩阵——<b>显存 573→237MB，长上下文吞吐 344 tok/s 反超官方每步 torch.cat 的实现</b>。
+      </p>
+      <p class="prov"><b>[存档 c2e43ff · 2026-09-24 提交信息 · reborn git 史]</b> 573→237MB 与 344 tok/s 取自提交信息原文（当时实测环境未随库存档）；stat 的 67+/7- 为 <code>git show</code> 真实输出。作者在写作环境复测同场景（64M 真配置、fp16、T=2048 prefill 带 cache）：路径②峰值 354MB vs 路径③ 642MB，差 287MB——与 $8\text{头}\times T^2\times 4\text{B(fp32)}\times 2\text{个矩阵}\approx 256\text{MB}$ 的打分开销对得上（剩余为碎片与中间量）。[作者实测 · 2026-09-30 · RTX 4090 · torch 2.14.0+cu130]</p>
+      <p>
+        <b>真正想让你学的是那 34 行测试</b>——占新增行数的一半。时间线：<code>04a5226</code>（更早）先落
+        <code>test_sdpa_vs_manual_attention_equivalence</code>（①③训练路径等价）；<code>c2e43ff</code> 改性能的<b>同一提交里</b>
+        又添 <code>test_sdpa_prefill_path_matches_manual</code>（②③在 prefill / decode / padding 三场景 allclose）。
+        换 kernel 这种"只有速度该变"的改动，<b>等价性断言是唯一的安全绳</b>：没有它，显存降 336MB 的同时完全可能悄悄算错几百万个数——
+        loss 曲线上你只会看到"收敛慢了点"，查无此 bug。
+      </p>
+      <div class="callout danger">
+        <div class="co-title">🛑 红线：先锁等价性，再谈速度</div>
+        <p>
+          任何"纯性能"改动（换算子、换布局、换精度）合入前，必须先有<b>旧实现 vs 新实现的输出等价断言</b>，并写明精度契约
+          （本例：fp32 allclose，fp16 分叉属预期、写进 docstring）。reborn 保留③ manual 作为常驻数值基线而非删掉——
+          性能路径永远有"慢但对的参照物"可对照。等价性测试不问"好不好"，只问"变没变"。
+        </p>
+      </div>
+
+      <h2 id="fillblank">✏️ 填空：亲手把路径③写一遍</h2>
+      <p>
+        读过不等于会写。下面是路径③的独立可跑缩小版（5 个 token、2 个头、$d{=}4$，不依赖仓库），
+        <b>三处空</b>正是本课的三条命脉：$\sqrt{d}$ 缩放、因果 mask 构造、softmax 的维度。把空填上，跑通它：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m07_fill.py · 路径③ 三空版（把 ____ 换成你的答案）</span><span class="lang">python</span></div><pre class="code"><code>import math
+
+import torch
+import torch.nn.functional as F
+
+torch.manual_seed(0)
+B, H, T, D = 1, 2, 5, 4                            # batch、头数、序列长、head_dim
+q, k, v = (torch.randn(B, H, T, D) for _ in range(3))   # (B, H, T, D)
+
+ref = F.scaled_dot_product_attention(q, k, v, is_causal=True)   # 路径① 参照答案
+
+scores = (q @ k.transpose(-2, -1)).float() / <span class="fb-blank">____</span>               # 空① 缩放
+scores += torch.full((T, T), float("-inf")).<span class="fb-blank">____</span>                # 空② 因果 mask
+out = F.softmax(scores, dim=<span class="fb-blank">____</span>).type_as(q) @ v                # 空③ softmax 维度
+
+print("allclose(atol=1e-6):", torch.allclose(out, ref, atol=1e-6),
+      " max|Δ| =", (out - ref).abs().max().item())</code></pre></div>
+      <p>卡住了按层揭提示——每层只多给一点：</p>
+      <details>
+        <summary>提示 1 · 方向（先想 30 秒再看）</summary>
+        <p>
+          空①：开头说过点积方差随维度 $d$ 增长——除以什么才能拉回 O(1)？
+          空②：因果 = 屏蔽"未来列"——造一个 (T,T) 矩阵，上三角（不含对角线）为 $-\infty$、其余为 0；PyTorch 有现成的三角构造函数（上三角还是下三角？源码用的是 triu）。
+          空③：softmax 沿"被加权的候选"方向归一——打分矩阵最后一维是 key 列还是 query 行？
+        </p>
+      </details>
+      <details>
+        <summary>提示 2 · API（具体到函数与参数）</summary>
+        <p>
+          空①：<code>math.sqrt(D)</code>（源码同款 <code>math.sqrt(self.head_dim)</code>）。
+          空②：<code>.triu(1)</code>——全 $-\infty$ 的 (T,T) 矩阵取上三角（偏移 1 = 不含对角线）加到打分上；等价写法 <code>.masked_fill(torch.ones(T,T).tril() == 0, float("-inf"))</code>。
+          空③：<code>dim=-1</code>（或 <code>dim=3</code>）——沿最后一维（key 列）每行各自归一。
+        </p>
+      </details>
+      <details>
+        <summary>完整答案（先跑自己的版本再对照）</summary>
+        <div class="codeblock"><div class="code-head"><span>三空答案</span><span class="lang">python</span></div><pre class="code"><code>scores = (q @ k.transpose(-2, -1)).float() / math.sqrt(D)          # 空① = math.sqrt(D)
+scores += torch.full((T, T), float("-inf")).triu(1)               # 空② = triu(1)
+out = F.softmax(scores, dim=-1).type_as(q) @ v                    # 空③ = -1</code></pre></div>
+        <p>
+          三个空各守一道关：空①错成 <code>math.sqrt(H)</code> 或忘除——分布形状跑偏（手算例的 0.276/0.455 会变）；
+          空②错成 <code>triu(0)</code>——对角线也被屏蔽，行内全 $-\infty$ 出 NaN；错成 <code>tril(1)</code>——mask 颠倒成"只看未来"，与 is_causal 相反且无报错；
+          空③错成 <code>dim=-2</code>——沿 query 方向归一，权重行和≠1，输出量纲全错。
+        </p>
+      </details>
+      <p>填完后的自测验收（作者环境真实输出）：</p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m07_fill.py</span>
+<span class="out">allclose(atol=1e-6): True  max|Δ| = 2.384185791015625e-07</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 填对三空即与路径①（SDPA is_causal）逐元素一致，max|Δ|≈2.4e-7；任何一空填错，allclose 变 False 或直接 NaN——对错机器可判，不用问人。</p>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · GQA 省的到底是哪份账？Q 投影省不省？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>两份账都省：<b>KV cache</b>（随序列线性涨的推理显存）按 kv_heads 比例砍半——12 对 24 KB/token，32768 token 时 384 对 768MB；<b>K/V 投影参数</b>（768→384）也减半。但 <b>Q 投影不省</b>——8 个 Q 头一个不少（768→768），Q×K^T、softmax×V 的计算量主体也不省：GQA 只共享"存"，不共享"算"的查询侧。</p>
+            <p class="back">答错回看：<a href="#gqa">GQA：8 个 Q 头共享 4 组 KV</a> 的 __init__ 代码与显存账表。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · 8 个 Q 头配 3 组 KV，为什么守门人要在装配期拦，而不是让代码跑到哪算哪？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>因为 <code>n_rep = 8 // 3 = 2</code> 是整除截断，reshape 只能摊平出 3×2=6 个 KV 头，对不上 8 个 Q 头——错误必然发生，但发生点在<b>运行期深处的矩阵乘</b>（<code>The size of tensor a (8) must match ... b (6)</code>），又深又晚；守门人把它提前到训练开始前一秒，报错还自带 8 和 3 两个数字。整除不是数学洁癖，是 reshape 能否对齐 shape 的硬前提。</p>
+            <p class="back">答错回看：<a href="#gqa-divide">回收 M04 伏笔：整除约束为什么是硬的</a> 的终端复现。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · QK-Norm 作用在哪个维度、为什么必须在 RoPE 之前？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>作用在 <b>head_dim</b>（每个头内、每个位置各自 RMSNorm），不是 hidden_size——8 个头的分布各自稳，不跨头平均。放 RoPE 之前，是因为它管<b>范数</b>（$q\cdot k\le\|q\|\|k\|$，范数不控则 logits 爆、softmax 饱和、梯度消失）：先把范数钉死在 $\sqrt{d}$，再让 RoPE 只改"方向"（位置）；放 RoPE 后，旋转/YaRN 缩放引入的范数变化会与归一化互相拆台。</p>
+            <p class="back">答错回看：<a href="#qknorm">QK-Norm：进 RoPE 之前先踩一脚刹车</a> 的量级对照表。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · 三条路径各自的触发条件是什么？一台没有 SDPA 的老机器上，reborn 还能跑吗？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>① flash ✓ 且无 cache 且 mask 全 1（训练全段）；② flash ✓ 且带 cache 或有 padding（prefill/decode、rollout）；③ flash ✗——<code>flash_attn=False</code> 或 <code>sdpa_available()</code> 探测不到算子。老机器上 <code>hasattr(F, "scaled_dot_product_attention")</code> 为假 → <code>self.flash=False</code> → 一律走③：能跑，只是慢、长上下文显存高（物化 fp32 打分矩阵）。③不是死代码，是可移植性兜底 + 数值基线。</p>
+            <p class="back">答错回看：<a href="#paths">三条执行路径</a> 的分派代码与条件表。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 1 · n_rep=1（退回 MHA），KV cache 显存怎么变？</div>
+        <div class="ex-body">
+          <p>
+            把 <code>num_key_value_heads</code> 从 4 改成 8（= <code>num_attention_heads</code>，n_rep=1，每 Q 头独享 KV 的经典 MHA）。
+            用预分配 KVCache 真分配一次看字节（64M 配置、fp16、batch=1、max_seq=32768）：
+          </p>
+          <div class="codeblock"><div class="code-head"><span>变式 1 实验脚本</span><span class="lang">python</span></div><pre class="code"><code>import torch
+
+from minimind_reborn.models import KVCache
+
+for kv in (4, 8):   # 4 = GQA（n_rep=2），8 = MHA（n_rep=1）
+    c = KVCache(8, 1, 32768, kv, 96, torch.float16, "cpu")   # 8 层、batch 1、全长预分配
+    print(f"kv_heads={kv}: k+v 合计 {(c.k.numel() + c.v.numel()) * 2 / 1024 / 1024:.0f} MB")</code></pre></div>
+          <div class="ex-predict"></div>
+          <p>写下预测：两行输出各是多少 MB？<code>repeat_kv</code> 在 n_rep=1 时还复制吗（看它的第一行分支）？K/V 投影参数量怎么变？</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>
+              <b>观察（作者实测）：</b><code>kv_heads=4: k+v 合计 384 MB</code>、<code>kv_heads=8: k+v 合计 768 MB</code>——<b>翻倍</b>。
+            </p>
+            <p>
+              <b>机制：</b>KV cache 字节随 kv_heads <b>线性</b>增长（$2\times 8\text{层}\times kv\times 96\times 2$B），n_rep=1 只是共享系数归一，
+              存储没有免费午餐；但 <code>repeat_kv</code> 第一行 <code>if n_rep == 1: return x</code> 原样返回——<b>连零拷贝扩张都省了</b>，
+              省的是计算不是显存。K/V 投影参数同样翻倍（768×384→768×768，每层每矩阵多 29 万）。GQA 的交易本质：用"KV 头共享"换推理显存，
+              代价是表达能力略降；而 M09 官方权重 strict 互通要求形状逐键一致，所以 reborn 锁死 8Q/4KV。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 2 · 两边同时丢掉 padding mask，等价性测试还会绿吗？</div>
+        <div class="ex-body">
+          <p>
+            坑卡说"mask 忘了 pad 列"很危险。做个思想实验再动手：②③<b>同时</b>不传 <code>attention_mask</code>，双路径还 allclose 吗？（tiny 配置，右 pad 批次）
+          </p>
+          <div class="ex-predict"></div>
+          <p>写下预测：allclose 是 True 还是 False？如果还是 True，说明等价性测试能防住"丢 mask"这个错吗？</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>
+              <b>观察（作者实测）：</b>带 mask 时 ②vs③ allclose=True；两边同时丢 mask，②vs③ <b>仍然 allclose=True</b>——
+              但相对正确语义，pad 位置的 logits 已漂移 max|Δ|=0.0425。
+            </p>
+            <p>
+              <b>机制：</b>等价性断言比较的是<b>两台发动机</b>（②与③），不是发动机与<b>正确语义</b>——两边一起改错，它们依然"错得一致"，测试照绿。
+              所以 padding 场景的回归测试（<code>test_sdpa_prefill_path_matches_manual</code> 第三断言）必须把 mask <b>作为输入喂进去</b>再比：
+              mask 正确传到两条路径，才是被锁定的行为。通用教训：等价性测试锁"实现之间一致"，语义测试锁"实现与规格一致"——
+              两个都要有，坑卡里"prefill 没事、decode 泄漏"那种错只有后者能抓。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M07 验收</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下执行两步（含 MoE 与等价性用例，作者真实输出）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_models/test_model.py -q</span>
+<span class="out">........                                                                 [100%]</span>
+<span class="out">8 passed, 1 warning in 0.95s</span></code></pre>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_models/ -q</span>
+<span class="out">...................                                                       [100%]</span>
+<span class="out">19 passed, 1 warning in 0.35s</span></code></pre>
+          <ul class="pass-criteria">
+            <li><code>8 passed</code>——test_model.py 全绿：<code>test_sdpa_vs_manual_attention_equivalence</code>（①③训练路径等价）与 <code>test_moe_aux_loss_positive</code>（MoE 负载均衡损失，M08 预告）都在这 8 个里；</li>
+            <li><code>19 passed</code>——test_models 目录全绿（另含 KV cache 5 个：<code>test_sdpa_prefill_path_matches_manual</code> 的 prefill/decode/padding 三断言；RoPE/YaRN 6 个）；</li>
+            <li>✏️ 填空自测：<code>uv run python /tmp/m07_fill.py</code> 打出 <code>allclose(atol=1e-6): True</code>；</li>
+            <li>（可选 GPU）跑 <a href="#hunt">猎场</a>同款对照，亲见②③峰值显存差 ~287MB；无 GPU 走读档 [存档 c2e43ff] 573→237MB。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按报错分流）</summary>
+            <p>
+              <b>等价性用例失败</b> → 先确认没改过 <code>attention.py</code>（本课只读）；自定义分支上用 <a href="#equiv">等价性脚本</a>缩小到单层对比；
+              <b>填空脚本 NaN</b> → 空②大概率写成 <code>triu(0)</code>（对角线被屏蔽，行内全 $-\infty$）；
+              <b>allclose=False 但不 NaN</b> → 查空①是否忘除 <code>math.sqrt(D)</code>、空③是否 <code>dim=-1</code>；
+              <b><code>1 warning</code></b> → 无害：MoE 测试对带梯度张量取 float 的 UserWarning，M08 再看它；
+              <b>显存对照跑不动</b> → <code>nvidia-smi</code> 查占用，或把 T 从 2048 降到 1024，结论方向不变。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        至此⑤站 block 的前半（attention）完整就位：GQA 省下 KV cache，QK-Norm 稳住打分，三条路径在等价性测试的看护下各司其职。
+        下一课 M08 拆 block 后半——FFN：SwiGLU 门控与 MoE 稀疏专家，验收里那个 <code>aux_loss</code> 的身世也随之揭晓。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>多头注意力 <span class="en">MHA</span></dt><dd>把 hidden 切成 H 个 head_dim 份并行做注意力再拼接，每个头学一种关注关系；每 Q 头独享一套 KV（n_rep=1）。</dd>
+          <dt>Q / K / V <span class="en">Query / Key / Value</span></dt><dd>注意力三角色：Q=当前 token 的查询，K=各位置的被检索索引，V=真正被取走的内容；打分 $q\cdot k/\sqrt d$ 经 softmax 变权重，对 V 加权求和。</dd>
+          <dt>GQA <span class="en">Grouped-Query Attention</span></dt><dd>分组查询注意力：n_rep 个 Q 头共享一组 KV——KV cache 与 K/V 投影按 kv_heads 缩减，Q 侧不省；Llama 3/Qwen 系标准配置。</dd>
+          <dt>n_rep 与 repeat_kv</dt><dd>n_rep = num_heads // num_kv_heads；repeat_kv 把 (B,T,kv,d) 经 expand+reshape 摊平成 (B,T,kv×n_rep,d) 对齐 Q 头——整除约束的落点。</dd>
+          <dt>QK-Norm</dt><dd>对 q/k 各做 head_dim 维 RMSNorm 再进 RoPE；把 $\|q\|\|k\|$ 钉在 $d$、打分上界 $\sqrt d$，防范数漂移导致的 softmax 饱和与梯度消失。</dd>
+          <dt>SDPA <span class="en">scaled_dot_product_attention</span></dt><dd>PyTorch 2.0+ 的融合注意力算子，内部自动选 flash/mem-efficient/math 后端，不物化完整打分矩阵；<code>is_causal</code> 或显式 <code>attn_mask</code> 表达掩码。</dd>
+          <dt>因果 mask <span class="en">causal mask</span></dt><dd>第 $i$ 个位置只见前 $i{+}1$ 列的下三角掩码；实现为 triu(1) 的 $-\infty$ 上三角加到打分（加性 mask）上——对角线保留；路径②用 masked_fill 覆盖、路径③加 $-10^9$。</dd>
+          <dt>物化 <span class="en">materialize</span></dt><dd>把中间结果完整写进显存（如路径③的 (B,8,T,total) fp32 打分矩阵）；融合 kernel 分块在片上算、不落盘——显存差异的来源。</dd>
+          <dt>等价性断言 <span class="en">equivalence assertion</span></dt><dd>同权重下比较两条实现输出 allclose 的回归测试；锁"实现之间一致"，不锁"与正确语义一致"（见变式 2）。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+  };
+</script>
+<script async src="assets/vendor/tex-svg.js"></script>
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

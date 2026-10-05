@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M15 · DDP 与 no_sync：把训练扩到两张卡 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m15">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第四篇 训练</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M15</span><span>第四篇 · 训练</span></div>
+        <h1>DDP 与 no_sync：把训练扩到两张卡</h1>
+        <p class="lede">
+          M14 补上 checkpoint 六件套之后，单卡的训练闭环已经完整：能训、能评、能存、断了能续。
+          本课把这台引擎<b>原样</b>扩到多卡——代码几乎一行不改，只换一个启动命令；
+          再拆一个看不见的陷阱：一个让每三份双卡算力就有一份白白蒸发的通信 bug。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M14</b>（M13 的训练循环、M09 的 rank0 门控本课回收）</span>
+          <span class="chip">时长：<b>约 70 分钟</b></span>
+          <span class="chip">新概念：<b>数据并行（DDP）· 梯度同步（no_sync）</b></span>
+          <span class="chip">对照：<code>utils/dist.py</code> · <code>training/common/trainer.py</code> · <code>docs/pretrain_readiness.md</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>画出 4 卡 DDP 一个 micro step 的数据流（同一份模型 + 各自 1/4 的数据 → 本地梯度 → all-reduce 平均 → 各卡同步更新），说清"复制的是模型、切分的是数据"；</li>
+        <li>解释 DistributedSampler 为什么必须切数据、set_epoch 为什么每个 epoch 都要调，用真实日志指出每 rank 迭代数如何随 world 减半；</li>
+        <li>复述 <code>utils/dist.py</code> 的不变量"业务代码不写 if distributed"，指出 rank0 门控 IO 在 reborn 的至少三个落点、各自防什么事故；</li>
+        <li>手算累积 8 步时 no_sync 有/无的全量同步次数（8 次 → 1 次），用双卡 A/B 实测解释为什么吞吐 +31~33% 而不是 8×；</li>
+        <li>跑通 torchrun 双卡冒烟并逐行读懂 world=2 日志；没有双卡时走存档分析路线。</li>
+      </ul>
+
+      <h2 id="ddp">数据并行：复制模型，切分数据</h2>
+      <p>
+        M08 讲 MoE 时给过 DDP 一句话定义（"反向后同步梯度的多卡训练方式"），M13 讲 MFU 时又借了它的 world——
+        今天把它讲透。<b>DDP</b>（DistributedDataParallel，分布式数据并行）是 PyTorch 的多卡训练包装器：
+        每张 GPU 上跑一个<b>独立的 Python 进程</b>（不是一张卡多个线程），每个进程持有一份<b>完整模型副本</b>，
+        吃<b>不同的数据分片</b>，各自前向、各自反向，然后在梯度上对齐。
+        它复制的是模型、切分的是数据——所以叫"数据"并行（与之相对的"模型并行"把一层模型拆到多卡上，见本节工业对照）。
+      </p>
+      <div class="callout tip">
+        <div class="co-title">💡 直觉：四个学生、四套卷子、同一本教材</div>
+        <p>
+          一个班四个学生（4 个进程）用同一版教材（初始参数完全相同的模型副本），
+          每人做一套<b>不同</b>的卷子（各自的数据分片）。做完各自总结出自己的错题修正量（本地梯度 g₀…g₃），
+          然后全班对答案：每个人每道题的修正量<b>取平均</b>（all-reduce），四个人拿到<b>同一份</b>平均修正量，
+          各自誊回自己的教材（optimizer step）。因为起点相同、修正相同，四本教材永远逐位一致——
+          参数从不需要"抄"给对方，需要同步的只有每一步的<b>梯度</b>。
+        </p>
+      </div>
+      <pre class="ascii"><code>DDP 一个 micro step（4 卡）—— trainer.py 每个进程各自执行同一段代码
+
+          一个 epoch 的全部样本
+   ┌───────────┬───────────┬───────────┬───────────┐
+   │  shard 0  │  shard 1  │  shard 2  │  shard 3  │     ← DistributedSampler 预先切好
+   ▼           ▼           ▼           ▼
+ ┌───────┐  ┌───────┐   ┌───────┐   ┌───────┐
+ │ rank0 │  │ rank1 │   │ rank2 │   │ rank3 │     rank = 进程编号（0 起）
+ │ fwd   │  │ fwd   │   │ fwd   │   │ fwd   │     每份模型参数逐位相同
+ │ bwd   │  │ bwd   │   │ bwd   │   │ bwd   │     吃的却是不同的 1/4 数据
+ │  g0   │  │  g1   │   │  g2   │   │  g3   │     本地梯度（各不相同）
+ └───┬───┘  └───┬───┘   └───┬───┘   └───┬───┘
+     └──────────┴─────┬─────┴───────────┘
+                     ▼
+      all-reduce：g = (g₀+g₁+g₂+g₃) / 4          ← 逐元素平均，每个参数一份
+                     │
+     每个 rank 用同一份 g 各自 optimizer.step()
+                     ▼
+     四份模型更新后依然逐位一致（下一轮起点又相同）</code></pre>
+      <p>
+        三个词先钉死。<b>rank</b>：进程编号，从 0 数起，world_size 个进程就是 rank 0…world−1；
+        <b>world size</b>：进程总数（2 卡就是 2）——M13 的 MFU 公式分母里那个 world 就是它；
+        <b>all-reduce</b>：一种集合通信（collective，所有 rank 一起参与、结束时各自拿到同一结果的通信原语），
+        这里做的是"把各 rank 的梯度张量<b>逐元素求平均</b>"。注意 all-reduce 平均的是<b>梯度</b>——
+        不是 loss（loss 只是日志），不是参数（参数从不搬运），更不交换激活值。
+      </p>
+      <p>
+        还有一个容易想歪的问题：<b>每 rank 各自跑 optimizer.step()，参数为什么不会跑散？</b>
+        因为起点逐位相同 + 梯度经 all-reduce 后逐位相同 + 同一份优化器代码做确定性计算
+        ——三"同"叠加，四个进程的参数在每一步之后依然逐位相同。DDP 的全部魔法就在"让梯度相同"这一件事上。
+      </p>
+
+      <h3 id="sampler">先切数据：DistributedSampler 与每 rank 迭代数减半</h3>
+      <p>
+        DDP 自己<b>不切数据</b>——它假设你喂给每个进程的已经是不同的分片。要是两个 rank 吃完全相同的 batch，
+        all-reduce 会忠实地把两份一样的梯度平均成同一份，等效 batch 一点没变大，卡白买、通信白付。
+        切分是 <b>DistributedSampler</b>（PyTorch 的分布式采样器）的活：它把样本下标按 rank 轮转均分
+        （rank 0 拿第 0, 4, 8…号，rank 1 拿 1, 5, 9…号），样本数不整除时补 padding 凑齐——保证各 rank 分片<b>等长</b>
+        （这一点 §变式练习会用到）。reborn 把它接进 M13 读过的 <code>_build_loader</code>：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/common/trainer.py.html">src/minimind_reborn/training/common/trainer.py</a> · _build_loader 的分布式分支（节选）</span><span class="lang">python</span></div><pre class="code"><code>sampler: DistributedSampler | None
+if dist.is_initialized():                          # 唯一的分布式分支，长在基座里（范式子包看不见）
+    sampler = DistributedSampler(self.train_ds, shuffle=True)
+    sampler.set_epoch(epoch)                       # 不调：每个 epoch 的打乱顺序完全一样
+    inner: DistributedSampler | list[int] = sampler
+else:
+    g = torch.Generator()
+    g.manual_seed(cfg.train.seed + epoch)          # 单卡：采样器显式携带种子（training §1，M12 的确定性）
+    inner = torch.randperm(len(self.train_ds), generator=g).tolist()
+batch_sampler = SkipBatchSampler(
+    inner, cfg.train.batch_size, self.start_step if epoch == self.start_epoch else 0
+)                                                  # SkipBatchSampler：续训跳批对齐（M14）</code></pre></div>
+      <p>
+        <b>set_epoch 为什么每个 epoch 都要调？</b>DistributedSampler 的打乱种子由"基种子 + epoch"派生，
+        不调 set_epoch 它就一直用 epoch=0 的顺序——训练照跑，但每个 epoch 都在<b>重复同一遍数据顺序</b>，
+        打乱的效果静默失效。单卡分支同样用 <code>seed + epoch</code> 保证两条路语义对齐（M12 讲过的确定性纪律）。
+        效果直接写在日志的进度分母里——同一份冒烟配方，单卡与双卡各跑一次：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.resume=false   # 单卡</span>
+<span class="out">… | 训练启动 … | 0.53M 可训练参数 | dtype=bf16 device=cuda world=1 | …</span>
+<span class="out">… | Epoch[1/2](2/317242) loss=8.7848 … tok/s=48591 …</span>
+<span class="p">$ </span><span class="cmd">uv run torchrun --nproc-per-node 2 tools/train.py configs/smoke/smoke_pretrain.yaml --set train.resume=false</span>
+<span class="out">… | 训练启动 … | 0.53M 可训练参数 | dtype=bf16 device=cuda:0 world=2 | …</span>
+<span class="out">… | Epoch[1/2](2/158621) loss=8.7651 … tok/s=65113 …</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 2×RTX 4090 · torch 2.14.0+cu130 · 单卡行引自 M13 同配方实测，
+      双卡行存档 runs/smoke_pretrain/20261001_094752]</b>
+      分母 317242 → 158621：每 rank 每 epoch 只迭代全量的 1/world。这正是 M13 讲过的
+      <code>per_rank_full_iters()</code> 存在的原因——LR 余弦分母必须按本 rank 口径折算，
+      否则双卡跑完 lr 到不了地板（那时说好的"M15 详讲"，就是现在）。</p>
+
+      <h3 id="wrap">包一层 DDP：三处讲究</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/common/trainer.py.html">src/minimind_reborn/training/common/trainer.py</a> · 构造函数尾部（顺序即要点）</span><span class="lang">python</span></div><pre class="code"><code>self.optimizer = configure_optimizers(   # ① 优化器建在裸模型上，之后才包 DDP
+    self.raw_model, t.learning_rate, t.weight_decay, ...)
+...
+self._load_initial_weights()            # ② 权重语义三选一（resume &gt; finetune &gt; init_from，M14）
+if dist.is_initialized():
+    # 非持久 buffer（RoPE 表）各 rank 由同一 config 确定性算出，广播纯属浪费
+    self.model: torch.nn.Module = DistributedDataParallel(
+        self.raw_model, device_ids=[local_rank], broadcast_buffers=False
+    )                                    # ③ 最后才包装：单卡时连包装都不发生
+else:
+    self.model = self.raw_model</code></pre></div>
+      <p>
+        三处讲究，每处都连着前课：<b>① 优化器建在裸模型上、之后再包 DDP</b>——DDP 不复制参数，
+        只是在反向传播的路径上挂钩子，把 all-reduce 后的平均梯度写回<b>同一块</b> <code>.grad</code>；
+        所以优化器拿到的永远是同步后的梯度，保存时 M09 见过的 <code>unwrap_model</code> 剥掉壳、键名不带
+        <code>module.</code> 前缀。<b>② broadcast_buffers=False</b>——DDP 默认每次前向前广播模型里的
+        buffer（M05 讲过的"跟着模型走、不参与训练"的张量），但 reborn 的 RoPE 表是同一 config
+        确定性算出的，各 rank 本来就一样，广播纯属浪费带宽。<b>③ device_ids=[local_rank]</b>——
+        每个进程绑定自己那张卡（local_rank：本机内的卡号；多机时 rank 是全局编号、local_rank 是本机卡号，
+        单机两者相同）。
+      </p>
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：DDP 只是并行的最底层</div>
+        <p>
+          DDP 是"每卡一份完整模型"——64M 模型 256MB 权重，两张 24GB 的 4090 各养一份毫无压力，
+          所以 reborn 全程 DDP 就够。模型大到单卡装不下时，工业界换挡：DeepSpeed ZeRO /
+          PyTorch FSDP 把优化器状态、梯度、参数切片到各卡（用通信换显存），再往上还有
+          流水线并行（按层切）与张量并行（把单个矩阵乘切开）。它们的共同底座仍然是本课的概念：
+          切分的是什么、每步同步什么。先懂 DDP，再懂其他。
+        </p>
+      </div>
+
+      <h2 id="facade">容错 dist 封装：业务代码不写 if distributed</h2>
+      <p>
+        多卡代码最怕的不是写不出来，而是<b>散</b>：业务逻辑里到处 <code>if rank == 0:</code>、
+        <code>if dist.is_initialized():</code>，读代码的人永远不知道还有哪个分支没看到。
+        <a href="codeview/src/minimind_reborn/utils/dist.py.html">utils/dist.py</a>
+        全文 86 行，模块 docstring 第一句就立了不变量：<i>"业务代码不写 <code>if distributed:</code> 分支——
+        get_rank()/get_world_size() 在 dist 不可用/未初始化时返回 0/1，单机与多机代码同构；
+        一切 IO 由 is_main_process() 门控。"</i>先看入口：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/utils/dist.py.html">src/minimind_reborn/utils/dist.py</a> · init_distributed 与容错三件套（节选，压缩处有注）</span><span class="lang">python</span></div><pre class="code"><code>def init_distributed(timeout_minutes: int = 30) -&gt; int:
+    """按环境变量探测 DDP（torchrun 注入 RANK/WORLD_SIZE），单卡自动回退。"""
+    if os.environ.get("RANK", "-1") == "-1":
+        return 0                    # 不是 torchrun 拉起来的 → 单进程，rank 0
+    if not dist.is_available() or not torch.cuda.is_available():
+        raise RuntimeError("检测到 RANK 环境变量（torchrun 启动）但 CUDA 不可用："
+                           "分布式后端 NCCL 需要 GPU")
+    dist.init_process_group(backend="nccl", timeout=datetime.timedelta(minutes=timeout_minutes))
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)   # 本进程绑定本卡，防两个进程挤同一张卡
+    return local_rank
+
+def get_rank() -&gt; int:
+    if dist.is_available() and dist.is_initialized():
+        return dist.get_rank()
+    return 0                        # 未初始化 = 单卡 = rank 0 —— 单/多卡同构的关键（编注）
+
+def get_world_size() -&gt; int: ...   # 同款容错：未初始化返回 1
+
+def is_main_process() -&gt; bool:
+    return get_rank() == 0</code></pre></div>
+      <p>
+        两个词。<b>torchrun</b>：PyTorch 自带的多进程启动器——你在命令行敲一次，它拉起 N 个训练进程，
+        并给每个进程注入三个环境变量 <code>RANK</code>（全局编号）、<code>WORLD_SIZE</code>（进程总数）、
+        <code>LOCAL_RANK</code>（本机卡号）。<b>NCCL</b>：NVIDIA 的 GPU 通信后端（把 all-reduce 落到
+        NVLink/PCIe 的那层）；M08 玩具实验用的 gloo 是它的 CPU 兄弟。所以
+        <code>init_distributed</code> 的探测逻辑读起来是：<b>没有 RANK 环境变量就不是 torchrun 启动</b>，
+        直接返回 0 当单卡跑；有 RANK 却没有 GPU，立刻报错——docstring 里写了理由：
+        "静默回退 CPU 只会把错误推迟到更难查的地方"（fail-fast，M04 守门人同款哲学）。
+        于是 README 的 quick start 才敢写"单卡去掉 torchrun 前缀即可"：<b>同一份代码，两种世界</b>。
+      </p>
+
+      <h3 id="rank0">rank0 门控 IO：单点写入，读侧广播</h3>
+      <p>
+        M09 讲权重保存时说过"rank0 门控——调用方负责"，欠的账今天还。多进程下所有 rank 跑同一份代码，
+        意味着<b>写文件的代码每个进程都会执行一遍</b>：两个进程同时打开同一个 metrics.jsonl 追加，
+        行会交错；同时 torch.save 同一个 .pth，互相覆盖甚至写坏。<b>门控</b>（gating，加一个
+        "只有 rank 0 才执行"的判断）是唯一的解。reborn 的落点：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>落点</th><th class="u-w130">判断</th><th>防的事故</th></tr></thead>
+          <tbody>
+            <tr><td>Trainer._save（trainer.py:366）</td><td><code>if not is_main_process(): return</code></td><td>两个 rank 同时 torch.save 同一权重/checkpoint 文件</td></tr>
+            <tr><td>四件套 config.json / env.json（trainer.py:143）</td><td>构造期 rank0 独占</td><td>同一 runs 目录写两份快照</td></tr>
+            <tr><td>metrics 后端（backends.py:134）</td><td>非 rank0 → <code>NullBackend()</code></td><td>metrics.jsonl 两路追加、step 序列交错失真（真实踩坑后加的门）</td></tr>
+            <tr><td>train.log 文件 sink（loggers.py:51）</td><td>文件只挂 rank0；控制台可开全 rank</td><td>日志文件双份交错</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        写侧门控了，<b>读侧要对齐</b>：run_dir 的目录名由时间戳派生，两个进程各自取"当前时间"会得到两个目录——
+        rank0 存了日志、rank1 往另一个空目录里跑。所以 <a href="codeview/tools/train.py.html">tools/train.py</a>
+        里有一行 <code>cfg.run_dir = dist.broadcast_object(cfg.run_dir)</code>：广播（broadcast，rank 0 的值发给所有人），
+        全队只用 rank 0 的时间戳。同文件里的聚合助手 <code>all_reduce_mean</code> 则是反向的"读对齐"：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/utils/dist.py.html">src/minimind_reborn/utils/dist.py</a> · all_reduce_mean + broadcast_object</span><span class="lang">python</span></div><pre class="code"><code>def all_reduce_mean(value: float, device: str = "cpu") -&gt; float:
+    """跨 rank 求平均（评估指标聚合）。非分布式时原样返回。"""
+    if not (dist.is_available() and dist.is_initialized()):
+        return value                     # 单卡：恒等函数，业务代码完全无感
+    t = torch.tensor([value], device=device)
+    dist.all_reduce(t, op=dist.ReduceOp.AVG)   # 各 rank 进各的 val loss，出同一份平均值
+    return float(t.item())
+
+def broadcast_object(obj, src: int = 0):
+    """rank0 的对象广播到全部 rank（如时间戳派生的 run_dir）。"""
+    if not is_initialized():
+        return obj
+    container = [obj]
+    dist.broadcast_object_list(container, src=src)
+    return container[0]</code></pre></div>
+      <p>
+        M13 的 evaluate() 末尾那一行 <code>mean = dist.all_reduce_mean(mean, device=self.device)</code>
+        由此闭环：每个 rank 在自己的验证分片上算出 val/loss，all-reduce 平均后<b>所有 rank 拿到同一个数</b>——
+        best_val_loss 的判断、_best 权重的存否，全队不会分歧。文件末尾的
+        <code>cleanup()</code> 先 <b>barrier</b>（栅栏：所有 rank 到齐这一行才放行）再销毁进程组，
+        保证没有进程提前退出留下悬空连接。
+      </p>
+      <div class="callout danger">
+        <div class="co-title">🛑 红线：分布式判断只许写在基座里</div>
+        <p>
+          范式子包（pretrain/sft/dpo/…）与业务代码里不许出现 <code>if torch.distributed.is_initialized()</code>、
+          <code>if rank == 0</code> 这类分支——这是 dist.py docstring 立的不变量。反例是真实发生过的：
+          metrics 双写踩坑（上表第三行）就是判断散落、漏掉一个写入点导致的。
+          要判断，用 <code>dist.is_main_process()</code>；要聚合，用 <code>dist.all_reduce_mean()</code>；
+          要多卡语义，让 Trainer 基座去做。grep 一下你的范式代码，出现 <code>torch.distributed</code>
+          直接 import 就是坏味道。
+        </p>
+      </div>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：不加门控的多进程写文件——最安静的竞态</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            两种长相。A：metrics.jsonl 里 step 序列交错跳动（1,1,2,2,3…），画出的曲线毛刺；
+            B：最危险的是权重文件——两个 rank 同时 torch.save 到同一路径，先写的被后写的覆盖；
+            若一个写到一半另一个改名（atomic_save 的 tmp→改名），还会留下内容与名字不符的文件。
+            全程无报错，训练"正常结束"。
+          </li>
+          <li class="cause">
+            竞态（race condition）：N 个进程执行同一份代码，写文件的代码也就被执行 N 次。
+            atomic_save 防的是"写到一半进程被杀"（M14 的 kill -9 实验），防不了"两个写者"——
+            它只保证单个写者的原子性。多进程下"文件只许有一个写者"必须显式声明。
+          </li>
+          <li class="fix">
+            reborn 的双层防线：写侧 <code>is_main_process()</code> 门控全部 IO（上表四行），
+            非 rank0 的 metrics 后端直接换成 NullBackend（想写也没有笔）；读侧 broadcast_object 对齐
+            run_dir 等派生值。门控的判断集中在基座，业务代码零感知。
+          </li>
+        </ul>
+      </div>
+
+      <h2 id="nosync">no_sync：梯度累积下的通信陷阱（本课核心）</h2>
+      <p>
+        M13 讲过梯度累积：显存装不下大 batch 时，把大 batch 切成 N 份逐份算，每份 loss 除以 N 记进梯度
+        （micro step），N 份攒齐才动一次参数（optimizer step）。单卡世界这毫无问题。
+        多卡世界撞上 DDP 的第二条铁律：<b>DDP 默认在每个 backward() 之后立刻做一次全量 all-reduce</b>
+        ——它不知道你在累积梯度，它只认"backward 结束了就该同步"。于是 64M 配方
+        （累积 8 步）每个 optimizer step 要做 <b>8 次</b>全量同步，而数学上只需要最后 <b>1 次</b>：
+      </p>
+      <pre class="ascii"><code>累积 8 步的通信账（64M 配方，两张 4090 之间只有 PCIe，无 NVLink）
+
+修复前（DDP 默认）：                修复后（no_sync）：
+micro 1  bwd → all-reduce ← 256MB   micro 1  bwd（no_sync：只本地累加）
+micro 2  bwd → all-reduce ← 256MB   micro 2  bwd（no_sync）
+  …        …            …             …        …
+micro 8  bwd → all-reduce ← 256MB   micro 8  bwd → all-reduce ← 256MB（唯一一次）
+optimizer.step()                   optimizer.step()
+通信量：8 × 256MB                   通信量：1 × 256MB（↓ 87.5%）
+计算量：一字不变                    梯度数值：一字不变（见下）</code></pre>
+      <p>
+        256MB 怎么来的：63.91M 个参数的梯度，fp32 主副本 4 字节 ≈ 255.6MB/次全量同步
+        （按 bf16 桶折算约一半；trainer.py 注释按 2 字节记作"136MB/步"）。两卡之间唯一的搬运通道是
+        PCIe（PHB 直连——PHB 指 PCIe Host Bridge，两卡经 CPU 的 PCIe 桥点对点互通；
+        NVLink 是 NVIDIA 数据中心卡的专用高速互连，消费级 4090 没有）——
+        8 次排队 vs 1 次，浪费的 7 次全是不必要的等待。
+      </p>
+      <div class="callout note">
+        <div class="co-title">📐 为什么 no_sync 不改变数学（可跳过，不影响主线）</div>
+        <p>
+          DDP 的 all-reduce 是对梯度做"跨 rank 平均"，梯度累积是"跨 micro step 求和"——平均与求和都是线性运算，
+          交换次序结果不变。设 16 条样本等分成卡 A、卡 B 各 8 条、每卡累积 2 个 micro step（g<sub>r,i</sub>
+          是第 r 卡第 i 个 micro batch 的平均梯度，每 batch 4 条）：
+          $$ \underbrace{\tfrac{1}{2}\Big(\tfrac{g_{A_1}+g_{A_2}}{2}+\tfrac{g_{B_1}+g_{B_2}}{2}\Big)}_{\text{no\_sync：卡内先累加，最后跨卡平均一次}}
+          \;=\;\underbrace{\sum_{i=1}^{2}\tfrac{1}{2}\Big(\tfrac{g_{A_i}}{2}+\tfrac{g_{B_i}}{2}\Big)}_{\text{每步同步：逐步跨卡平均再累加}}
+          \;=\;\tfrac{1}{16}\sum_{k=1}^{16} g_k $$
+          两条路线殊途同归——都是"16 条样本的平均梯度"，变的只是通信发生的时机与次数，不是数值。
+          浮点上会有 1e-7 量级的差（归约次序不同），训练意义上可忽略；变式练习里我们会把这个等式真算一遍。
+        </p>
+      </div>
+      <p>修复后的代码只有四行（M13 你已见过它工作，现在看懂它）：</p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/common/trainer.py.html">src/minimind_reborn/training/common/trainer.py</a> · no_sync 梯度累积（fd9fdc8 引入）</span><span class="lang">python</span></div><pre class="code"><code>is_sync_step = (offset + 1) % t.gradient_accumulation_steps == 0 or is_last
+# DDP 梯度累积：仅最后一个 micro step 同步梯度（training §3），其余步 no_sync
+# 省掉 (accum-1)/accum 的 allreduce——64M×2B×8 步在 PCIe PHB 上实测拖累 scaling 至 67.6%
+no_sync = getattr(self.model, "no_sync", None)   # 能力探测：仅 DDP 包装有此方法
+sync_ctx = nullcontext() if (no_sync is None or is_sync_step) else no_sync()
+
+with sync_ctx:                    # 注意：sync_ctx 已是上下文实例，不能再加调用括号
+    with self.autocast_ctx:
+        loss, log_metrics = self.compute_loss(batch, self.model)
+    scaled = loss / t.gradient_accumulation_steps
+    self.scaler.scale(scaled).backward()          # no_sync 里：只本地累加，不通信</code></pre></div>
+      <p>
+        三个细节。<b>① 最后一步为什么必须放上下文外面？</b><code>no_sync()</code> 是 DDP 提供的
+        上下文管理器（with 块）：块内 backward 不同步。同步点就是<b>第 N 步的 backward 本身</b>——
+        前 N−1 步包进 no_sync，第 N 步留在上下文外，这次 backward 触发全量 all-reduce，
+        把攒了 N 步的完整梯度一次性平均。若 N 步全包进去，梯度<b>永远</b>不同步：各卡各自更新各自的，
+        参数悄悄发散——不报错、loss 照样降，只是两台机器训出了两个不同的模型。
+        <b>② is_last 兜底</b>：epoch 尾部凑不满 N 步的残批也强制同步一次，残批的梯度不许漏网。
+        <b>③ <code>getattr(model, "no_sync", None)</code> 是能力探测</b>：单卡时模型没有 DDP 包装、
+        没有这个方法，探测到 None 就用 <code>nullcontext()</code>（空上下文）——单卡代码路径零分支。
+        这和 M13 的 build_scaler（恒创建 + enabled 开关）、fused 签名探测是同一个口味：
+        <b>不问"我是谁"，只问"我有没有这个能力"</b>。
+      </p>
+
+      <h3 id="ab">实测：no_sync 有/无的 A/B 对照</h3>
+      <p>
+        说"通信量降 87.5%"不等于"快 8 倍"——通信只是每步开销的一部分。真跑才算数。
+        64M 模型、官方 64m 配方（seq 340 / batch 32 / 累积 8 / bf16），各跑 48 个 micro step、
+        每 8 步一个吞吐窗，取第 2~6 窗（丢弃首窗预热）的中位数。"关"的那一组不改仓库一行代码，
+        用一个 8 行的启动器猴子补丁（monkey patch：运行时替换对象方法）精确复现修复前行为：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m15_nosync_off.py · 复现 fd9fdc8 修复前：no_sync 变空操作</span><span class="lang">python</span></div><pre class="code"><code>"""把 DDP.no_sync 补丁成 nullcontext —— 每个 micro step 的 backward 都触发 all-reduce。"""
+import runpy
+import sys
+from contextlib import nullcontext
+from torch.nn.parallel.distributed import DistributedDataParallel
+
+DistributedDataParallel.no_sync = lambda self: nullcontext()   # 能力被"没收"
+
+sys.argv = ["tools/train.py"] + sys.argv[1:]                   # 透传参数，走原入口
+runpy.run_path("tools/train.py", run_name="__main__")</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/pretrain_64m.yaml --set train.max_steps=48 --set train.log_interval=8 \</span>
+<span class="cmd">  --set train.resume=false --set data.num_workers=4 --set output_dir=/tmp/m15_ab/out_1g ...   # 单卡基线</span>
+<span class="out">… | 训练启动 … | 63.91M 可训练参数 | dtype=bf16 device=cuda world=1 | …</span>
+<span class="out">… | Epoch[1/2](16/39497) loss=8.5340 … tok/s=63873 mfu=14.8% …</span>
+<span class="p">$ </span><span class="cmd">uv run torchrun --nproc-per-node 2 tools/train.py configs/pretrain_64m.yaml --set …   # 双卡·no_sync 开（当前代码）</span>
+<span class="out">… | 训练启动 … | dtype=bf16 device=cuda:0 world=2 | …</span>
+<span class="out">… | Epoch[1/2](16/19749) loss=8.4467 … tok/s=114843 mfu=13.3% …</span>
+<span class="p">$ </span><span class="cmd">uv run torchrun --nproc-per-node 2 /tmp/m15_nosync_off.py configs/pretrain_64m.yaml --set …  # 双卡·no_sync 关</span>
+<span class="out">… | 训练启动 … | dtype=bf16 device=cuda:0 world=2 | …</span>
+<span class="out">… | Epoch[1/2](16/19749) loss=8.4818 … tok/s=87559 mfu=10.2% …</span></code></pre>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>配置（同配方 48 步）</th><th class="u-w130">稳态 tok/s（中位窗）</th><th class="u-w130">scaling 效率</th></tr></thead>
+          <tbody>
+            <tr><td>单卡 world=1（基线）</td><td>64,261</td><td>—</td></tr>
+            <tr><td>双卡 no_sync <b>关</b>（猴子补丁复现修复前）</td><td>86,246</td><td>67.1%</td></tr>
+            <tr><td>双卡 no_sync <b>开</b>（当前代码）</td><td><b>114,843</b></td><td><b>89.3%</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 2×RTX 4090（4090 + 4090D，PCIe PHB 直连、无 NVLink）·
+      torch 2.14.0+cu130 · 64M dense · seq340 bs32 accum8 bf16 seed42]</b>
+      诚实标注：三连跑期间机器上另有一个双卡 SFT 长训在共享两卡（各占约 8GB）——绝对吞吐被整体压低
+      （单卡 64K，干净环境存档是 140.8K），但三组<b>同条件连跑、受同一干扰</b>，scaling 比值依然成立。
+      no_sync 关闭的方法：/tmp/m15_nosync_off.py 把 <code>DDP.no_sync</code> 猴子补丁成
+      <code>nullcontext</code>——精确复现 fd9fdc8 修复前"每个 micro step 都同步"的行为。
+      scaling 效率 = 双卡 tok/s ÷（2 × 单卡 tok/s），tok/s 是两卡合计口径（trainer.py:279 的
+      <code>B × world × seq</code>）。</p>
+      <p>
+        与仓库存档对照——干净环境、同配方长窗稳态（<b>[存档 docs/pretrain_readiness.md §3 · 2026-09-24 ·
+        同款 2×4090 PHB]</b>）：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>配置（存档，同配方）</th><th class="u-w130">稳态 tok/s</th><th class="u-w130">scaling</th><th class="u-w130">对本文复测</th></tr></thead>
+          <tbody>
+            <tr><td>单卡</td><td>140,760</td><td>—</td><td>64,261（共享 GPU 压低）</td></tr>
+            <tr><td>双卡 修复前</td><td>190,244</td><td>67.6%</td><td>86,246 / 67.1% ✓ 方向复刻</td></tr>
+            <tr><td>双卡 修复后</td><td>249,052</td><td>88.5%</td><td>114,843 / 89.3% ✓ 方向复刻</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        两组数字讲同一个故事：修复让吞吐 <b>+33%（存档 +31%）</b>，scaling 从 67% 抬到 89%。
+        顺带一个数字考古：README 结果速览写的"~190K tokens/s"恰好对上<b>修复前</b>的 190,244——
+        修复后的口径是 249K（短窗）乃至全量长跑热稳态 253.7K（<b>[存档 docs/pretrain_readiness.md §5 ·
+        2026-09-25 · 双卡满载 5.5 分钟至热稳态]</b>，M13 引过的 runs/pretrain_full 存档里
+        <code>tok/s=253822</code> 即此口径）。同一台机器三个吞吐数字，口径不同——读数先问口径，
+        这是 M13"度量口径"教训的又一次显灵。
+      </p>
+      <p>
+        最后看一眼"数学不变"的实证——同一 seed 下 no_sync 开/关两次 64M 短跑的 loss 逐窗对比
+        （数据顺序由 DistributedSampler 同 seed 决定，完全相同）：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w44">micro step</th><th>8</th><th>16</th><th>24</th><th>32</th><th>40</th><th>48</th></tr></thead>
+          <tbody>
+            <tr><td>no_sync 开</td><td>8.9297</td><td>8.4467</td><td>8.2373</td><td>8.0682</td><td>7.9626</td><td>7.9126</td></tr>
+            <tr><td>no_sync 关</td><td>8.9056</td><td>8.4818</td><td>8.2200</td><td>8.0641</td><td>7.9669</td><td>7.9206</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 同上环境，两次 48 步短跑]</b>
+      两条轨迹偏差 ≤0.035——来源是浮点归约次序不同带来的 1e-7 量级扰动随训练放大，
+      训练意义上是同一条曲线：no_sync 改的是通信时机，不是数学。</p>
+
+      <h2 id="lab">🎮 双卡实验区</h2>
+      <p>
+        有两张卡（或租得起两小时）的读者，本节命令逐条真跑；单卡读者跳到本节末尾的存档路线——
+        读真实日志是正式学习路径，不是降级。实验一，两进程冒烟（验收块同款命令的完整输出）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run torchrun --nproc-per-node 2 tools/train.py configs/smoke/smoke_pretrain.yaml --set train.resume=false</span>
+<span class="dim">W1001 09:47:21 … Setting OMP_NUM_THREADS … to be 1 … （torchrun 的常规提醒：每进程单线程防过载）</span>
+<span class="out">09:47:25 | INFO | minimind.env | 环境指纹：{"torch": "2.14.0+cu130", …, "gpu": ["NVIDIA GeForce RTX 4090", "NVIDIA GeForce RTX 4090 D"], "seed": 42}</span>
+<span class="out">09:47:25 | INFO | minimind.trainer | 训练启动 stage=pretrain recipe=smoke_pretrain | 0.53M 可训练参数 | dtype=bf16 device=cuda:0 world=2 | 数据=pretrain_t2t_mini</span>
+<span class="out">09:47:26 | INFO | minimind.trainer | Epoch[1/2](2/158621) loss=8.7651 lr=4.70e-04 grad_norm=0.49 tok/s=4945 mfu=0.0% eta=410.6min</span>
+<span class="out">09:47:26 | INFO | minimind.trainer | Epoch[1/2](4/158621) loss=8.7570 lr=2.75e-04 grad_norm=0.53 tok/s=65113 mfu=0.1% eta=220.9min</span>
+<span class="out">09:47:26 | INFO | minimind.trainer | Epoch[1/2](6/158621) loss=8.7642 lr=8.01e-05 grad_norm=0.53 tok/s=63484 mfu=0.1% eta=157.9min</span>
+<span class="out">09:47:26 | INFO | minimind.trainer | 达到 max_steps=6 截断（冒烟/调试预算）</span>
+<span class="out">09:47:26 | INFO | minimind.trainer | 评估：val/loss=8.7743（固定 2 batch）</span>
+<span class="ok">09:47:26 | INFO | minimind.trainer | 训练结束：best_val_loss=8.774259567260742 optimizer_steps=3</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 2×RTX 4090 · torch 2.14.0+cu130 · 存档 runs/smoke_pretrain/20261001_094752]</b>
+      注意三个多卡指纹：启动行 <code>device=cuda:0 world=2</code>（M01 日志里 world=1 的那个数字今天终于变 2）；
+      进度分母 158621（单卡 317242 的一半，DistributedSampler 切分）；"已保存"只出现一次
+      （rank0 独占写权，门控在工作）。另：三行 Epoch 里只有一行属于 rank0——非 rank0 的控制台日志默认被
+      loggers.py 关掉，防多卡交错刷屏。</p>
+      <p>
+        实验二，把两个进程都放出来说话（<code>MINIMIND_REBORN_LOG_ALL_RANKS=1</code>，loggers.py 留的调试开关）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">MINIMIND_REBORN_LOG_ALL_RANKS=1 uv run torchrun --nproc-per-node 2 tools/train.py configs/smoke/smoke_pretrain.yaml --set train.resume=false …</span>
+<span class="out">09:50:26 | INFO | minimind.trainer | 训练启动 … | 0.53M 可训练参数 | dtype=bf16 device=cuda:0 world=2 | …</span>
+<span class="out">09:50:26 | INFO | minimind.trainer | 训练启动 … | 0.53M 可训练参数 | dtype=bf16 device=cuda:1 world=2 | …</span>
+<span class="out">09:50:26 | INFO | minimind.trainer | Epoch[1/2](2/158621) loss=8.7757 lr=4.70e-04 … tok/s=3942 …</span>
+<span class="out">09:50:26 | INFO | minimind.trainer | Epoch[1/2](2/158621) loss=8.7790 lr=4.70e-04 … tok/s=4446 …</span>
+<span class="ok">09:50:27 | INFO | minimind.trainer | 训练结束：best_val_loss=8.78157901763916 optimizer_steps=3</span>
+<span class="ok">09:50:27 | INFO | minimind.trainer | 训练结束：best_val_loss=8.78157901763916 optimizer_steps=3</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 同上环境（输出目录重定向到 /tmp，避免污染 out/）]</b>
+      值得盯着看的三处：<b>两行启动</b>——cuda:0 与 cuda:1，两个进程各绑一张卡；
+      <b>两行 Epoch 的 loss 不同</b>（8.7757 vs 8.7790）——两个 rank 吃的是不同的数据分片，
+      各自的训练 loss 本来就该不同；<b>两行训练结束的 best_val_loss 逐位相同</b>——
+      evaluate() 里 all_reduce_mean 把两卡的验证损失平均成了同一个数。这三行日志就是本课
+      §<a href="#ddp">数据并行</a> 与 §<a href="#rank0">门控</a> 的全部原理在真实输出里的样子。</p>
+      <p>
+        <b>单卡读者的存档分析路线</b>（无需 GPU，约 15 分钟）：
+        ① 读 <a href="codeview/docs/pretrain_readiness.md.html">docs/pretrain_readiness.md</a>
+        §3 的单双卡对照表——本文 §实测 引用的 67.6%→88.5% 就存档于此；
+        ② 打开 <code>runs/pretrain_full/20260925_005504/train.log</code>，grep
+        <code>tok/s</code> 看双卡长跑的合计吞吐（world=2 口径：首窗 237,039 → 稳态 253K 上下）；
+        ③ 跑本课猎场的 <code>git show fd9fdc8</code>，对照修复前后代码；
+        ④ 想动手摸 DDP 语义，M08 的 gloo/CPU 玩具实验（单进程 world=1 也能演示"挂图"铁律）随时可跑——
+        但注意 torchrun + NCCL 路线必须有 GPU，init_distributed 会显式报错而不是静默回退。
+      </p>
+
+      <h2 id="bughunt">🔍 bug 猎场：缺 no_sync 的隐性通信（fd9fdc8）</h2>
+      <p>
+        这个 bug 的特别之处：<b>它没有任何症状</b>。训练正常收敛、日志正常打印、checkpoint 正常保存——
+        只有两张卡没有"想象中那么快"。2026-09-24 全量训练前，作者按 readiness 清单
+        （<a href="codeview/docs/pretrain_readiness.md.html">docs/pretrain_readiness.md</a>，
+        全量训练前置实测报告）做单双卡对照度量，才发现双卡吞吐 190,244 tok/s，
+        对照单卡 140,760 的两倍（281,520）只有 <b>67.6%</b>——这里开始用 scaling 效率
+        （双卡吞吐 ÷ 2×单卡吞吐，100% 是完美线性加速）说话：每三份双卡算力就有一份不知去向。
+        定位从拆修复 commit 开始：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">git show fd9fdc8 --stat</span>
+<span class="out">commit fd9fdc88cc8794406cb14572328866b6dfb646d9</span>
+<span class="out">Author: reborn &lt;reborn@local&gt;</span>
+<span class="out">Date:   Thu Sep 24 21:23:35 2026 +0800</span>
+<span class="out"></span>
+<span class="out">    fix(training): 续训 iters 记账 bug（全局步数/LR 分母/尾批 is_last 漂移）+ DDP no_sync（累积期免 allreduce，双卡 scaling 67.6%→88.5%）；产出全量训练前置实测报告 out/pretrain_readiness.md</span>
+<span class="out"></span>
+<span class="out"> configs/dpo_64m.yaml                           |  2 +-</span>
+<span class="out"> configs/pretrain_64m.yaml                      |  2 +-</span>
+<span class="out"> configs/sft_64m.yaml                           |  2 +-</span>
+<span class="out"> src/minimind_reborn/training/common/trainer.py | 31 +++++++++++++++++---------</span>
+<span class="out"> 4 files changed, 24 insertions(+), 13 deletions(-)</span></code></pre>
+      <p>
+        一个 commit 两堂课：前半"续训 iters 记账"是 M14 猎场的主角（分母漂移、尾批 is_last），
+        本课只看后半。修复前的代码长这样（<code>git show fd9fdc8^:…trainer.py</code>）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>fd9fdc8 修复前的 _train_epoch（git show fd9fdc8^ 反查）</span><span class="lang">python</span></div><pre class="code"><code>with self.autocast_ctx:
+    loss, log_metrics = self.compute_loss(batch, self.model)
+scaled = loss / t.gradient_accumulation_steps
+self.scaler.scale(scaled).backward()   # ← DDP 默认：每次 backward 都全量 all-reduce
+                                       #    累积 8 步 = 8 次 × ~256MB，其中 7 次纯浪费</code></pre></div>
+      <p>
+        完全合法的 PyTorch 代码——单卡下它就是标准写法；DDP 包装之下，每个 backward 都触发全量同步，
+        而项目规范 training §3 明明白白写着"仅末个 micro step 同步"。规范违反了，但<b>没有任何机制报错</b>：
+        通信照做、梯度照对、训练照收敛，浪费只体现在吞吐这一个数字上。修复即 §no_sync 精读的那四行
+        （<code>sync_ctx</code> 门控）。顺带一提 configs 三个文件的改动只是注释里"26M→64M"的正名，与性能无关。
+      </p>
+      <p>
+        <b>回归锁定</b>：这个修复<b>没有配单测</b>——吞吐类回归在 CPU 上测不了，CI 里也没有双卡。
+        锁住它的是两样东西：readiness 报告把 67.6%→88.5% <b>度量入档</b>（任何人复测回退，对照表立刻现形），
+        加上代码注释把"training §3"的规范和实测数字钉在同一行。这提醒我们回归锁定不止单测一条路：
+        <b>度量档案也是回归锚点</b>——前提是有人去量。
+      </p>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：DDP 的两条铁律，违反哪条都不一定报错</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            铁律一（M08 已验）：每个 requires_grad 参数每步都要参与前向——违反的下场是响的：
+            RuntimeError（M08 玩具实验复现过），MoE 未路由专家靠"挂图"y[0,0]+=0·Σp 免费续命。
+            铁律二（本课）：每个 backward 默认触发全量同步——违反规范（该 no_sync 不 no_sync）的下场是
+            <b>哑的</b>：一切照跑，只有吞吐知道。
+          </li>
+          <li class="cause">
+            两条铁律同源：DDP 的 reducer 在 backward 结束点做事，它不理解你的训练语义（累积、稀疏路由、
+            冻结参数），只认机械规则。规则一有守卫（报错），规则二没有——因为"多余但正确"的通信
+            在框架看来不算错误。
+          </li>
+          <li class="fix">
+            规则一靠结构（挂图/或付 find_unused_parameters=True 的每步遍历税）；规则二靠度量：
+            双卡上线前跑一次单卡基线，算 scaling。&lt;80% 就去找通信账。reborn 的 readiness 清单
+            把"单双卡对照"列为全量训练前置项，正是这次把 bug 揪出来的流程保证。
+          </li>
+        </ul>
+      </div>
+      <p>
+        <b>通用教训</b>：①<b>"程序能跑"≠"没有浪费"</b>——最贵的浪费是不报错的浪费，它把 32% 的算力
+        蒸发在你眼皮底下；②<b>度量先行</b>——没有单卡基线，67.6% 这个数字根本不会被发现，
+        你只会觉得"双卡好像没快多少，可能本来就这样"；③多卡把一切口径放大：M13 的 LR 分母
+        （per_rank_full_iters）、M14 的跨卡数续训（checkpoint 存 world_size、加载时换算 step）、
+        本课的通信时机——单卡测不出、多卡才现形，是这条生产线的母题。
+      </p>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · all-reduce 平均的到底是什么？为什么平均完参数不会跑散？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>每个参数的<b>梯度张量逐元素跨 rank 平均</b>（g = (g₀+…+g_{w−1})/w）——不是 loss（loss 只是各 rank 的本地日志）、不是参数（参数从不搬运）、也不是激活。参数不跑散靠三"同"：起点逐位相同（同一份初始权重）+ all-reduce 后梯度逐位相同 + 同一份优化器代码做确定性更新——每步之后各 rank 的参数依然逐位相同，DDP 的全部工作就是守住"梯度相同"这一件事。</p>
+            <p class="back">答错回看：<a href="#ddp">数据并行</a> 的四卡图与"三个词"段。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · 累积 8 步时，为什么前 7 步包进 no_sync、最后 1 步必须留在上下文外？全包进去会怎样？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>DDP 的同步点是 backward() 本身：no_sync 块内的 backward 只本地累加、不通信；留在块外的第 8 步 backward 触发全量 all-reduce，把攒齐 8 步的完整梯度一次性平均（数学上与每步平均等价——线性运算可交换）。若 8 步全包进去，梯度永远不同步：每个 rank 用自己的本地梯度各自更新，参数从第一步起就悄悄发散——不报错、loss 照样降，只是多张卡训出了多个不同的模型，结果文件还只从 rank0 存一份，你以为训练"正常完成"。</p>
+            <p class="back">答错回看：<a href="#nosync">no_sync</a> 的四行代码与三个细节之①。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · rank0 门控 IO 防的是什么事故？metrics 后端的 NullBackend 和 train.py 里的 broadcast_object 各解决哪一侧？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>防多进程竞态写同一文件：两个 rank 同时追加 metrics.jsonl 会交错（step 序列失真——reborn 真实踩坑后加的门），同时 torch.save 同一权重会互相覆盖甚至写坏；atomic_save 防的是"写到一半被杀"（M14），防不了"两个写者"。NullBackend 是写侧：非 rank0 的指标后端直接换成空操作，从"不许写"升级到"没笔可写"。broadcast_object 是读侧：run_dir 由时间戳派生，各 rank 各取时间会得到不同目录，广播让全队用 rank0 的值——写侧门控 + 读侧对齐，合起来才是完整的单点写入。</p>
+            <p class="back">答错回看：<a href="#rank0">rank0 门控 IO</a> 的落点表与坑卡。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · 如果两个 rank 不用 DistributedSampler、各吃完全相同的数据，DDP 还能"正常"跑吗？损失什么？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>能"正常"跑——不报错、loss 正常。但两卡算出相同的梯度，all-reduce 平均后还是它，等效 batch 一点没变大：你付了双卡的算力和通信，得到的是与单卡相同的数据效率（纯浪费时间维度上的浪费）。DDP 不负责切数据，它假设 sampler 已切好——这就是 _build_loader 里 DistributedSampler 分支存在的全部理由，也是"数据并行"四个字里"数据"的分量。</p>
+            <p class="back">答错回看：<a href="#sampler">先切数据</a> 小节第一段。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · 等效 batch 真算：2 卡 × batch 4 × 累积 2，等价于单卡 batch 16 吗？</div>
+        <div class="ex-body">
+          <p>
+            M13 讲过单卡的等效 batch = batch_size × 累积步数；DDP 把 world 也乘了进来
+            （pretrain_64m.yaml 注释：等效 batch = 32 × world × 8）。现在把两条路线摆在一起算梯度。
+          </p>
+          <div class="ex-predict"></div>
+          <p>写下预测：路线一（2 卡、每卡 batch 4、累积 2 步）一个 optimizer step 吃了多少条样本？
+          路线二（单卡、batch 16、累积 1 步）——两条路线的梯度<b>数值完全相同</b>吗？只差随机性，
+          还是连"分片不等长"这种结构性差异都可能有？</p>
+          <div class="codeblock"><div class="code-head"><span>/tmp/m15_equiv_batch.py · DDP"两层平均"vs 单卡"一层平均"（CPU 可跑）</span><span class="lang">python</span></div><pre class="code"><code>import torch
+
+torch.manual_seed(42)
+W = torch.randn(8, 3)            # 假装这是模型的全部参数
+X = torch.randn(16, 3)           # 16 条样本
+y = torch.randn(16, 8)
+
+def mean_grad(xs, ys):           # 一批样本的最小二乘平均梯度
+    w = W.detach().clone().requires_grad_(True)
+    loss = ((xs @ w.T - ys) ** 2).mean()
+    loss.backward()
+    return w.grad
+
+g_big = mean_grad(X, y)                                  # 路线二：单卡 batch16 累积1
+g_a = mean_grad(X[:8], y[:8])                            # 卡 A：8 条平均（batch4×累积2）
+g_b = mean_grad(X[8:], y[8:])                            # 卡 B：8 条平均
+g_ddp = (g_a + g_b) / 2                                  # 路线一：all-reduce AVG
+print("两层平均 vs 一层平均最大差：", (g_ddp - g_big).abs().max().item())
+
+g_a2 = mean_grad(X[:10], y[:10])                         # 反例：不等分片 10+6
+g_b2 = mean_grad(X[10:], y[10:])
+print("不等分片时最大差：", (((g_a2 + g_b2) / 2) - g_big).abs().max().item())</code></pre></div>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>作者实测（2026-10-01，CPU）：</p>
+            <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m15_equiv_batch.py</span>
+<span class="out">两层平均 vs 一层平均最大差： 5.96e-08</span>
+<span class="out">不等分片时最大差： 0.11742919683456421</span></code></pre>
+            <p>
+              <b>答案与机制：</b>路线一一个 optimizer step 吃 2×4×2 = <b>16 条</b>样本，等效 batch 16。
+              等分片时两路线梯度之差 6e-08——纯浮点噪声，数学上严格相等：(1/2)·((1/8)Σ_A + (1/8)Σ_B)
+              = (1/16)Σ_全体的直接推论（§no_sync 推导卡的实例版）。
+              <b>"等效"的精确含义</b>：每个 optimizer step 的梯度数值等同（等分片前提），因此 lr、
+              grad_clip、优化器行为的语义完全一致。<b>不等价的部分</b>：①样本抽取路径不同——
+              路线二全量打乱取 16 条，路线一是 sampler 切分后各卡各取 8 条，同一步吃到的具体样本不同，
+              训练轨迹不同但统计等价；②不等分片时两层平均 ≠ 全局平均（反例 0.117 的结构性偏差），
+              DistributedSampler 的 padding 正是为保证等分片而存在；③路线一多付通信、路线二多付显存——
+              工程上选哪个，是吞吐/显存的权衡，不是数学的取舍。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M15 验收：两进程冒烟全绿（单卡替代：全链路测试）</div>
+        <div class="acc-body">
+          <p>双卡路线：在 <code>Reproduce/minimind_reborn/</code> 下用 torchrun 拉起两个进程（"单卡去掉 torchrun 前缀"是同一段代码）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run torchrun --nproc-per-node 2 tools/train.py configs/smoke/smoke_pretrain.yaml --set train.resume=false</span>
+<span class="out">… | minimind.trainer | 训练启动 stage=pretrain recipe=smoke_pretrain | 0.53M 可训练参数 | dtype=bf16 device=cuda:0 world=2 | 数据=pretrain_t2t_mini</span>
+<span class="out">… | minimind.trainer | Epoch[1/2](6/158621) loss=8.7642 lr=8.01e-05 grad_norm=0.53 tok/s=63484 mfu=0.1% eta=157.9min</span>
+<span class="ok">… | minimind.trainer | 训练结束：best_val_loss=8.774259567260742 optimizer_steps=3</span></code></pre>
+          <p>单卡/CPU 替代路线（双卡实验区的存档路线学完后，用全链路测试锁住"数据→训练→保存→续训→生成"）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_training/test_smoke_chain.py -q</span>
+<span class="out">..                                                                      [100%]</span>
+<span class="ok">2 passed in 3.06s</span></code></pre>
+          <ul class="pass-criteria">
+            <li>双卡：启动行含 <code>world=2</code> 与 <code>device=cuda:0</code>（开 LOG_ALL_RANKS=1 应看到 cuda:1 的第二行）；
+              进度分母是单卡的一半（冒烟 158621 vs 317242）；末行 <code>optimizer_steps=3</code>（6 micro step ÷ 累积 2）；
+              "已保存"类行只出现一次（rank0 门控）；无 NCCL/traceback 报错；</li>
+            <li>单卡替代：<code>2 passed</code>（全链路训练→保存→续训→生成 + SFT 标签语义）；</li>
+            <li>加分项：按 §实测 跑一组 no_sync A/B（或读 readiness §3 存档），说出你机器的 scaling 效率。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按症状分流）</summary>
+            <p>
+              <b>RuntimeError: …NCCL 需要 GPU</b> → init_distributed 的显式报错：环境里 RANK 被注入了但
+              CUDA 不可用（torchrun 装在无卡机器、或驱动/CUDA 没配好，回 M01 verify_env）；
+              <b>NCCL 连接/超时类报错</b> → 两进程没握手成功：检查两卡是否都被其他进程占满
+              （<code>nvidia-smi</code>）、防火墙对 localhost 的限制，或先用 <code>--nproc-per-node 1</code> 验证代码再升 2；
+              <b>输出目录出现两份 config.json 或 metrics.jsonl 交错</b> → 你绕过 Trainer 自己写了 IO 且没做
+              rank0 门控，回 <a href="#rank0">门控落点表</a>；
+              <b>双卡 loss 与单卡差异大</b> → 确认没动过 seed 与 sampler（DistributedSampler 的 world
+              由进程数自动决定，手改 batch/accum 会改变等效 batch，对照 M13 的 lr 语义）；
+              <b>pytest failed</b> → <code>test_full_chain_train_save_resume_generate</code> 挂在生成段回 M02/M03，
+              挂在续训段回 M14 的六件套。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        引擎已经在两张卡上验证过自己：吞吐、scaling、门控、续训换算全部就位。下一课终于可以全速点火——
+        真实 pretrain 与 SFT 的完整配方、那 37 行母版的同构之美，以及怎么从 loss 曲线上读出一个模型
+        "学到了什么"；tiny 基座 + SFT 对比跑完，🏁 里程碑 B 就在眼前。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>数据并行 / DDP <span class="en">DistributedDataParallel</span></dt><dd>多卡训练的最底层形态：每卡一个进程、一份完整模型副本、不同的数据分片；各自前向反向，梯度 all-reduce 平均后各自更新，参数逐位保持一致。复制的是模型、切分的是数据；模型大到装不下才需要 ZeRO/FSDP 等切模型的技术。</dd>
+          <dt>rank / world size / local_rank</dt><dd>rank = 进程全局编号（0 起）；world size = 进程总数（MFU 分母里的 world）；local_rank = 本机内卡号（多机时才与 rank 不同）。torchrun 启动时经 RANK/WORLD_SIZE/LOCAL_RANK 三个环境变量注入，dist.py 靠探测 RANK 区分单卡/多卡。</dd>
+          <dt>all-reduce <span class="en">集合通信</span></dt><dd>所有 rank 一起参与、结束时各自拿到同一结果的通信原语；DDP 用它对梯度逐元素求平均。同族还有 broadcast（rank0 的值发给所有人，如 run_dir 对齐）与 barrier（全员到齐才放行，cleanup 里用）。</dd>
+          <dt>torchrun <span class="en">多进程启动器</span></dt><dd>PyTorch 自带的分布式启动器：一次命令拉起 N 个训练进程并注入 rank 环境变量。reborn 的 README 写"单卡去掉 torchrun 前缀即可"——init_distributed 探测不到 RANK 就回退单卡，同一份代码两种世界。</dd>
+          <dt>NCCL / gloo</dt><dd>NCCL：NVIDIA 的 GPU 通信后端（all-reduce 落到 NVLink/PCIe 的那层），torchrun+DDP 的默认选择，没有 GPU 时 init_distributed 显式报错不静默回退；gloo：CPU 可用的兄弟后端，M08 玩具实验用的就是它。</dd>
+          <dt>DistributedSampler</dt><dd>把样本下标按 rank 轮转均分（不整除时 padding 补齐，保证各 rank 等长分片）的采样器；每个 epoch 要调 set_epoch 换打乱种子。DDP 不切数据——不切则两卡吃同样 batch，等效 batch 不变、卡白买。</dd>
+          <dt>no_sync <span class="en">梯度累积免同步</span></dt><dd>DDP 的上下文管理器：块内 backward 只本地累加、不 all-reduce。累积 N 步时前 N−1 步包入、末步留外，全量同步从 N 次降到 1 次（数学不变：平均与求和是线性运算可交换）。缺失时双卡 scaling 67.6%→修复后 88.5%（fd9fdc8）。</dd>
+          <dt>rank0 门控 <span class="en">单点写入</span></dt><dd>一切文件 IO 只许 rank 0 执行的纪律（_save/四件套/metrics 后端/日志文件四个落点；非 rank0 的 metrics 后端换成 NullBackend），防多进程竞态写同一文件；读侧用 broadcast_object 对齐 run_dir 等派生值。atomic_save 防"写到一半被杀"，防不了"两个写者"。</dd>
+          <dt>scaling 效率 <span class="en">多卡加速比</span></dt><dd>双卡 tok/s ÷（2 × 单卡 tok/s）。100% 是理论完美线性加速；2×4090（PCIe PHB、无 NVLink、混合卡）修复后实测 88.5%，剩余损耗来自互连带宽与快慢卡互相等待。判读前提：先有单卡基线（度量先行）。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+  };
+</script>
+<script async src="assets/vendor/tex-svg.js"></script>
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

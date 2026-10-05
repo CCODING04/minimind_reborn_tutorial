@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M04 · 配置即实验：分域 schema 与守门人 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m04">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第二篇 模型：造</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M04</span><span>第二篇 · 模型：造</span></div>
+        <h1>配置即实验：分域 schema 与守门人</h1>
+        <p class="lede">
+          从这一课起你开始"造"——而且你已经用过这套系统的产品：M01 跑的每个冒烟配方、M02 写的
+          <code>GenerateConfig(temperature=…)</code>，都是它的住户。造模型之前先造<b>实验台</b>：
+          reborn 与官方 minimind 差异最大的一层不是某个算法，而是配置系统——分域 dataclass 做唯一事实源，
+          YAML 配方只写差异，CLI 只管临时覆盖，守门人拦下所有非法组合。拼错一个 key？它在训练开始前一秒咬你。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M01</b>（M02/M03 可选）</span>
+          <span class="chip">时长：<b>约 60 分钟</b></span>
+          <span class="chip">新概念：<b>分域配置 schema · 守门人校验</b></span>
+          <span class="chip">对照：<code>configuration/{schemas,loader}.py</code> · <code>configs/</code> · <code>tests/test_configuration/test_loader.py</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>说出"配方即实验"的三条铁律（只写差异 / CLI 覆盖 / 未知 key 硬错），并解释各防什么事故；</li>
+        <li>默写 <b>dataclass 默认 → YAML → CLI</b> 三层覆盖顺序，指出唯一守门人 <code>validate_and_derive</code> 在数据流中的位置；</li>
+        <li>手算 hidden=768 的 <code>head_dim=96</code> 与 <code>intermediate_size=2432</code>，并解释派生参数为什么不进 YAML；</li>
+        <li>亲手触发三类守门人报错（未知 key / GQA 不整除 / bool 类型不符），读懂报错自带的修复提示，并把 <code>test_loader.py</code> 的 10 个测试当回归锚点。</li>
+      </ul>
+
+      <h2 id="trap">先被咬一口：拼错的 key 会怎样？</h2>
+      <p>
+        普通做法里，YAML 常用 <code>dict.update(config)</code> 式合并——<b>它不核对你拼错的 key</b>：
+        写了 <code>max_step: 4</code>（少了 s），合并器默默吞下，训练静默用默认 <code>epochs=2</code> 跑完，
+        三小时后你才对着"怎么没生效"的 loss 曲线排查。换 reborn 跑同一个错误，它不训练，<b>当场翻脸</b>：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.max_step=4</span>
+<span class="err">Traceback (most recent call last):</span>
+<span class="err">  File ".../src/minimind_reborn/configuration/loader.py", line 113, in _apply_override</span>
+<span class="err">ValueError: 未知配置项 'train.max_step'。合法项：['batch_size', 'compile', 'deterministic', 'dtype', 'epochs', 'eval_interval_steps', 'finetune_from', 'grad_clip', 'gradient_accumulation_steps', 'init_from', 'learning_rate', 'log_interval', 'lr_min_ratio', 'max_steps', 'resume', 'save_interval_steps', 'seed', 'warmup_steps', 'weight_decay']</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 报错发生在任何训练日志<b>之前</b>——模型未建、数据未碰；名单第 13 项就是正确拼法 <code>max_steps</code>。</p>
+      <p>这就是 <b>fail-fast（快速失败）</b>：把"三小时后曲线不对"兑换成"启动前一秒一条报错"。本课回答三问：报错谁抛的（装载器）、凭什么知道全部合法项（schema）、除拼写外还拦什么（守门人）。</p>
+
+      <h2 id="concept">两张概念卡：配方即实验 / 分域 schema</h2>
+
+      <div class="callout tip">
+        <div class="co-title">💡 概念卡：配方即实验</div>
+        <p>
+          M01 埋过伏笔，这里展开成完整世界观：<b>一个 YAML 文件 = 一个可复现实验，文件名即实验名</b>。
+          <code>pretrain_64m.yaml</code> 不只是"配置"，而是"64M 预训练"这个实验的<b>定义</b>——任何人任何时候
+          拿着它在锁定环境里跑出的实验与你<b>结构等价</b>。三条铁律：① <b>只写差异</b>——与默认相同的超参不写；
+          ② <b>CLI <code>--set</code> 只做临时覆盖</b>——值得保留的差异应沉淀回配方；③ <b>未知 key 硬错</b>。
+        </p>
+      </div>
+
+      <div class="callout note">
+        <div class="co-title">📐 概念卡：分域 dataclass——超参的唯一事实源</div>
+        <p>
+          reborn 把全部超参收进 <a href="codeview/src/minimind_reborn/configuration/schemas.py.html"><code>configuration/schemas.py</code></a>，
+          按<b>变化原因</b>切成 9 个域（一个类只因为一个原因修改——职责表见下节）。为什么用 dataclass 而不是散落的 dict？
+        </p>
+        <ul>
+          <li><b>类型即文档</b>：<code>dropout: float = 0.0</code> 一行说清名字、类型、默认值；</li>
+          <li><b>默认值是唯一事实源</b>：全仓库只此一处写默认值，配方与 CLI 都是"相对此处的差异"，永不漂移；</li>
+          <li><b>可枚举即可校验</b>：<code>dataclasses.fields()</code> 列出全部合法字段——上面报错的名单就是它打印的；</li>
+          <li><b>哨兵表达"待派生"</b>：<code>head_dim: int | None = None</code> 的 None 是"守门人稍后会填"。</li>
+        </ul>
+      </div>
+
+      <h2 id="schemas">精读 schemas.py：RunConfig 的组合结构</h2>
+      <p>9 个域由顶层 <code>RunConfig</code> 组合，精简骨架（省略各域内部字段）：</p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/configuration/schemas.py.html">src/minimind_reborn/configuration/schemas.py</a></span><span class="lang">python</span></div><pre class="code"><code><span class="k">STAGES</span> = (<span class="s">"pretrain"</span>, <span class="s">"sft"</span>, <span class="s">"dpo"</span>, <span class="s">"distill"</span>, <span class="s">"lora"</span>, <span class="s">"grpo"</span>, <span class="s">"ppo"</span>, <span class="s">"agent"</span>)  <span class="c"># 共 8 个范式，stage 的合法值</span>
+
+<span class="k">@dataclass</span>
+<span class="k">class</span> <span class="f">RunConfig</span>:
+    <span class="s">"""一次实验的完整定义：配方文件（yaml）按域映射到这些字段。"""</span>
+
+    stage: str = <span class="s">"pretrain"</span>
+    recipe_name: str = <span class="s">"default"</span>  <span class="c"># 实验名 = 配方文件名（指标曲线 ↔ 输出目录对齐）</span>
+    output_dir: str = <span class="s">""</span>       <span class="c"># 以下三目录均派生（哨兵 ""，守门人必填）：</span>
+    checkpoint_dir: str = <span class="s">""</span>  <span class="c">#   out_root() / checkpoint_root()</span>
+    run_dir: str = <span class="s">""</span>          <span class="c">#   run_root()/recipe_name/时间戳</span>
+    model: ModelConfig = <span class="f">field</span>(default_factory=ModelConfig)  <span class="c"># 为什么不是 = ModelConfig()？可变默认值</span>
+    data: DataConfig = <span class="f">field</span>(default_factory=DataConfig)    <span class="c"># 会被所有实例共享（Python 经典陷阱），</span>
+    train: TrainConfig = <span class="f">field</span>(default_factory=TrainConfig)  <span class="c"># 工厂每次造新对象；其余六域同理</span>
+    metrics: MetricsConfig = <span class="f">field</span>(default_factory=MetricsConfig)
+    generate: GenerateConfig = <span class="f">field</span>(default_factory=GenerateConfig)
+    dpo: DPOConfig = <span class="f">field</span>(default_factory=DPOConfig)
+    distill: DistillConfig = <span class="f">field</span>(default_factory=DistillConfig)
+    lora: LoRAConfig = <span class="f">field</span>(default_factory=LoRAConfig)
+    rl: RLConfig = <span class="f">field</span>(default_factory=RLConfig)</code></pre></div>
+      <p>9 个域各管一段：</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">域</th><th>管什么（变化原因）</th><th class="u-w200">代表字段（默认值）</th></tr></thead>
+          <tbody>
+            <tr><td><code>model</code></td><td>模型结构（权重形状；resume 以 checkpoint 快照为准）</td><td><code>hidden_size=768</code> · <code>num_hidden_layers=8</code> · <code>num_key_value_heads=4</code></td></tr>
+            <tr><td><code>data</code></td><td>数据集与切分、评估比例</td><td><code>dataset="pretrain_t2t_mini"</code> · <code>max_seq_len=340</code></td></tr>
+            <tr><td><code>train</code></td><td>优化与流程（跨范式共享）</td><td><code>epochs=2</code> · <code>dtype="bf16"</code> · <code>resume=True</code></td></tr>
+            <tr><td><code>metrics</code></td><td>指标上报</td><td><code>backends=["jsonl"]</code></td></tr>
+            <tr><td><code>generate</code></td><td>采样（与训练分域）</td><td><code>temperature=0.85</code> · <code>top_p=0.95</code></td></tr>
+            <tr><td><code>dpo</code> / <code>distill</code> / <code>lora</code></td><td>三个范式的专属参数</td><td><code>beta=0.15</code> · <code>alpha=0.5</code> · <code>rank=16</code></td></tr>
+            <tr><td><code>rl</code></td><td>RL 系共享 + PPO 专属</td><td><code>num_generations=6</code> · <code>loss_type="cispo"</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        收益在装载期兑现：YAML 顶层写 <code>model:</code>/<code>train:</code> 自然对齐到域，
+        <b>一个范式的参数改动不可能弄脏另一个范式</b>——官方脚本间复制粘贴的 <code>dim</code>/<code>n_layers</code> 在这里只剩一份。
+      </p>
+
+      <h3 id="recipe">活标本：16 行的 64M 配方</h3>
+      <p>"只写差异"能极致到什么程度？<code>pretrain_64m.yaml</code> 完整贴出，一共就这么多：</p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/configs/pretrain_64m.yaml.html">configs/pretrain_64m.yaml</a> · 完整 16 行</span><span class="lang">yaml</span></div><pre class="code"><code><span class="c"># 64M dense 预训练配方（hidden 768×8，与官方 minimind-3 同构）</span>
+<span class="c"># 默认值全部在 src/minimind_reborn/configuration/schemas.py，本文件只写差异</span>
+stage: pretrain
+data:
+  dataset: pretrain_t2t_mini
+  max_seq_len: 340        <span class="c"># 中文 1 token ≈ 1.5~1.7 字符</span>
+  eval_ratio: 0.005       <span class="c"># 尾部 0.5% 做验证集，观测过拟合</span>
+  num_workers: 8
+train:
+  epochs: 2
+  batch_size: 32
+  gradient_accumulation_steps: 8   <span class="c"># DDP 下等效 batch = 32 × world × 8</span>
+  learning_rate: 5.0e-4
+  dtype: bf16
+  save_interval_steps: 1000
+  log_interval: 50</code></pre></div>
+      <p class="prov"><b>[事实核对]</b> 模型结构（hidden 768 × 8 层、heads 8、kv 4）一字未写——就是 <code>ModelConfig</code> 默认值；16 行每行都是"与默认不同"的选择。</p>
+
+      <h3 id="derive">守门人算的两笔账：head_dim 与 intermediate_size</h3>
+      <p>
+        <code>ModelConfig</code> 有两个字段默认值是 <code>None</code>（哨兵）——它们不是超参，是<b>派生参数</b>：
+        由其他超参算出，写进 YAML 反而是隐患。推导发生在守门人里：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/configuration/loader.py.html">src/minimind_reborn/configuration/loader.py</a> · validate_and_derive 节选</span><span class="lang">python</span></div><pre class="code"><code><span class="c"># ---- 模型域派生（哨兵 → 推导值）----</span>
+m = cfg.model
+m.head_dim = m.head_dim or m.hidden_size // m.num_attention_heads
+m.intermediate_size = m.intermediate_size or <span class="f">math.ceil</span>(m.hidden_size * <span class="n">math.pi</span> / <span class="n">64</span>) * <span class="n">64</span>
+m.moe_intermediate_size = m.moe_intermediate_size or m.intermediate_size
+<span class="k">if</span> m.num_attention_heads % m.num_key_value_heads != <span class="n">0</span>:   <span class="c"># GQA 约束先查</span>
+    <span class="k">raise</span> <span class="f">ValueError</span>(
+        <span class="s">f"num_attention_heads(</span>{m.num_attention_heads}<span class="s">) 必须被 "</span>
+        <span class="s">f"num_key_value_heads(</span>{m.num_key_value_heads}<span class="s">) 整除（GQA 约束）"</span>
+    )
+<span class="c"># 紧随其后还有第二条：hidden_size 必须被 num_attention_heads 整除（练习 2 会踩到）</span></code></pre></div>
+      <p>
+        第一笔账直白：<code>head_dim = hidden_size // num_attention_heads</code>，默认 768 // 8 = <b>96</b>。
+        第二笔是官方 minimind 的经验公式——FFN 中间维取 hidden 的 π 倍，再向上取整到 64 的倍数（硬件对齐；
+        SwiGLU 是 M08 要讲的门控前馈结构，比经典 FFN 多一个矩阵，参数量相当的量级是 8h/3，π 略高于此——作者推算，非官方声明）：
+        $768 \times \pi \approx 2412.7 \Rightarrow \lceil 2412.7 / 64 \rceil = 38 \Rightarrow 38 \times 64 = $ <b>2432</b>。真实命令核对：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "import math; print(math.ceil(768*math.pi/64)*64)"</span>
+<span class="out">2432</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-29]</b> 同法核对三档：64→256、512→1664、768→2432；与 <code>models/config.py</code> 的 <code>MiniMindConfig</code>（同一公式独立实现）一致，512→1664 是 <code>test_derived_fields</code> 的断言值——公式、双实现、测试三方对得上。</p>
+      <p>
+        <b>派生参数为什么不写进 YAML？</b>因为它是冗余信息：写进去就可能与其他超参<b>自相矛盾</b>
+        （hidden 改 512 而 intermediate 还是 2432——形状对不上，要拖到模型构建才爆，晚了好几拍）。
+        哨兵 <code>None</code> + 守门人统一推导，单一事实源连派生值都不例外。
+        随后两条<b>整除校验</b>——GQA 要求 query 头数是 kv 头数的整数倍（M07 讲头复用时你会知道为什么是硬约束）。
+        违反会怎样？真跑（64m 配方 8 头，设 3 个 kv 头）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/pretrain_64m.yaml --set model.num_key_value_heads=3</span>
+<span class="err">ValueError: num_attention_heads(8) 必须被 num_key_value_heads(3) 整除（GQA 约束）</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-29]</b> 报错里的两个数字就是当前配置的实际值——不查文档就知道该改哪边。</p>
+      <h2 id="loader">精读 loader.py：三层覆盖与唯一闸口</h2>
+      <p>
+        装载器 <a href="codeview/src/minimind_reborn/configuration/loader.py.html"><code>configuration/loader.py</code></a>
+        只有一个入口 <code>load_config(recipe, overrides)</code>，内部是严格的三层覆盖——<b>后到的胜出</b>：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/configuration/loader.py.html">src/minimind_reborn/configuration/loader.py</a> · load_config 核心三步</span><span class="lang">python</span></div><pre class="code"><code><span class="k">def</span> <span class="f">load_config</span>(recipe: str | Path | <span class="k">None</span> = <span class="k">None</span>, overrides: list[str] | <span class="k">None</span> = <span class="k">None</span>) -> RunConfig:
+    <span class="s">"""唯一入口：默认值 → yaml → CLI 三层覆盖后过守门人。"""</span>
+    cfg = RunConfig()                          <span class="c"># ① 全部默认值就位（唯一事实源）</span>
+    <span class="k">if</span> recipe <span class="k">is not None</span>:
+        ...
+        mapping = <span class="f">yaml.safe_load</span>(recipe_path.read_text(encoding=<span class="s">"utf-8"</span>)) or {}
+        <span class="f">_apply_dict</span>(cfg, mapping, source=<span class="f">str</span>(recipe_path))   <span class="c"># ② 配方差异覆盖默认</span>
+        cfg.recipe_name = recipe_path.stem     <span class="c"># 实验名 = 配方文件名（铁律）</span>
+    <span class="k">for</span> override <span class="k">in</span> overrides or []:
+        <span class="f">_apply_override</span>(cfg, override)           <span class="c"># ③ CLI 逐条覆盖（最后说话）</span>
+    <span class="k">return</span> <span class="f">validate_and_derive</span>(cfg)        <span class="c"># 出厂必过守门人（单闸口）</span></code></pre></div>
+      <p>整条数据流——记住两个"一"：一个入口、一个闸口：</p>
+      <pre class="ascii"><code>  configs/pretrain_64m.yaml              --set train.max_steps=10 --set model.hidden_size=512
+  （配方：只写差异，沉淀复用）            （CLI：临时实验，不落盘，后到者胜）
+             │                                        │
+             ▼                                        ▼
+┌──────────────────────── load_config() ─────────────────────────┐
+│ ① RunConfig()         dataclass 默认值 = 全部超参唯一事实源      │
+│ ② _apply_dict(yaml)   逐域合并；未知 key / 类型不符 → 硬报错    │
+│ ③ _apply_override     解析 domain.field=value；同样硬报错       │
+└──────────────────────────────┬─────────────────────────────────┘
+                               ▼
+            validate_and_derive()   ← 唯一守门人（单闸口）
+            · stage ∈ STAGES（8 范式枚举）  · GQA / hidden 整除
+            · dtype ∈ {fp32,bf16,fp16}     · 区间检查（accum≥1 等）
+            · 派生 head_dim / intermediate / moe_intermediate_size
+            · 派生 output_dir / checkpoint_dir / run_dir
+                               ▼
+     RunConfig ──► snapshot() 写入 run_dir/config.json（复现凭据）
+              └──► tools/train.py 按 cfg.stage 分发到 8 个 workflow</code></pre>
+      <p>
+        入口侧，<a href="codeview/tools/train.py.html"><code>tools/train.py</code></a> 是 60 行的<b>薄入口</b>，
+        逻辑就两行：<code>cfg = load_config(args.recipe, args.overrides)</code> 装配配置，再按 <code>cfg.stage</code>
+        用 <code>importlib</code> 分发到 8 个 workflow（每个 stage 一个薄入口，M16 读 pretrain/SFT 两个母版）。<code>--set</code> 用 <code>action="append"</code> 收集，可重复出现。
+      </p>
+      <p>
+        优先级谁来验证？<code>test_yaml_then_cli_priority</code>：YAML 写 <code>batch_size: 16</code>，CLI 再
+        <code>--set train.batch_size=32</code>，断言最终 32——<b>CLI 胜</b>；未被覆盖的 <code>learning_rate</code>
+        保持 YAML 的 1.0e-5。配置最后经 <code>snapshot()</code>（<code>dataclasses.asdict</code>）随 checkpoint 与
+        <code>run_dir/config.json</code> 落盘——只拿输出目录就能唯一重建实验，含派生值。
+      </p>
+
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：配方思想的成熟形态</div>
+        <p>
+          reborn 手写的三层覆盖 + dataclass schema，工业界有整族成熟工具：<b>Hydra</b>（配置组 + 命令行组合覆盖）、
+          <b>jsonargparse</b>（dataclass 直接变 CLI，类型校验免费）、<b>MLflow</b>（平台级记录每次运行的全部参数，
+          对应 reborn 的 <code>snapshot → config.json</code>）。共同内核与本课所见一致：<b>声明式 schema +
+          分层覆盖 + 装配期校验 + 运行留档</b>。reborn 用 200 行手写而非引框架，为的是零依赖保住这四件事——也让你能逐行读懂。
+        </p>
+      </div>
+
+      <h2 id="bughunt">🔍 bug 猎场：bool CLI 覆盖失效（cf46125）</h2>
+      <p>
+        配置系统自己也会生病。素材来自 git 史，修复落在 commit <code>cf46125</code>（2026-09-24，
+        提交信息含"<b>bool CLI 覆盖修复</b>"）。
+      </p>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：小写 false 曾经过不了 CLI</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            修复前，<code>--set train.resume=false</code>（CLI 习惯的小写）直接报错：
+            <code>ValueError: 配置项 train.resume 需要 bool，得到 'false'（str）</code>——只有 Python 风格
+            <code>False</code> 能过。更阴险的平行宇宙：若没有类型断言，字符串 <code>"false"</code> 非空、<b>恒为真值</b>，
+            覆盖会"静默失效"、训练照常 resume（<code>bool("false") == True</code>，argparse 最经典的陷阱）。
+          </li>
+          <li class="cause">
+            CLI 边界上一切值<b>先是字符串</b>。装载器用 <code>ast.literal_eval</code> 还原类型，但它只认 Python 字面量
+            （大写 <code>True</code>/<code>False</code>）；小写 <code>false</code> 被拒后回落为字符串，撞上类型断言。实验看清：
+            <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "import ast; print(ast.literal_eval('False'), ast.literal_eval('0'))"</span>
+<span class="out">False 0</span>
+<span class="p">$ </span><span class="cmd">uv run python -c "import ast; ast.literal_eval('false')"</span>
+<span class="err">ValueError: malformed node or string on line 1: &lt;ast.Name object at 0x76794a38cf90&gt;</span></code></pre>
+          </li>
+          <li class="fix">
+            cf46125 在 <code>literal_eval</code> 之前先识别小写布尔字面量（修复 diff 节选，<code>_apply_override</code> 内）：
+            <div class="codeblock"><div class="code-head"><span>git show cf46125 -- src/minimind_reborn/configuration/loader.py（节选）</span><span class="lang">diff</span></div><pre class="code"><code><span class="c">-    try:</span>
+<span class="c">-        value = ast.literal_eval(raw)</span>
+<span class="c">-    except (ValueError, SyntaxError):</span>
+<span class="c">-        value = raw  # 字符串字面量：交给类型断言拦下不匹配者</span>
+<span class="k">+    low = raw.strip().lower()</span>
+<span class="k">+    if low in ("true", "false"):</span>
+<span class="k">+        value = low == "true"  # CLI 习惯：小写布尔字面量</span>
+<span class="k">+    else:</span>
+<span class="k">+        ...  # 其余值仍走 literal_eval + 类型断言</span></code></pre></div>
+            修复后真跑验证（M01 的 resume-by-default 正好当探针）：<code>--set train.resume=false --set train.max_steps=2</code>
+            从零训练 2 步、日志<b>无</b>"续训恢复清单"——小写 false 生效；<code>--set train.resume=nope</code> 仍被拦：
+            <code>ValueError: 配置项 train.resume 需要 bool，得到 'nope'（str）</code>。
+          </li>
+        </ul>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-09-29 · 2×RTX 4090]</b> 症状与 diff 来自 <code>git show cf46125</code>（66 files changed, +1051/−375）；修复后两条行为为当日实测。</p>
+      <p>
+        <b>通用教训</b>：CLI 边界永远是字符串——<b>类型转换是配置系统的必修课</b>。bool 有大小写陷阱；float 有
+        <code>"0.001"</code> 字符串陷阱（YAML 里要写数字字面量而非带引号字符串）；int 要防 bool 冒充（Python 里
+        <code>bool</code> 是 <code>int</code> 子类——见 <code>_coerce_type</code> 的 <code>allow_bool=False</code> 防线）。
+        也正是"未知 key 硬错 + 类型断言"两道闸，把这个坑从"静默错误"降级成"响亮的摩擦"——<b>把错误提前到可解释的位置</b>。
+      </p>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · 为什么未知 key 要硬报错，而不是打条警告继续跑？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>警告淹没在启动日志里，训练继续用默认值——你要到 loss 曲线不对劲才回头排查，代价小时级；硬错把发现时刻提前到启动前一秒，且自带合法项名单，修复秒级。fail-fast：错误越早暴露越便宜，配置期是全链路最便宜的暴露点（模型未建、数据未读、GPU 未占）。</p>
+            <p class="back">答错回看：<a href="#trap">先被咬一口</a> 的对比实验 + <a href="#loader">loader 精读</a> 的闸口位置。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · pretrain_64m.yaml 只有 16 行，hidden 768、8 层、学习率调度这些超参在哪？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>在 <code>configuration/schemas.py</code> 的 9 个分域 dataclass 默认值里——全部超参的唯一事实源。配方只写"与默认不同"的差异（16 行全是有意识的选择），CLI 只写临时差异：默认值管"一般情况"，配方管"这个实验特殊在哪"，CLI 管"这次临时试什么"。</p>
+            <p class="back">答错回看：<a href="#schemas">精读 schemas.py</a> + <a href="#recipe">16 行配方活标本</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · YAML 写 batch_size: 16，CLI 又 --set train.batch_size=32，最终生效几？还有哪层能再赢它们？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>32——CLI 后到胜 YAML，YAML 胜 dataclass 默认：顺序固定为 <b>dataclass 默认 → YAML 配方 → CLI --set，后到者胜</b>，由 <code>test_yaml_then_cli_priority</code> 锁定。另有两个"局外胜利者"不在覆盖链里：resume 时模型结构以 checkpoint 快照为准，run_dir 时间戳由守门人派生。</p>
+            <p class="back">答错回看：<a href="#loader">loader 精读</a> 的三步代码与数据流图。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · head_dim=96、intermediate_size=2432 为什么不写进 pretrain_64m.yaml？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>它们是<b>派生参数</b>——由 hidden_size 等超参按公式算出，写进 YAML 就是冗余：改 hidden=512 而忘了改 intermediate，两份"事实"自相矛盾，错误要拖到模型构建才爆。schema 用 <code>None</code> 哨兵占位、守门人统一推导——换 hidden_size 时自动跟上（练习 1 亲眼可见）。</p>
+            <p class="back">答错回看：<a href="#derive">守门人算的两笔账</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 1 · 把模型改成 hidden=512，权重文件叫什么名字？</div>
+        <div class="ex-body">
+          <p>用 CLI 临时改模型宽度，从头跑一次冒烟（<code>resume=false</code> 防止 M01 学过的续训干扰）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set model.hidden_size=512 --set train.resume=false</span></code></pre>
+          <div class="ex-predict"></div>
+          <p>写下预测：保存的权重文件名会是什么？参数量日志显示多少（tiny 版 0.53M）？执行后看"已保存"那行。</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>
+              作者实测（同环境）：日志出现 <code>9.96M 可训练参数</code>，最后一行
+              <code>已保存：pretrain_512.pth（epoch=1 step=6 best_val=None）</code>；
+              <code>ls out/</code> 可见 <code>pretrain_512.pth</code>（26,491,503 字节），与 <code>pretrain_64.pth</code> 并存不互踩。
+            </p>
+            <p>
+              <b>机制：</b>输出目录用扁平命名 <code>{权重名}_{hidden_size}.pth</code>（MoE 再加 <code>_moe</code> 后缀），hidden 进文件名。
+              这是"配方即实验"的落地：<b>模型宽度是实验身份的一部分</b>——不同宽度的权重互不干扰，
+              下游 <code>init_from: pretrain</code> 也能按官方命名直接解析。派生参数自动跟上：head_dim 变 128、intermediate 变 1664。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 2 · 构造一个非法头数组合，守门人几时拦、报什么？</div>
+        <div class="ex-body">
+          <p>冒烟配方默认 hidden=64、heads=4、kv=2。现在把 query 头改成质数 7：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set model.num_attention_heads=7</span></code></pre>
+          <div class="ex-predict"></div>
+          <p>写下预测：这个组合同时踩两条红线（7 不能被 kv=2 整除；hidden=64 也不能被 7 整除）。守门人先报哪条？在训练开始前还是后？</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>作者实测（同环境）：</p>
+            <pre class="term"><code><span class="err">ValueError: num_attention_heads(7) 必须被 num_key_value_heads(2) 整除（GQA 约束）</span></code></pre>
+            <p>
+              <b>机制：</b>报错发生在 <code>validate_and_derive</code>——装配的最后一环，早于模型构建与数据加载。
+              先报 GQA 这条，因为守门人源码里 GQA 检查写在 hidden 整除检查<b>之前</b>：校验顺序就是代码顺序。
+              若把 kv 改成合法值（<code>num_key_value_heads=1</code>）再跑，下一条红线才现形：
+              <code>hidden_size(64) 必须被 num_attention_heads(7) 整除</code>。为什么必须整除？M07 讲 GQA
+              头复用时揭晓——query 头要均分给 kv 头复用，除不尽就没有分组方案。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M04 验收</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下执行两步：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_configuration/test_loader.py -q</span>
+<span class="ok">..........                                                               [100%]</span>
+<span class="ok">10 passed in 0.02s</span></code></pre>
+          <p>再复现一条守门人报错（未知 key）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.max_step=4</span>
+<span class="err">ValueError: 未知配置项 'train.max_step'。合法项：['batch_size', ..., 'max_steps', ...]</span></code></pre>
+          <ul class="pass-criteria">
+            <li><code>10 passed</code>——配置系统回归锚点全绿（未知 key / 类型断言 / 覆盖顺序 / 派生 / GQA / 快照往返）；</li>
+            <li>未知 key 报错以 <code>ValueError: 未知配置项</code> 开头、附合法项名单，且发生在任何训练日志之前；</li>
+            <li>完成两个变式练习的预测与观察（预测错了更有价值——对照"机制"修正心智模型）。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按报错分流）</summary>
+            <p>
+              <b><code>FileNotFoundError: 配方文件不存在</code></b> → 确认在仓库根目录执行，或用 <code>configs/</code> 现成配方；
+              <b>pytest 报 collected 0 items</b> → 同上检查目录，<code>uv sync --extra dev</code> 补装 pytest；
+              <b>有 failed</b> → 读第一个失败用例名（如 <code>test_gqa_constraint_validated</code>），回对应小节对照源码；
+              <b>未知 key 报错没出现</b> → 检查 <code>--set</code> 是否被写成位置参数（不能省）。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>dataclass 分域 schema</dt><dd>按变化原因把超参切成 9 个 dataclass（一个类只因为一个原因修改），字段名+类型+默认值三合一，可被 <code>fields()</code> 枚举——校验的机器依据。</dd>
+          <dt>守门人 <span class="en">validator</span></dt><dd>唯一闸口 <code>validate_and_derive</code>：全部配置必经此处做合法性检查与派生推导。</dd>
+          <dt>fail-fast <span class="en">快速失败</span></dt><dd>非法状态在装配期立刻硬错，而非带病运行后由症状倒查；错误越早暴露越便宜。</dd>
+          <dt>派生参数 <span class="en">derived parameter</span></dt><dd>由其他超参按公式计算的值（head_dim、intermediate_size、输出目录），不进配方、守门人统一推导；占位用 None/""/-1 哨兵。</dd>
+          <dt>覆盖顺序 <span class="en">override precedence</span></dt><dd>dataclass 默认 → YAML 配方 → CLI --set，后到者胜；由 <code>test_yaml_then_cli_priority</code> 锁定。</dd>
+          <dt>配置快照 <span class="en">config snapshot</span></dt><dd><code>snapshot()</code> 把装配后的完整配置随 checkpoint 与 run_dir/config.json 落盘——只拿输出目录即可复现实验。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+  };
+</script>
+<script async src="assets/vendor/tex-svg.js"></script>
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

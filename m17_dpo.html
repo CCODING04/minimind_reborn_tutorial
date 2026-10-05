@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M17 · DPO：偏好对齐 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m17">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第四篇 训练</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M17</span><span>第四篇 · 训练</span></div>
+        <h1>DPO：偏好对齐</h1>
+        <p class="lede">
+          M16 的模型已经会"以助手身份说话"（🏁 里程碑 B），但它没有品味：同一个问题的两个回答，
+          在 SFT 的损失眼里一样"像标准答案"。本课给它装上那把尺子——<b>DPO 偏好对齐</b>，
+          而 M01 冒烟日志里那个 0.6931，将在公式推导的最后一步真相大白。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M16</b>（模型会说话了，本课教它挑更好的说法）</span>
+          <span class="chip">时长：<b>约 80 分钟</b></span>
+          <span class="chip">新概念：<b>偏好优化（Bradley-Terry→DPO）· 冻结参考模型</b></span>
+          <span class="chip">对照：<code>training/dpo/{workflow,loss}.py</code> · <code>configs/dpo_64m.yaml</code> · <code>runs/dpo_full/</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>从"两个回答哪个更好"出发走完推导链：Bradley-Terry 偏好模型 → RLHF 目标 → DPO 闭式损失，说出每一步替换掉了什么；</li>
+        <li>逐行读 <code>dpo_loss</code> 与 <code>logits_to_log_probs</code>，解释 β 的作用，以及"为什么是 log_prob 之差而不是 logit 之差"；</li>
+        <li>说出参考模型"冻结三件套"（eval / requires_grad_(False) / no_grad）各防什么，以及没有参考模型时目标函数退化成什么；</li>
+        <li>真跑三档学习率的 smoke_dpo 对照、读 64M 存档的偏好曲线，用数字解释 lr=4e-8 背后的"已经会说话，只调品味"；</li>
+        <li>亲手触发两个退化案例（β=0、chosen=rejected），先按公式预测行为再实测验证。</li>
+      </ul>
+
+      <h2 id="problem">会说话 ≠ 说得好：SFT 之后的瓶颈</h2>
+      <p>
+        M16 收官的复盘三问里有一条"还差什么"，答案是：<b>模型不知道什么叫"更好"</b>。SFT 的损失是
+        模仿——把标准答案的每个 token 概率推高（M12 的 loss mask 只对回答区间记账）。它带来两个后遗症：
+        <b>① 背答案</b>（sft_full 的 train 1.32 / val 1.96 分叉，M16）；<b>② 无偏好</b>——
+        问"用一句话介绍北京"，一个啰嗦跑题的答案和一个精炼切题的答案，只要都"像训练集里的回答"，
+        损失就无从比较。模型缺的是一把<b>比较两个回答的尺子</b>。
+      </p>
+      <p>
+        尺子的原料是<b>偏好数据</b>：同一个 prompt 配两个回答——chosen（人更喜欢的）与
+        rejected（较差的），只标注"谁更好"，不写"好多少"。数据侧 M12 已经造好：
+        <code>DPODataset</code> 每行产出 6 个张量（x/y/mask × chosen/rejected，预移位），
+        且 chosen/rejected 共享同一次 think 抽签保证配对公平。本课讲<b>训练侧怎么消费</b>它们。
+        怎么用？历史上有两条路线：RLHF（reinforcement learning from human feedback，
+        基于人类反馈的强化学习——InstructGPT 的经典路线）走两步，DPO 一步到位：
+      </p>
+      <pre class="ascii"><code>偏好数据 (prompt, chosen, rejected) 的两条消费路线
+
+路线一 RLHF（重）                          路线二 DPO（轻，本课）
+┌────────────────────────────┐            ┌────────────────────────────┐
+│ ① 训一个奖励模型 r(x,y)                  │  一个损失函数直接训策略：    │
+│    拟合"人觉得哪个好"                     │  -log σ(β·[(πc-πr)-(refc-refr)])│
+│ ② 用强化学习(PPO)最大化 r               │  参考模型 π_ref 冻结在场     │
+│    同时用分布距离 KL 拉住别跑偏           │  没有 reward model、没有 RL │
+└────────────────────────────┘            └────────────────────────────┘
+   两个模型 + RL 训练循环                       一个损失 + 一份冻结权重
+   （reborn 里也有，M19 逛）                   数学上是路线一的闭式解（折叠深读）</code></pre>
+      <p>
+        本课两个新概念之一登场：<b>偏好优化</b>（preference optimization）——不再模仿标准答案，
+        而是直接优化"chosen 比 rejected 更受偏爱"这一判断。DPO（direct preference optimization，
+        直接偏好优化）是其中最轻的一条实现路线。先记住结论：DPO 的训练循环与 pretrain/SFT
+        <b>共用同一台 Trainer</b>（M13），差异仍然只是一个 compute_loss 闭包——只是这个闭包比前两棒长，
+        而且流程里<b>多了一份冻结的参考模型</b>（本课第二个新概念）。
+      </p>
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：RLHF 与 DPO 的分野</div>
+        <p>
+          InstructGPT（2022）确立了 RLHF 三部曲：SFT → 训奖励模型 → PPO 强化学习
+          （PPO：proximal policy optimization，一种主流的 RL 优化算法，M19 再见），效果拔群但工程重：
+          训练时要同时在场四个模型（策略、参考、奖励、价值）。DPO 论文（2023）证明这条弯路可以抄直：
+          偏好数据能直接写成策略的损失函数，奖励模型被"闭式地"消掉了。此后小模型圈几乎默认 DPO——
+          Zephyr 用它对齐 7B 模型，HuggingFace 的偏好对齐栈以它为默认。reborn 同样把 DPO 作为
+          唯一的偏好训练范式实现（PPO/GRPO 留在 training/ 里作 M19 的地图）。
+        </p>
+      </div>
+
+      <details id="derive">
+        <summary>📐 折叠深读：从 Bradley-Terry 到 DPO（可跳过，不影响主线）</summary>
+          <p>
+            主线只需要最终损失。但 M01 测验 2 埋的话("M17 推 DPO 公式时这个数字会再次出现")在这里兑现——
+            四小步，每步只换一个变量。
+          </p>
+          <p>
+            <b>第 1 步：偏好也是概率。</b>"chosen 比 rejected 好"这个人类判断，最经典的刻度是
+            Bradley-Terry 模型：给每个回答打一个分数 r（奖励，reward），偏好概率定义为
+          </p>
+          <p>$$ P(c \succ r) = \sigma(r_c - r_r), \qquad \sigma(x) = \frac{1}{1+e^{-x}} $$</p>
+          <p>
+            σ 是 sigmoid（M08 在 SiLU 里见过：把任意实数压进 (0,1) 的 S 形函数）。分差越大，
+            "更喜欢 chosen"的概率越接近 1；分差为 0 → 0.5，五五开。
+          </p>
+          <p>
+            <b>第 2 步：RLHF 的目标。</b>有了奖励，RLHF 用强化学习最大化它，但加一条缰绳——
+            别离出发时的模型 π_ref 太远（否则语言能力被冲掉，M16 的灾难性遗忘在极端情况下的样子）：
+          </p>
+          <p>$$ \max_\pi \; \mathbb{E}_{y \sim \pi}\left[ r(x,y) \right] - \lambda\, \mathrm{KL}\!\left(\pi \,\|\, \pi_{\mathrm{ref}}\right) $$</p>
+          <p>
+            KL 散度（Kullback-Leibler divergence）衡量两个概率分布差多远，在这里是"新模型偏离参考模型的总量"，
+            M19 讲 RL 时它会反复出现。这一步的问题：r 是另一个模型，目标里既有 RL 又有两个模型——重。
+          </p>
+          <p>
+            <b>第 3 步：闭式解改写奖励。</b>上面这个优化问题有解析最优解，变形后得到
+            $ \pi^*(y|x) \propto \pi_{\mathrm{ref}}(y|x)\, e^{r(x,y)/\beta} $。
+            两边取对数、移项，奖励被表示成了<b>两个模型的对数概率比</b>：
+          </p>
+          <p>$$ r(x,y) = \beta \log \frac{\pi^*(y|x)}{\pi_{\mathrm{ref}}(y|x)} + \text{const} $$</p>
+          <p>
+            这一步是全部魔法：奖励模型 r 被消掉了——"偏离参考模型多远"本身就是奖励的等价表达。
+          </p>
+          <p>
+            <b>第 4 步：代回 Bradley-Terry。</b>把第 3 步的 r 代入第 1 步的偏好概率，再做最大似然
+            （让观测到的偏好判断概率最大），损失就是 DPO：
+          </p>
+          <p>$$ \mathcal{L}_{\mathrm{DPO}} = -\mathbb{E}\left[ \log \sigma\Big( \beta \big[ (\pi_c - \pi_r) - (\mathrm{ref}_c - \mathrm{ref}_r) \big] \Big) \right] $$</p>
+          <p>
+            其中 $\pi_c$ 是策略模型给 chosen 的（回答区间求和的）对数概率，$\pi_r$、$\mathrm{ref}_c$、
+            $\mathrm{ref}_r$ 同理。<b>起点检验</b>：训练开始时策略与参考是同一份权重，$\pi = \mathrm{ref}$，
+            方括号恒为 0，$\sigma(0) = 0.5$，损失 $= -\log 0.5 = \ln 2 = 0.6931$——
+            M01 测验 2 的答案在此兑现：那是"对哪个更好毫无偏好、纯猜硬币"的损失，所有偏好训练的零点。
+          </p>
+      </details>
+
+      <h2 id="loss">精读 loss.py：31 行纯函数</h2>
+      <p>
+        DPO 的全部数学落在 <code>training/dpo/loss.py</code>——两个纯函数（输入输出只有张量，
+        不碰模型不碰配置，天然可单测）。全文 31 行：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/dpo/loss.py.html">src/minimind_reborn/training/dpo/loss.py</a> · 全文 31 行</span><span class="lang">python</span></div><pre class="code"><code>"""DPO 损失（与官方 train_dpo.py 的实现语义一致，纯函数可单测）。"""
+
+from __future__ import annotations
+
+import torch
+import torch.nn.functional as F
+
+
+def logits_to_log_probs(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    """logits (b, seq, vocab), labels (b, seq) → 每 token 的 log prob (b, seq)。"""
+    log_probs = F.log_softmax(logits, dim=2)
+    return torch.gather(log_probs, dim=2, index=labels.unsqueeze(2)).squeeze(-1)
+
+
+def dpo_loss(
+    ref_log_probs: torch.Tensor,
+    policy_log_probs: torch.Tensor,
+    mask: torch.Tensor,
+    beta: float,
+) -> torch.Tensor:
+    """sigmoid-DPO：-log σ(β·[(π_c-π_r) - (ref_c-ref_r)])，mask 限定回答区间求和。
+
+    输入 (b, seq)，batch 前半 chosen 后半 rejected。
+    """
+    ref_log_probs = (ref_log_probs * mask).sum(dim=1)
+    policy_log_probs = (policy_log_probs * mask).sum(dim=1)
+    half = ref_log_probs.shape[0] // 2
+    pi_logratios = policy_log_probs[:half] - policy_log_probs[half:]
+    ref_logratios = ref_log_probs[:half] - ref_log_probs[half:]
+    return -F.logsigmoid(beta * (pi_logratios - ref_logratios)).mean()</code></pre></div>
+      <p>
+        <code>dpo_loss</code> 从上到下四件事。<b>① mask 加权求和</b>（25–26 行）：M12 造的 0/1 mask
+        在这里被消费——只把<b>回答区间</b>的每 token 对数概率加起来，prompt 与填充位不记账
+        （这就是 M12 说的"加权求和"消费格式，与 SFT 的 -100 哨兵同源不同形）。
+        <b>② 对半切</b>（27–29 行）：batch 的前一半是 chosen、后一半是 rejected（下一节讲怎么拼的），
+        两行减法得到 $\pi_c - \pi_r$ 与 $\mathrm{ref}_c - \mathrm{ref}_r$，再相减——
+        公式里的三重差分一行不差。<b>③ logsigmoid</b>（30 行）：$-\log\sigma(\cdot)$ 的数值稳定实现，
+        大负数输入时不会溢出。<b>④ mean</b>：对 batch 内所有对取平均。
+      </p>
+      <p>
+        一个值得驻留的细节：<b>求和，不是平均</b>。25–26 行把整个回答的 token 概率<b>加总</b>——
+        这正是折叠深读里 $\log \pi(y|x)$ 的定义（整个回答序列的对数似然）。于是
+        $\pi_c - \pi_r$ 的量级随回答长度增长，几百 token 的回答轻松差出几十 nat——
+        这也是 β 只有 0.15 的原因之一：把巨大的"长度 × 概率"刻度压回 sigmoid 的工作区间。
+      </p>
+      <div class="callout tip">
+        <div class="co-title">💡 直觉：β 是偏好差距的"敏感度旋钮"</div>
+        <p>
+          β 乘在 margin（策略相对参考对 chosen/rejected 的偏好差）上，再喂给 sigmoid。β 大 →
+          小的偏好差也被放大成接近 1 的偏好概率，损失很快饱和、梯度趋零，模型被勒令"贴着参考模型微调"；
+          β 小 → 需要很大的偏好差才令损失满意，模型被允许跑得更远。reborn 固定 0.15（官方同值）。
+          记住一个极端的反例：β=0 会发生什么？——坑卡见<a href="#pit">下文实测</a>。
+        </p>
+      </div>
+
+      <h3 id="gather">logits_to_log_probs：gather 的"对号入座"</h3>
+      <p>
+        模型 forward 吐出的是 logits——每个位置对全词表 6400 个候选的原始打分（M03/M09）。
+        DPO 需要的是"<b>实际发生的那个 token</b>拿到了多少概率"。三步：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>logits_to_log_probs 逐行</span><span class="lang">python</span></div><pre class="code"><code>log_probs = F.log_softmax(logits, dim=2)   # (B, T, 6400)：先归一化成分布再取对数
+idx = labels.unsqueeze(2)                  # (B, T, 1)：每个位置"正确答案"的词表下标
+picked = torch.gather(log_probs, 2, idx)   # (B, T, 1)：去 6400 个数里精准领自己的那份
+return picked.squeeze(-1)                  # (B, T)：每 token 的 log P(y_t | y_&lt;t)</code></pre></div>
+      <p>
+        <code>gather</code> 是张量的"按索引取数"：在 dim=2（词表维）上，用 labels 里的下标
+        从 6400 个对数概率里各取一个。等价写法是 one-hot 向量（只有对应位是 1 的 0/1 向量）
+        与全词表做乘加，但 gather 只搬数不算乘，省算力。
+        log_softmax（先 softmax 归一化再取对数）保证 6400 个数加起来等于 1 的约束先被兑现——
+        这引出一个高频问题：<b>为什么不直接用 logit 之差？</b>因为 logits 没有归一化：每个位置的
+        6400 个打分整体加一个常数，分布完全不变（softmax 平移不变），但"logit 之和"会任意漂移——
+        它不是分布的性质。$\sum_t \log P(y_t)$ 才是模型真正分配给这个回答的概率质量，
+        折叠深读的推导（概率比 $\pi/\pi_{\mathrm{ref}}$）也只对归一化分布成立。
+      </p>
+      <p>
+        写稿时顺手踩了一个真实的小坑，值得替你踩一遍：直接拿 <b>B=1</b>（只有一条序列、无配对）调
+        <code>dpo_loss</code>，返回 <code>nan</code>——27 行 <code>half = 1 // 2 = 0</code>，
+        切片 <code>[:0]</code> 是空的，空张量取均值即 nan。上游 workflow 的拼批保证 batch 恒为偶数
+        （下一节），纯函数自己不设防；给它写单测时，batch 必须按"对"喂。
+      </p>
+
+      <h2 id="ref">冻结参考模型：workflow 精读</h2>
+      <p>
+        <code>training/dpo/workflow.py</code> 全文 59 行，是八范式里第一个"模型有两份"的母版。
+        分两段读，先看组装（前 32 行）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/dpo/workflow.py.html">src/minimind_reborn/training/dpo/workflow.py</a> · 组装段（17–32 行，import 略）</span><span class="lang">python</span></div><pre class="code"><code>def run(cfg: RunConfig, *, device: str | None = None, local_rank: int = 0) -&gt; Trainer:
+    setup_logging(cfg.run_dir)
+    tokenizer = load_tokenizer()
+    model = build_model(cfg, tokenizer)
+
+    # 参考模型：与策略同权重、冻结、只前向——引用漂移的"锚"
+    ref_model = build_model(cfg, tokenizer)
+    init = resolve_weight_path(
+        cfg.train.init_from or "full_sft", cfg.output_dir, cfg.model.hidden_size, cfg.model.use_moe
+    )
+    load_inference_weights(ref_model, init, strict=True)
+    ref_model.eval().requires_grad_(False).to(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    load_inference_weights(model, init, strict=True)  # 策略模型同起点（Trainer 的 resume 在其后仍可接管）
+    logger.info("DPO 起点：%s | beta=%.3f", init.name, cfg.dpo.beta)
+
+    train_ds = build_preference_dataset(cfg, tokenizer)</code></pre></div>
+      <p>
+        策略模型（policy，正在被训练的模型——RL 词汇，M19 常用）与参考模型（reference）
+        <b>从同一份权重出发</b>：都严格加载 <code>init_from</code>（默认 full_sft，M14 的"严格起点"语义，
+        键集合必须完全相等）。然后是本课第二个新概念的实体——<b>冻结</b>，一行三件事，各防一种病：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w200">三件套</th><th>防什么</th></tr></thead>
+          <tbody>
+            <tr><td><code>eval()</code></td><td>切到推理行为。本模型 dropout=0 时作用有限，但它是"这个模型不参与训练"的声明位——任何带训练态的层（dropout/归一化更新）都被关掉</td></tr>
+            <tr><td><code>requires_grad_(False)</code></td><td>参数不登记"需要梯度"。少了它，损失反传时会为参考模型构建整棵计算图（autograd 记录的求导路径，M13）并算出它的梯度——白算一份 63.91M 参数的反向</td></tr>
+            <tr><td>前向包 <code>torch.no_grad()</code></td><td>激活即算即释放。autograd（M13 讲过的自动求导机制）完全不记录中间量，省下参考侧整批激活显存</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        <b>为什么必须有参考模型？</b>把损失里的 ref 项删掉再看：$-\log\sigma(\beta(\pi_c - \pi_r))$
+        仍是个合法的损失——"chosen 的概率比 rejected 高"。但它没有<b>参照系</b>：模型可以整体抬高
+        一切像"回答"的文本的概率来满足它，甚至把整份分布推向 chosen 的措辞——
+        这就是普通的语言模型训练（甚至在训一个更窄的复读机），语言能力（M16 的 7 小时 pretrain 家底）
+        会在无约束的推高中流失。ref 项把目标改写成"<b>相对你出发的地方</b>，把概率质量从 rejected
+        挪向 chosen"——挪多远有记录（KL 缰绳，折叠深读第 2 步），语言能力因此被保护。
+        这也是 M01 测验 2 那句"参考模型（冻结作对照的它自己）"的全部含义。
+      </p>
+      <p>
+        后半段是 compute_loss 闭包——本范式对 Trainer 的全部接口：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/dpo/workflow.py.html">src/minimind_reborn/training/dpo/workflow.py</a> · compute_loss 段（34 行起）</span><span class="lang">python</span></div><pre class="code"><code>def compute_loss(batch, m):
+    # chosen/rejected 拼成一个 batch 前后两半，一次前向
+    x = torch.cat([batch["x_chosen"], batch["x_rejected"]], dim=0)
+    y = torch.cat([batch["y_chosen"], batch["y_rejected"]], dim=0)
+    mask = torch.cat([batch["mask_chosen"], batch["mask_rejected"]], dim=0)
+    with torch.no_grad():
+        ref_logp = logits_to_log_probs(ref_model(x).logits, y)
+    out = m(x)
+    policy_logp = logits_to_log_probs(out.logits, y)
+    loss_val = dpo_loss(ref_logp, policy_logp, mask, beta=cfg.dpo.beta)
+    loss = loss_val + out.aux_loss
+    return loss, {"train/dpo_loss": loss_val.item(), "train/aux_loss": float(out.aux_loss)}</code></pre></div>
+      <p>
+        两个工程选择。<b>① 拼批</b>：chosen 与 rejected 序列等长（M12 按 max_length 填充），
+        沿 batch 维 cat 成 (2B, T) 一次前向——两次小 kernel（GPU 上的函数调用）启动合并成一次，
+        GPU 利用率更高，更重要的是<b>保证两半走过完全相同的计算路径</b>（对半切的前提，loss.py 27 行）。
+        <b>② 参考模型只算一次</b>且全程 no_grad：它对 batch 的每个 epoch 都给出同样的 ref_logp
+        （权重不动），训练中反复计算的只有它——这是"冻结"在性能上的代价与边界。
+        aux_loss 那行与 M16 相同（MoE 辅助损失，dense 恒 0）。
+      </p>
+      <p>
+        配方 <code>configs/dpo_64m.yaml</code> 全文只有 15 行，三个数字值得念出声：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/configs/dpo_64m.yaml.html">configs/dpo_64m.yaml</a> · 全文</span><span class="lang">yaml</span></div><pre class="code"><code># 64M DPO 偏好对齐（基于 SFT 权重）
+stage: dpo
+data:
+  dataset: dpo_mini
+  max_seq_len: 1024
+  num_workers: 8
+train:
+  epochs: 1
+  batch_size: 4
+  gradient_accumulation_steps: 1   # 官方 DPO accum=1（有效 batch 4×world）
+  learning_rate: 4.0e-8    # ≤5e-8 防遗忘（官方注释）
+  dtype: bf16
+  init_from: full_sft
+  save_interval_steps: 200
+  log_interval: 20
+dpo:
+  beta: 0.15</code></pre></div>
+      <p>
+        <b>lr=4e-8</b>：pretrain 是 5e-4、SFT 是 1e-5，第三棒再降 250 倍。直觉：pretrain 学"说话"
+        从零开始要大步长；SFT 学"当助手"用小步长精修（M16）；DPO 只调"品味"——在已经会说话的权重上
+        微调偏好排序，步长必须小到几乎不动语言能力（官方注释直说"防遗忘"）。<b>epochs: 1</b>：
+        偏好数据只过一遍——两遍就开始背偏好对（SFT 过拟合的偏好版）。<b>accum=1</b>：拼批已经让
+        单步 batch 翻倍（4 对 = 8 行序列），不需要再累积。这些数字的"对不对"，下一节用真跑检验。
+      </p>
+
+      <h3 id="mem">显存账：两份模型贵不贵</h3>
+      <p>
+        "DPO 要两个模型"听起来显存翻倍。真量一下（64M、bf16 混合精度、batch 8×1024——
+        即 dpo_64m 的拼批尺寸）：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w200">阶段</th><th class="u-w130">DPO（策略+参考）</th><th class="u-w130">对照：单模型 SFT 式</th></tr></thead>
+          <tbody>
+            <tr><td>模型常驻（参数）</td><td>539 MiB</td><td>270 MiB</td></tr>
+            <tr><td>前向后峰值</td><td>4672 MiB</td><td>4436 MiB</td></tr>
+            <tr><td>反向后峰值</td><td>4872 MiB</td><td>4512 MiB</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · 脚本 /tmp/m17_mem.py（本页复刻版见此节）]</b>
+      DPO 峰值只比同 batch 的单模型高约 360 MiB（+8%）：两份 fp32 参数共 539 MiB 是"硬开销"，
+      但参考侧前向全程 no_grad——激活即算即释放，不留计算图；真正的大头是策略侧的激活图
+      （前向 4672−539 ≈ 4.1 GiB）。训练时策略侧还有 Adam 优化器状态（M13）与梯度各一份参数，
+      但那与 SFT 相同——DPO 的增量就是"多一份参数 + 多一次无梯度前向"。</p>
+
+      <h2 id="labs">实测：三档学习率，与 64M 的偏好曲线</h2>
+      <p>
+        M01 冒烟只跑了 4 步 DPO（loss 0.6931→0.6908）。本课放大到 40 步，做三档学习率对照。
+        <b>实验一</b>，用"正经"的 DPO 学习率 4e-8：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_dpo.yaml --set train.max_steps=40 --set train.resume=false --set train.log_interval=4 --set train.save_interval_steps=1000 --set train.learning_rate=4e-8</span>
+<span class="out">… | minimind.dpo | DPO 起点：pretrain_64.pth | beta=0.150</span>
+<span class="out">… | minimind.trainer | 严格加载起点权重：out/pretrain_64.pth</span>
+<span class="out">…Epoch[1/2](4/8583)  loss=0.6926 lr=3.95e-08 grad_norm=13.30 …</span>
+<span class="out">…Epoch[1/2](8/8583)  loss=0.6931 lr=3.73e-08 grad_norm=18.12 …</span>
+<span class="out">…Epoch[1/2](12/8583) loss=0.6936 lr=3.37e-08 grad_norm=0.00 …</span>
+<span class="out">…Epoch[1/2](16/8583) loss=0.6950 lr=2.89e-08 grad_norm=0.00 …</span>
+<span class="out">…Epoch[1/2](20/8583) loss=0.6898 lr=2.34e-08 grad_norm=23.64 …</span>
+<span class="out">…Epoch[1/2](24/8583) loss=0.6905 lr=1.78e-08 grad_norm=28.54 …</span>
+<span class="out">…Epoch[1/2](28/8583) loss=0.6906 lr=1.26e-08 grad_norm=0.00 …</span>
+<span class="out">…Epoch[1/2](32/8583) loss=0.6919 lr=8.31e-09 grad_norm=11.88 …</span>
+<span class="out">…Epoch[1/2](36/8583) loss=0.6971 lr=5.37e-09 grad_norm=12.97 …</span>
+<span class="out">…Epoch[1/2](40/8583) loss=0.6940 lr=4.06e-09 grad_norm=0.00 …</span>
+<span class="ok">…训练结束：best_val_loss=None optimizer_steps=40</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · seed=42 · 存档 runs/smoke_dpo/20261001_103742]</b>
+      40 步全程钉在 0.6931±0.004——什么都没学到。这不是 bug：4e-8 是为"63.91M 参数 × 17,166 对 ×
+      一整个 epoch"校准的步长，挪到 tiny 的 40 步上，参数每步只挪 4e-8 量级，margin 纹丝不动。
+      M01 那 4 步的 0.6931 与此完全同因。<code>best_val_loss=None</code> 是 DPO 母版的诚实：偏好数据
+      没有 eval 切分（build_preference_dataset 不返回评估集），Trainer 收到 None 就不评估。</p>
+      <p>
+        <b>实验二</b>，把学习率放大 12500 倍——5e-4。不用 <code>--set</code>，它本来就是 smoke 配方的默认：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_dpo.yaml --set train.max_steps=40 --set train.resume=false --set train.log_interval=4 --set train.save_interval_steps=40</span>
+<span class="out">… | minimind.dpo | DPO 起点：pretrain_64.pth | beta=0.150</span>
+<span class="out">…Epoch[1/2](4/8583)  loss=0.5593 lr=4.94e-04 grad_norm=5.69 …</span>
+<span class="out">…Epoch[1/2](8/8583)  loss=0.6307 lr=4.67e-04 grad_norm=2.68 …</span>
+<span class="out">…Epoch[1/2](12/8583) loss=0.6872 lr=4.21e-04 grad_norm=0.00 …</span>
+<span class="out">…Epoch[1/2](16/8583) loss=0.6065 lr=3.61e-04 grad_norm=0.00 …</span>
+<span class="out">…Epoch[1/2](20/8583) loss=2.8467 lr=2.93e-04 grad_norm=0.00 …</span>
+<span class="out">…Epoch[1/2](24/8583) loss=0.4332 lr=2.22e-04 grad_norm=0.00 …</span>
+<span class="out">…Epoch[1/2](28/8583) loss=1.9855 lr=1.57e-04 grad_norm=0.00 …</span>
+<span class="out">…Epoch[1/2](32/8583) loss=3.5306 lr=1.04e-04 grad_norm=0.00 …</span>
+<span class="out">…Epoch[1/2](36/8583) loss=1.3606 lr=6.71e-05 grad_norm=42.52 …</span>
+<span class="out">…Epoch[1/2](40/8583) loss=0.8520 lr=5.07e-05 grad_norm=0.00 …</span>
+<span class="ok">…训练结束：best_val_loss=None optimizer_steps=40</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 同环境 · 存档 runs/smoke_dpo/20261001_103720]</b>
+      loss 在 0.43～3.53 之间狂跳：0.43 意味着某些批里模型"自信地选对"，3.53（≈ $-\log\sigma(-3.5)$，
+      批内平均 margin 已差到 −3.5）意味着另一些批里它把偏好搞反得离谱——大步长每步都冲过头，
+      margin 在正负之间震荡。顺带一课：
+      <code>smoke_dpo.yaml</code> 没写 learning_rate，于是继承了 TrainConfig 的默认值 5e-4
+      （M04"配方只写差异"的另一面——差异没写就是默认）。smoke 的职责是验证链路无断点（M01），
+      不是训出偏好，这个默认值无害；但拿 smoke 配方"加大步数看学习"时，它会咬人。</p>
+      <p>
+        <b>实验三</b>补上中间档 4e-5（=官方 lr 上限 5e-8 的 800 倍），仍 40 步：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">learning_rate</th><th class="u-w200">40 步 loss 轨迹（窗口均值）</th><th>症状</th></tr></thead>
+          <tbody>
+            <tr><td><b>4e-8</b>（官方值）</td><td>0.6926 → 0.6940（钉在 ln 2）</td><td>tiny 上 40 步纹丝不动——步长为 64M 全程校准</td></tr>
+            <tr><td><b>4e-5</b>（×1000）</td><td>0.6753 → 0.82 / 0.76 尖峰 → 0.7034</td><td>开始中毒：loss 多次爬回 ln 2 之上，偏好学成了噪声</td></tr>
+            <tr><td><b>5e-4</b>（smoke 默认，×12500）</td><td>0.5593 → 0.43～3.53 震荡</td><td>完全失控：margin 正负乱跳，语言能力也在被震碎</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 同环境 · 存档 runs/smoke_dpo/20261001_103905（4e-5 档）]</b>
+      三档合起来读：DPO 对学习率的容忍区间极窄——比 SFT 的 1e-5 还小两个数量级才是安全区。
+      "已经会说话，只需要微调品味"不是修辞，是 4e-8 这个数字的由来。</p>
+
+      <h3 id="full">64M 存档：偏好曲线长什么样</h3>
+      <p>
+        tiny 上什么都学不动，看正主。<b>[存档 runs/dpo_full/20260930_153554 · 2×RTX 4090 DDP ·
+        bf16 · seed=42]</b>——SFT 结束产物 full_sft_768.pth 严格加载为策略与参考的共同起点，
+        lr=4e-8、β=0.15、batch 4 对 × 双卡，数据仍是 dpo_mini 的 17,166 对
+        （17166 ÷ 4 对 ÷ 2 卡 = 2146 步/轮，与日志分母吻合；tiny 上 17166 ÷ 2 = 8583 同源）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">grep "严格加载\|Epoch\[1/1\](50/\|Epoch\[1/1\](100/\|Epoch\[1/1\](1100/\|Epoch\[1/1\](2100/\|Epoch\[1/1\](2146/\|训练结束" runs/dpo_full/20260930_153554/train.log</span>
+<span class="out">…严格加载起点权重：out/full_sft_768.pth</span>
+<span class="out">…Epoch[1/1](50/2146)   loss=0.6475 lr=4.00e-08 grad_norm=52.56 tok/s=66490 mfu=7.7%</span>
+<span class="out">…Epoch[1/1](100/2146)  loss=0.6235 lr=3.98e-08 grad_norm=62.41 …</span>
+<span class="out">…Epoch[1/1](1100/2146) loss=0.6134 lr=2.13e-08 grad_norm=41.88 …</span>
+<span class="out">…Epoch[1/1](2100/2146) loss=0.5837 lr=4.04e-09 grad_norm=46.36 …</span>
+<span class="out">…Epoch[1/1](2146/2146) loss=0.5891 lr=4.00e-09 grad_norm=70.14 …</span>
+<span class="ok">…训练结束：best_val_loss=None optimizer_steps=2146</span></code></pre>
+      <p>
+        平滑读数：前 5 个窗口均值 0.6551，末 5 个窗口均值 0.5364——约 0.12 nat 的下降，全程 4.3 分钟。
+        但要读懂 DPO 曲线，必须正视它的<b>批间方差</b>：43 个窗口里最小 0.3967、最大 0.8935，
+        相邻窗口能从 0.40 跳到 0.89。原因在损失的形状——每对的 margin 是"整个回答的对数概率差"，
+        大多数对两边的回答相近（margin≈0，loss≈ln 2），少数对一边倒（margin 极正或极负），
+        一个 batch 只有 4 对，抽样噪声巨大。读 DPO 曲线的正确姿势：<b>看平滑趋势，别单看某个窗口</b>。
+        顺带一问：grad_norm 40～70，为什么这么"猛"却配 4e-8 的 lr？——梯度裁剪阈值是 1.0
+        （M13），裁完再乘 4e-8，实际步子依然极小；大 grad_norm 只说明 sigmoid 损失在
+        margin 为负的批上梯度接近 1（$-\sigma(-z)$，z 很负时），尺度与交叉熵不可比。
+      </p>
+
+      <h3 id="margin">复测：判对率 50% → 59%</h3>
+      <p>
+        训练 loss 降了，模型真的更"会挑"了吗？直接量：拿存档里的两份 64M 权重——
+        DPO 前的 full_sft（也是参考）与 DPO 后的 dpo_768——在 64 个抽样对上算每对的
+        $z = \beta[(\pi_c-\pi_r) - (\mathrm{ref}_c-\mathrm{ref}_r)]$，统计 z&gt;0（比参考更偏爱 chosen）的占比：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m17_margin.py · 核心段（完整脚本 60 行，此为循环体）</span><span class="lang">python</span></div><pre class="code"><code>ref  = build("out/archive/era2/full_sft_768.pth")   # DPO 的参考 = 起点（存档 md5 fb1dcf…）
+pol  = {"DPO 前": build("out/archive/era2/full_sft_768.pth"),
+        "DPO 后": build("out/dpo_768.pth")}           # 存档 md5 521a5b…（=era2 快照）
+
+@torch.no_grad()
+def one_pass(m, b):
+    x = torch.stack([b["x_chosen"], b["x_rejected"]]).cuda()   # (2, T) 拼批
+    y = torch.stack([b["y_chosen"], b["y_rejected"]]).cuda()
+    mask = torch.stack([b["mask_chosen"], b["mask_rejected"]]).cuda()
+    return (logits_to_log_probs(m(x).logits, y) * mask).sum(dim=1)   # (2,)
+
+for i in range(64):
+    b = ds[i * 7 % len(ds)]
+    ref_lp = one_pass(ref, b)                                    # (2,) 参考的偏好
+    for k, m in pol.items():
+        lp = one_pass(m, b)
+        z = beta * ((lp[0] - lp[1]) - (ref_lp[0] - ref_lp[1]))   # 每对的判据量
+        stats[k].append(z.item())</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m17_margin.py</span>
+<span class="out">DPO 前: margin z 均值 +0.0000 | σ(z) 偏好判对率 0.5000 | 单对 DPO loss 0.6931 | z&gt;0 占比 0.00%</span>
+<span class="out">DPO 后: margin z 均值 +0.0049 | σ(z) 偏好判对率 0.5012 | 单对 DPO loss 0.6907 | z&gt;0 占比 59.38%</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · 64 对抽样（stride 7）· dpo_mini 未变（数据文件 2026-09-10）]</b>
+      方向确凿：59.38% 的对上，DPO 后的模型比参考模型更偏爱 chosen（另一轮更早的存档
+      runs/dpo_full/20260925_191632 的产物复测为 60.94%，两轮一致）；但幅度很小——
+      z 均值仅 +0.005。对照"前 5 窗口 0.655 → 末 5 窗口 0.536"的下降，复测口径（fp32 前向 +
+      fp16 落盘权重）下的绝对 loss 偏高（0.6907），因为训练窗口是 bf16 自洽口径且逐窗口方差极大。
+      <b>判对率/占比是比窗口 loss 更稳的读数</b>——这正是 4e-8 步长的刻度：偏好排序被轻轻拨正，
+      语言分布几乎未动（也正是 DPO 想要的）。输出里另一列 σ(z) 把每对的 z 折算成"这对选对的
+      概率"再平均，与占比是同一件事的两种平均法。</p>
+      <p>
+        这次复测还附带一堂工程课：<code>out/</code> 是<b>工作区</b>不是档案库。写作当天另一个实验
+        会话恰好重训并覆盖了 out/full_sft_768.pth（拿它当参考，会得出 z 均值 −0.078 的
+        <b>错误结论</b>——偏好明明被拨正了，测出来却像没动）；
+        靠 <code>out/archive/era2/</code> 的快照 + md5 比对（md5：文件的数字指纹；dpo_768 两处一致
+        521a5b…，full_sft 当日版 fb1dcf… ≠ 被覆盖版 a1f4f9…）才锁定真参考。
+        凡是"对比两个时间点的权重"的实验，先问一句：<b>参照物有没有被别人动过</b>。
+      </p>
+
+      <div class="callout warn" id="pit">
+        <div class="co-title">⚠️ 坑卡：把 β 调成 0——训练照常跑完，权重一步没动</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            想验证 β 有没有必要（消融实验：把某个部件去掉看行为变化），
+            <code>--set dpo.beta=0.0</code>（守门人不拦：DPOConfig 只有默认值 0.15，
+            没有下界校验——M04 守门人的盲区）。训练正常启动、正常结束，日志没有任何报错，
+            loss 从头到尾钉在 0.6931。作者实测（lr 拉到 5e-4 仍然如此）：
+            <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_dpo.yaml --set train.max_steps=12 --set train.resume=false --set train.log_interval=3 --set dpo.beta=0.0 --set train.learning_rate=5e-4</span>
+<span class="out">… | minimind.dpo | DPO 起点：pretrain_64.pth | beta=0.000</span>
+<span class="out">…Epoch[1/2](3/8583)  loss=0.6931 lr=4.70e-04 grad_norm=0.00 …</span>
+<span class="out">…Epoch[1/2](6/8583)  loss=0.6931 lr=3.33e-04 grad_norm=0.00 …</span>
+<span class="out">…Epoch[1/2](12/8583) loss=0.6931 lr=5.77e-05 grad_norm=0.00 …</span></code></pre>
+          </li>
+          <li class="cause">
+            z = β·margin：β=0 让 z 恒为 0，损失恒为 ln 2、对参数的梯度恒为 0
+            （$\partial \mathcal{L}/\partial \theta = -\sigma(-z)\cdot\beta\cdot\partial(\text{margin})/\partial\theta$，
+            两个因子都死）。注意它<b>不是</b>"退化成普通语言模型训练"——那是把 ref 项删掉才会发生的事
+            （<a href="#ref">上节</a>）；β=0 是更隐蔽的<b>完全空转</b>：不报错、不训练、不存任何偏好，
+            只浪费时间。
+          </li>
+          <li class="fix">
+            β 不是开关是旋钮：想"更贴近参考"调小（0.05 量级），想"允许更大偏离"调大（0.3 量级），
+            永远别归零。判据记两条：beta=0.000 出现在启动日志 → 立即停；全程 grad_norm=0.00 且
+            loss 纹丝不动 → 参数根本没在更新。
+          </li>
+        </ul>
+      </div>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · 参考模型的"冻结三件套"缺一不可吗？各防什么病？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>三件套作用在不同层面，各有独立价值：<code>eval()</code> 关训练态（本实现 dropout=0 时冗余，但它是声明位）；<code>requires_grad_(False)</code> 防止反传时为参考模型构建计算图、白算一份 63.91M 参数的梯度——若漏掉它且优化器误收了这些参数，参考会跟着训练，"锚"漂移，margin 失去意义；前向包 <code>no_grad()</code> 让激活即算即释放，省参考侧整批激活显存（实测峰值因此只比单模型高 8%）。漏掉后两件不会报错——损失照常下降——但要么白算一整份反向（时间显存双亏），要么在优化器误收参考参数时真把"锚"拖着一起走，margin 失去意义。</p>
+            <p class="back">答错回看：<a href="#ref">冻结参考模型：workflow 精读</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · β 调大会怎样？调成 0 又会怎样？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>β 乘在 margin 上再进 sigmoid，是"偏好差距的敏感度"。调大：小的 margin 被放大成高置信偏好，损失很快饱和、梯度趋零（σ(-z)→0），模型被更强地勒令贴着参考模型——偏离更小、学得更保守；调小：允许更大的偏离，但也更容易把 SFT 学到的东西带偏。β=0 则是彻底空转：z 恒 0，损失恒 ln 2，梯度恒 0，权重一步不动（坑卡实测：lr=5e-4 也纹丝不动）。它不等于"退化成纯 LM 训练"——那需要删掉 ref 项而不是归零 β。</p>
+            <p class="back">答错回看：<a href="#loss">β 的直觉卡</a> 与 <a href="#pit">坑卡：β=0</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · DPO 的 lr 为什么是 4e-8？用本课实测的数字说明大 lr 的后果</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>三棒任务不同：pretrain 从零学说话（5e-4），SFT 精修当助手（1e-5），DPO 只在已会说话的权重上微调偏好排序——大步长会震掉语言能力（灾难性遗忘），所以再降 250 倍。实测刻度（smoke_dpo 40 步）：4e-8 时 loss 钉在 0.6931（tiny 上步长太小，但也绝不伤模型）；4e-5（×1000）时 loss 多次爬回 ln 2 之上（0.82/0.76 尖峰）；5e-4（×12500，smoke 默认继承值）时 0.43～3.53 狂震——margin 正负乱跳，偏好被学成噪声。官方注释"≤5e-8 防遗忘"就是这个安全边界的经验表达。</p>
+            <p class="back">答错回看：<a href="#labs">实测：三档学习率</a> 与 <a href="#ref">dpo_64m.yaml</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · 为什么 DPO 用 log_prob 之差，而不是直接用 logit 之差？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>两个理由。① 分布性质：logits 是未归一化的打分，每个位置的 6400 个打分整体加常数，softmax 分布完全不变，但"logit 之和"会任意漂移——它不是模型分配给回答的概率；$\sum_t \log P(y_t)$（log_softmax 后对实际 token 求和）才是。② 推导要求：DPO 的损失来自"奖励 = β·log(π/π_ref)"的改写（折叠深读第 3 步），概率比只对归一化分布有定义。logits_to_log_probs 里那行 log_softmax 就是把打分兑换成概率的关卡，gather 负责从 6400 个候选里取出实际发生的那个 token 的份额。</p>
+            <p class="back">答错回看：<a href="#gather">logits_to_log_probs：gather 的"对号入座"</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · chosen = rejected：把两个回答设成一模一样，loss 和梯度是什么？</div>
+        <div class="ex-body">
+          <p>
+            构造退化数据：偏好对的两边是<b>同一份文本</b>（数据标注出错，或两个回答恰好相同）。
+            绕开数据管线，直接用纯函数验证——batch 按规矩喂 2 行（1 对）：
+          </p>
+          <div class="ex-predict"></div>
+          <p>先写下预测：①此时 loss 等于多少？（提示：公式里每个 π 项会发生什么？）②梯度呢——
+          是 0 吗，为什么？③如果"参考"与"策略"此刻也是同一份权重（训练起点），答案会因此改变吗？</p>
+          <div class="codeblock"><div class="code-head"><span>/tmp/m17_pair.py · 核心段</span><span class="lang">python</span></div><pre class="code"><code>pair = -torch.rand(1, 32)                                # 伪造每 token log prob ∈ (-1, 0)
+logp = torch.cat([pair, pair], dim=0).requires_grad_(True)   # (2, 32) chosen=rejected
+loss = dpo_loss(logp, logp, torch.ones(2, 32), beta=0.15)    # 同一张量既当 π 又当 ref
+loss.backward()
+# 对照：只把 rejected 侧末 token 的 logp 压低 0.5 —— 偏好信号出现
+ref, pol, mask = logp.detach(), logp.detach().clone(), torch.ones(2, 32)
+pol[1, -1] -= 0.5; loss2 = dpo_loss(ref, pol, mask, beta=0.15)</code></pre></div>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m17_pair.py</span>
+<span class="out">loss = 0.693147 | ln(2) = 0.693147</span>
+<span class="out">grad|logp| 最大 = 0.000e+00（精确为 0：True）</span>
+<span class="out">对照（rejected 略差）loss = 0.656350 &lt; ln(2)；grad|pol| 最大 = 7.219e-02 ≠ 0</span></code></pre>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>
+              <b>loss 精确等于 ln(2)，梯度精确等于 0</b>（不是近似 0——逐 bit 为 0）。机制：DPO 的
+              输入是"同一个数在两处的差"——$\pi_c - \pi_r$ 对同一条序列恒为 0，ref 侧同理，z 恒 0；
+              更深一层，chosen 与 rejected 共享同一份计算图，梯度经"正的一路"与"负的一路"完全对消。
+              这也解释了第 ③ 问：策略=参考（起点）只是让 ref 项也为 0，与本题无冲突——
+              两个 0 叠加还是 0。对照实验给出边界：只要 rejected 有一点更差（末 token 低 0.5 nat），
+              loss 立即跌破 ln 2 且梯度非零。
+              <b>工程含义</b>：DPO 从"没有差别"的数据里学不到任何东西且不报错——所以 M12 的
+              "配对公平"（chosen/rejected 共享 think 抽签）才重要：它防的是反面（格式差异凭空制造
+              假的 margin），而本题是正面（差异为零则学习为零）。偏好数据的全部价值都压缩在
+              "两边的差"里。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M17 验收：smoke_dpo 20 步 + 偏好数据链路测试</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下（先确保 out/pretrain_64.pth 在场：跑过 M16 第一棒或 M01 的 make smoke 即有）。第一条，冒烟 20 步（约 5 秒 GPU / 几分钟 CPU）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_dpo.yaml --set train.max_steps=20 --set train.resume=false --set train.log_interval=4</span>
+<span class="out">… | minimind.dpo | DPO 起点：pretrain_64.pth | beta=0.150</span>
+<span class="out">… | minimind.trainer | 严格加载起点权重：out/pretrain_64.pth</span>
+<span class="out">…Epoch[1/2](4/8583)  loss=0.6231 lr=4.75e-04 grad_norm=9.86 …</span>
+<span class="out">…Epoch[1/2](8/8583)  loss=1.1587 lr=3.77e-04 grad_norm=14.04 …</span>
+<span class="out">…Epoch[1/2](12/8583) loss=0.6826 lr=2.40e-04 grad_norm=0.00 …</span>
+<span class="out">…Epoch[1/2](16/8583) loss=0.6067 lr=1.16e-04 grad_norm=0.00 …</span>
+<span class="out">…Epoch[1/2](20/8583) loss=0.9869 lr=5.28e-05 grad_norm=1.26 …</span>
+<span class="ok">…训练结束：best_val_loss=None optimizer_steps=20</span></code></pre>
+          <p>第二条，偏好数据链路相关测试（registry 的 dpo_mini 注册 + loss mask 的 0/1 语义）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_data/test_registry.py tests/test_data/test_loss_mask.py -q</span>
+<span class="ok">.........                                                              [100%]</span>
+<span class="ok">9 passed in 0.03s</span></code></pre>
+          <ul class="pass-criteria">
+            <li>第一条命令输出含 <code>DPO 起点：pretrain_64.pth | beta=0.150</code>（范式自己的日志）与
+              <code>严格加载起点权重：out/pretrain_64.pth</code>（Trainer 的交接日志）双行——两份模型同一起点被两个视角各记一笔；</li>
+            <li>loss 在 ln 2 = 0.6931 附近大幅震荡（本例 0.61～1.16）是<b>预期行为</b>：smoke 配方继承默认 lr 5e-4（实验二），这里验的是链路通，不是学习效果；</li>
+            <li>pytest 输出 <code>9 passed</code>。诚实备注：DPO 没有专属单测（<code>--co</code> 探明的全部相关面就是这两组）——loss.py 的纯函数设计天然可单测，这是它留给你的第一个练习。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按症状分流）</summary>
+            <p>
+              <b>FileNotFoundError: out/pretrain_64.pth</b> → 链式依赖：smoke_dpo 的 init_from 是 pretrain，
+              先跑 M16 第一棒（smoke_pretrain 200 步）或 M01 的 <code>make smoke</code>；
+              <b>loss 一路 &gt; 1 且越来越乱</b> → 不是坏了，是 smoke 默认 lr 5e-4 的振荡（<a href="#labs">实验二</a>），
+              想看"钉在 ln 2"的版本加 <code>--set train.learning_rate=4e-8</code>；
+              <b>显存不够</b> → <code>--set train.batch_size=1</code>（拼批后单步 2 行序列，tiny 上毫无压力）；
+              <b>想验证自己手算的 ln 2</b> → 变式练习的脚本路径，纯 CPU 可跑。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        偏好尺子装好了：模型在 17,166 对偏好数据上学会了"往更好的那边挪一点"。但到目前为止，
+        每一次微调都在搬动全部 63.91M 参数。下一课换一种"轻"法：M18 蒸馏与 LoRA——
+        前者请一个大模型当老师、只学它的输出分布，后者冻住主模型、只训一块低秩"补丁"，
+        保存时也只存补丁本身。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>偏好优化 <span class="en">preference optimization</span></dt><dd>第三棒训练范式：不再模仿标准答案（SFT），而是直接优化"chosen 比 rejected 更受偏爱"的判断。数据形态是同一 prompt 的两个回答（M12 的 DPODataset），损失开口于 ln 2=0.6931——零偏好零点。</dd>
+          <dt>DPO <span class="en">direct preference optimization</span></dt><dd>偏好优化的最轻路线（2023）：把 RLHF 的"奖励模型+强化学习"闭式地消成一个损失 $-\log\sigma(\beta[(\pi_c-\pi_r)-(\mathrm{ref}_c-\mathrm{ref}_r)])$，与 pretrain/SFT 共用同一台 Trainer。工业界小模型对齐的默认选择（Zephyr 等）。</dd>
+          <dt>Bradley-Terry 模型 <span class="en">preference model</span></dt><dd>把"哪个更好"写成概率：$P(c\succ r)=\sigma(r_c-r_r)$。偏好训练的第一块数学地基——分差过 sigmoid 变成偏好概率，分差为零即五五开。</dd>
+          <dt>参考模型 <span class="en">reference model</span></dt><dd>与策略同起点、全程冻结的"锚"（eval + requires_grad_(False) + no_grad 三件套）。它提供"从出发点挪了多远"的坐标；没有它，"推高 chosen"退化成无约束的普通 LM 训练，语言能力流失。</dd>
+          <dt>策略模型 <span class="en">policy model</span></dt><dd>正在被训练的那个模型（RL 词汇，M19 常用）。DPO 里它与参考模型从同一份权重出发，唯一的差别是它吃梯度。</dd>
+          <dt>margin（隐式奖励） <span class="en">implicit reward</span></dt><dd>每对样本的判据量 $z=\beta[(\pi_c-\pi_r)-(\mathrm{ref}_c-\mathrm{ref}_r)]$：策略相对参考"多偏爱了 chosen 多少"。z&gt;0 即方向正确；复测 64M 存档的 z&gt;0 占比 50%→59.4% 是偏好被拨正的直接证据。</dd>
+          <dt>β <span class="en">偏好敏感度</span></dt><dd>margin 的放大器（reborn 固定 0.15）：大 β 勒令贴参考（sigmoid 早饱和、梯度趋零），小 β 允许大偏离，β=0 彻底空转（梯度恒 0，不报错）。它与"回答区间求和"的量级（几十 nat）共同决定了这个看似很小的值。</dd>
+          <dt>拼批 <span class="en">concatenated batch</span></dt><dd>chosen 与 rejected 沿 batch 维 cat 成 (2B, T) 一次前向的技巧：省一半 kernel 启动，且保证两半走过完全相同的计算路径——dpo_loss 按"前半 chosen 后半 rejected"对半切的前提。</dd>
+          <dt>logsigmoid <span class="en">数值稳定实现</span></dt><dd>$-\log\sigma(z)$ 的稳定计算（loss.py 用 F.logsigmoid）。margin 大负数时朴素写法会溢出；其梯度 $-\sigma(-z)$ 在 z 极负时≈1、极正时≈0——DPO 的梯度尺度与交叉熵不可直接比较。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+  };
+</script>
+<script async src="assets/vendor/tex-svg.js"></script>
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

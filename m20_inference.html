@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M20 · 推理栈深潜：采样、停止与引擎 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m20">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第五篇 推理与评测</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M20</span><span>第五篇 · 推理与评测</span></div>
+        <h1>推理栈深潜：采样、停止与引擎</h1>
+        <p class="lede">
+          M19 的 rollout 引擎每一步都在调用的那套地基——采样、停止、KV 预分配——本课拆到螺钉级。
+          训练全家桶（第四篇七课）走完，最后一程回到 M03 那张七站地图：
+          把②③④⑥四站正式展开，并收割两颗从 M02/M03 一路埋到今天的雷。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M19</b>（M02/M03 的两处伏笔本课回收）</span>
+          <span class="chip">时长：<b>约 85 分钟</b></span>
+          <span class="chip">新概念：<b>采样纯函数链契约 · 停止条件体系</b></span>
+          <span class="chip">对照：<code>inference/{sampling,generator,chat,engine}.py</code> · <code>tools/serve.py</code> · <code>tests/test_inference/</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>逐函数默写 sampling.py 的<b>五连纯函数</b>，用最小数值例子复算每一个的行为，说出"顺序即契约"为什么成立；</li>
+        <li>用插桩计数复现<b>双重温度 bug</b>，量化它对采样分布的影响面，并解释"为什么不随手修"与"该怎么锁"；</li>
+        <li>说出<b>停止三重</b>各防什么事故——prompt 里的 eos 为什么不算数、循环级全停为什么服务批处理、解码后为什么还要截一刀；</li>
+        <li>对照 ChatSession 的 history_budget 滑窗与训练侧 C1 截断，复述"训练怎么截，推理就怎么忘"；</li>
+        <li>把 engine 四层分层对应到 serve.py 的 OpenAI 风格端点，真跑一次服务并读懂流式 delta 与 M02 签名 bug 的终章。
+      </ul>
+
+      <h2 id="map">开工地图：M03 的②③④⑥站，今天拆到螺钉级</h2>
+      <p>
+        M03 画过七站地图：①tokenizer → ②chat 模板 → ③engine 门面 → ④generator 内核 → ⑤model 前向 →
+        ⑥sampling → ⑦decode。当时承诺"M20 深潜整条推理栈"——今天兑现。⑤站已在第二篇拆完
+        （M05–M09），①⑦的 tokenizer 往返第三篇讲过（M10），剩下四站正好是本课四章：
+      </p>
+      <pre class="ascii"><code>M03 七站地图                          本课章节（螺钉级）
+② chat 模板/会话        chat.py      ──► §滑窗：history_budget 丢最旧轮对（C1 同构）
+③ engine 门面           engine.py    ──► §engine 与 serve：build 工厂 · 上下文硬校验 · 四层回收
+④ generator 内核        generator.py ──► §停止三重：eos 掩码/全停/截断 + streamer/cancel
+⑥ sampling 采样         sampling.py  ──► §五连纯函数：数值例子逐个复算
+                                        + 🔍 双重温度（⑥与④的接缝里长出来的 bug）</code></pre>
+      <p>
+        推理栈在课程里已被三层消费：M02 的对话、M16 的"自己的基座能生成"、M19 的 RL rollout——
+        每一次都在调同一套 <code>generate</code> 内核。今天把它拆开，你会看到两个"纯函数各自正确、
+        串联契约有缝隙"的真实 bug（一个立案新修讨论，一个收尾终章）。
+      </p>
+
+      <h2 id="sampling">五连纯函数：sampling.py 逐个复算</h2>
+      <p>
+        <a href="codeview/src/minimind_reborn/inference/sampling.py.html"><code>inference/sampling.py</code></a>
+        全文 70 行、五个函数，模块 docstring 第一行就立了规矩：<b>≤10 行一个、带形状注释、可独立单测</b>。
+        这不是风格洁癖——五个函数全是<b>纯函数</b>（同样的输入永远给同样的输出，不碰任何外部状态），
+        于是每个都能用一行断言锁死行为（本课验收的 7 个采样测试就是证据）。
+        本课第一个新概念——<b>采样纯函数链契约</b>——指的就是这两件事的合成：
+        <b>五个函数的顺序固定为 temperature → repetition_penalty → top_k → top_p → 采样，
+        且每个函数只做一件事、可被单独验证</b>。顺序为什么固定，M03 测验 3 已推导过（先定型、再截断），
+        本课补上每个环节的数值手感。
+      </p>
+
+      <h3 id="fn-temp">① apply_temperature：除法改形状，≤0 是"贪心"开关</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/inference/sampling.py.html">src/minimind_reborn/inference/sampling.py</a> · apply_temperature 全文</span><span class="lang">python</span></div><pre class="code"><code>def apply_temperature(logits: torch.Tensor, temperature: float) -> torch.Tensor:
+    """logits: (b, vocab)。temperature ≤ 0 语义是"贪心"，此处原样返回，由 sample_token 走 argmax 分支。"""
+    if temperature &lt;= 0:
+        return logits
+    return logits / temperature</code></pre></div>
+      <p>
+        logits（模型对词表每个候选的未归一化打分，M02 调温度时摸过）除以 T：T&lt;1 放大间距、
+        softmax 后分布更<b>尖</b>；T&gt;1 压平间距、分布更<b>平</b>。注意 ≤0 不是"报错"而是<b>显式语义</b>——
+        原样返回、让下游走 argmax（必选第一名）。这就是 M03 变式里 temperature=0 连跑两次逐位一致的原因。
+      </p>
+
+      <h3 id="fn-rep">② apply_repetition_penalty：正数除、负数乘</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/inference/sampling.py.html">src/minimind_reborn/inference/sampling.py</a> · apply_repetition_penalty 全文</span><span class="lang">python</span></div><pre class="code"><code>def apply_repetition_penalty(logits, generated_ids, penalty: float):
+    """对已出现 token 的 logits 施加惩罚：正数除、负数乘（官方语义）。
+
+    generated_ids: (b, seq) 全部已见序列（prompt+生成）。"""
+    if penalty == 1.0:
+        return logits
+    for i in range(logits.shape[0]):
+        seen = torch.unique(generated_ids[i])       # 本条序列出现过的所有 token
+        score = logits[i, seen]
+        logits[i, seen] = torch.where(score &gt; 0, score / penalty, score * penalty)
+    return logits</code></pre></div>
+      <p>
+        它是五连里唯一需要<b>随步变化的状态</b>（已见序列每步变长）——所以由 generator 在调
+        sample_token <b>之前</b>施加（generator.py:82-83），sample_token 自己不碰它（sampling.py:61-63 注释即此契约）。
+        "正除负乘"的语义值得停一下：惩罚的目的是<b>压低已见 token 的概率</b>。
+        正分除以 θ&gt;1 变小，好理解；负分为什么要<b>乘</b> θ？负分本身已是低概率，除以 θ 会把它
+        <b>抬回来</b>（−2/2=−1，概率反升）——方向反了。乘 θ 让它更负（−2×2=−4），概率继续往下走：
+        $$ h(s)=\begin{cases} s/\theta, &amp; s&gt;0\\[2pt] s\cdot\theta, &amp; s\le 0 \end{cases} \qquad \theta&gt;1 \Rightarrow \text{已见 token 概率单调下降} $$
+        这份分段语义直接来自官方实现（HF transformers 与 CTRL 论文同款），reborn 照抄并配了测试锁定
+        （test_repetition_penalty_direction，下面验收见）。
+      </p>
+
+      <h3 id="fn-trunc">③④ apply_top_k / apply_top_p：两种截断，一种落笔（置 −inf）</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/inference/sampling.py.html">src/minimind_reborn/inference/sampling.py</a> · 两个截断函数</span><span class="lang">python</span></div><pre class="code"><code>def apply_top_k(logits, top_k: int):
+    """保留前 k 大，其余置 -inf。top_k=0 表示关闭。"""
+    if top_k &lt;= 0 or top_k &gt;= logits.shape[-1]:
+        return logits
+    threshold = torch.topk(logits, top_k)[0][..., -1, None]  # 第 k 大的值作阈值
+    logits[logits &lt; threshold] = -float("inf")
+    return logits
+
+def apply_top_p(logits, top_p: float):
+    """核采样：按概率降序累积，保留质量 ≤ p 的前缀，其余置 -inf。top_p ≥ 1 关闭。"""
+    if top_p &gt;= 1.0:
+        return logits
+    sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+    cumulative = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+    # 右移一位：累积恰好超过 p 的那个 token 也要保留（否则必然丢掉跨过 p 的 token）
+    mask = cumulative &gt; top_p
+    mask[..., 1:] = mask[..., :-1].clone()
+    mask[..., 0] = False
+    out = logits.clone()
+    out[mask.scatter(1, sorted_indices, mask)] = -float("inf")
+    return out</code></pre></div>
+      <p>
+        top_k 按<b>个数</b>截（硬上限），top_p 按<b>概率质量</b>截（核采样，nucleus sampling——
+        保留累积概率达到 p 的最小集合）。两者落笔方式相同：不要的候选 logits 置 −inf，
+        softmax 后概率正好为 0——不用真删列，词表维度恒定。注意 top_p 那三行右移：
+        累积跨过 p 的<b>那一个</b> token 必须留下，否则保留质量永远到不了 p（M03 实测里
+        0.5+0.3+0.15=0.95 保留 3 个就是右移的功劳）。
+      </p>
+
+      <h3 id="fn-sample">⑤ sample_token：链的出口，贪心与抽签二选一</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/inference/sampling.py.html">src/minimind_reborn/inference/sampling.py</a> · sample_token 全文</span><span class="lang">python</span></div><pre class="code"><code>def sample_token(logits, gen: GenerateConfig, generator=None):
+    """单步采样入口。返回 (b, 1) 的 token id；temperature ≤ 0 显式走贪心分支。
+
+    repetition_penalty 需要"已见序列"这个随步变化的状态，由 generate 内核
+    在调用本函数前施加，这里不做。"""
+    logits = apply_temperature(logits, gen.temperature)
+    logits = apply_top_k(logits, gen.top_k)
+    logits = apply_top_p(logits, gen.top_p)
+    if gen.temperature &lt;= 0:
+        return torch.argmax(logits, dim=-1, keepdim=True)   # 贪心：必选第一名
+    probs = torch.softmax(logits, dim=-1)
+    return torch.multinomial(probs, num_samples=1, generator=generator)  # 按概率抽签</code></pre></div>
+      <p>
+        multinomial（按概率有放回抽签，M03 ⑥站用过）吃 softmax 之后的概率；可选的
+        <code>generator</code> 参数传入 torch 的随机数发生器——固定 seed 就能复现（测试
+        test_generation_deterministic_with_seed 锁的正是这条承诺）。注意 sample_token 内部
+        又调了一次 apply_temperature——每个函数单独看都对，这一行马上会在
+        <a href="#bug-temp">猎场</a>里变成主角。
+      </p>
+
+      <p>五个函数的最小数值例子（脚本真跑，输出逐字）：</p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m20_demo.py · 五连数值例子（节选，完整脚本见验收）</span><span class="lang">python</span></div><pre class="code"><code>logits = torch.tensor([[2.0, -2.0, 3.0, 0.0]])
+seen = torch.tensor([[0, 1]])              # 候选 0/1 已出现过
+print(apply_repetition_penalty(logits.clone(), seen, 2.0))
+<span class="c"># tensor([[ 1.0, -4.0, 3.0, 0.0]])：正 2→1（除）、负 -2→-4（乘）、未见的 3/0 不动</span>
+
+logits = torch.log(torch.tensor([[0.5, 0.3, 0.15, 0.05]]))   <span class="c"># softmax 后恰好这组概率</span>
+out = apply_top_p(logits.clone(), 0.9)
+<span class="c"># 保留前 3 个：累积 0.5/0.8/0.95——跨过 0.9 的第 3 个（右移）也留下，保留质量 0.95</span>
+
+print([int(sample_token(torch.tensor([[1.0, 3.0, 2.0]]),
+                  GenerateConfig(temperature=1.0))[0, 0]) for _ in range(20)])
+<span class="c"># T=1 抽 20 次：[1, 1, 1, 1, 1, 1, 0, 2, 1, 1, 1, 2, 1, 1, 1, 2, 2, 1, 1, 1]</span></code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m20_demo.py</span>
+<span class="out">== 1 apply_temperature ==</span>
+<span class="out">T=0.5 : [[2.0, 4.0, 8.0]]      ← [1,2,4]/0.5：间距放大，分布更尖</span>
+<span class="out">T=2.0 : [[0.5, 1.0, 2.0]]      ← /2：压平，分布更平</span>
+<span class="out">T=0   : [[1.0, 2.0, 4.0]]      ← ≤0 原样返回（贪心交给 sample_token）</span>
+<span class="out">== 3 apply_top_k ==</span>
+<span class="out">k=2 : [[-inf, -inf, -inf, 4.0, 5.0]]   ← 只留前 2 大</span>
+<span class="out">== 5 sample_token ==</span>
+<span class="out">T=0 贪心 : [1] （必选第一名 id=1）</span>
+<span class="out">T=1 抽 20 次: [1, 1, 1, 1, 1, 1, 0, 2, 1, 1, 1, 2, 1, 1, 1, 2, 2, 1, 1, 1]</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径 · torch 2.14.0+cu130]</b>
+      上为完整脚本输出的关键段（第②④段在正文代码块里逐字给出）；抽签一行带随机性，
+      重跑数字不同但"绝大多数是 1"不变。</p>
+      <div class="callout tip">
+        <div class="co-title">💡 为什么非要纯函数</div>
+        <p>
+          五个函数不持有模型引用、不读全局变量、不写日志——<b>张量进、张量出</b>。
+          三个直接收益：① <b>可单测</b>：test_generator 里 4 个采样用例每个只要三四行构造输入，
+          不用加载权重；② <b>可复现</b>：同输入同输出，bug 报告里贴一组数字就能对质；
+          ③ <b>可重组</b>：RL rollout（M19）想换采样策略，拼的还是这五块积木。
+          反例是把采样写进生成循环——循环体一长，"每步发生了什么"就只能靠猜。
+        </p>
+      </div>
+
+      <h2 id="bug-temp">🔍 bug 猎场：双重温度——纯函数都对，串起来 logits/T²</h2>
+      <p>
+        M03 ⑥站的"停一下"埋过雷：<code>apply_temperature</code> 在 generate 路径上被调<b>两次</b>。
+        今天立案。先并排看两处代码——
+      </p>
+      <div class="codeblock"><div class="code-head"><span>同一温度、两处落笔 · generator.py:80-84 与 sampling.py:64</span><span class="lang">python</span></div><pre class="code"><code><span class="c"># generator.py:80-84（内核主循环里）——第一次</span>
+scaled = apply_temperature(logits, gen.temperature)
+if gen.repetition_penalty != 1.0:
+    scaled = apply_repetition_penalty(scaled, input_ids, gen.repetition_penalty)
+next_token = sample_token(scaled, gen, generator)
+
+<span class="c"># sampling.py:64（sample_token 内部）——第二次</span>
+logits = apply_temperature(logits, gen.temperature)   <span class="c"># 又除了一遍 T</span></code></pre></div>
+      <p>
+        每个函数单独看都正确；串起来，进 softmax 前的 logits 被除了两遍 T——等效温度是
+        <b>T²</b>。真跑插桩复现（把 apply_temperature 换成计数包装，钩住两处引用）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m20_double_t.py · 双重温度插桩（核心 8 行）</span><span class="lang">python</span></div><pre class="code"><code>import minimind_reborn.inference.generator as gen_mod
+import minimind_reborn.inference.sampling as samp_mod
+CALLS = {"n": 0}; _orig = samp_mod.apply_temperature
+def counting(logits, temperature):
+    CALLS["n"] += 1
+    return _orig(logits, temperature)
+gen_mod.apply_temperature = counting    <span class="c"># 钩住 generator.py:81 的外层调用</span>
+samp_mod.apply_temperature = counting    <span class="c"># 钩住 sampling.py:64 里 sample_token 的内层调用</span>
+...
+out = gen_mod.generate(model, prompt, GenerateConfig(temperature=0.85, max_new_tokens=2),
+                       eos_token_id=None, pad_token_id=0, generator=g)
+print(f"generate 2 步 · apply_temperature 调用次数 = {CALLS['n']}")</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m20_double_t.py</span>
+<span class="out">generate max_new_tokens=2 · apply_temperature 调用次数 = 4（2 步 × 每步 2 次）</span>
+<span class="out">sample_token 直调 1 次    · apply_temperature 调用次数 = 1（单测路径只有一次——缝隙只在串联处）</span>
+<span class="out">T=0.85 → 有效温度 T²=0.7225</span>
+<span class="out">一次缩放：top1(id=35) 概率=0.137  熵=3.519</span>
+<span class="out">两次缩放：top1(id=35) 概率=0.176  熵=3.308</span>
+<span class="out">贪心路径（T=0）两次缩放都不发生，输出确定：[41, 41]</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径 · torch 2.14.0+cu130 · tiny 模型 seed=0]</b>
+      熵（entropy，分布的不确定度：越平越大、均匀分布最大 ln V）由 −Σp·log p 算出。
+      旋钮读数 0.85，实际分布按 0.7225 定型——top1 概率 0.137→0.176，
+      比你要求的<b>更贪</b>。</p>
+      <p><b>影响面（谁踩到、谁踩不到）：</b></p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">路径</th><th>是否踩到</th><th>原因</th></tr></thead>
+          <tbody>
+            <tr><td>engine.generate_tokens / generate_text</td><td>踩到</td><td>都直调 generate（engine.py:133/165）→ ChatSession、tools/chat.py、serve.py 全员 inherits</td></tr>
+            <tr><td>RL rollout（M19）</td><td>踩到</td><td>rollout.py:82 直调 generate，temperature=0.8 → 实际按 0.64 采样</td></tr>
+            <tr><td>temperature ≤ 0 贪心</td><td>免疫</td><td>apply_temperature 对 ≤0 原样返回，两次都无操作</td></tr>
+            <tr><td>sample_token 单测直调</td><td>免疫</td><td>只经过 sampling.py:64 一次——所以 7 个采样测试全绿也发现不了</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        <b>修复方案</b>有两边可选：删 generator.py:81 的外层调用（让采样链的"顺序契约"归 sampling.py
+        独家所有——温度与惩罚都是标量乘除、数学上可交换，挪动不改变结果），或给 sample_token 加
+        "已预缩放"开关（丑，还破坏它独立单测的契约）。方案一边是对的。
+        但——<b>本课选择先不修</b>，这是工程判断而非偷懒：
+      </p>
+      <div class="callout note">
+        <div class="co-title">📐 不修的工程判断：改行为 = 改所有已训权重的"表现"</div>
+        <p>
+          这不是崩溃型 bug，而是<b>行为漂移</b>型：修掉它，所有非贪心采样的输出分布立刻从
+          softmax(z/T²) 变成 softmax(z/T)——M02 的温度旋钮实验、M16 的生成对比、M19 的全部
+          rollout（temperature=0.8 → 有效温度从 0.64 跳回 0.8）都会变了样。已训权重的评测基准、
+          已观察到的采样行为，全部建立在旧分布上。负责任的做法是<b>修复 + 回归评估</b>一起上：
+          修前修后各跑固定题集（M21 的评测工具正好在场），对比贪心输出（免疫路径，应逐位一致）
+          与采样输出的分布统计，确认没有意外塌缩再合入。教学仓库按此纪律留给读者作为毕业实验的候选题目
+          （M22），本课先把<b>检测</b>做实：插桩计数本身就是该进的回归测试——
+          <code>assert CALLS["n"] == steps</code>，一行锁定"每步恰好一次"。
+        </p>
+      </div>
+      <p>
+        <b>通用教训</b>与 M02 的签名 bug 同构：<b>契约要有测试锁着，否则每个零件的正确会合谋成整体的错误</b>。
+        五连函数各有单测、generate 也有 7 个测试，但没有任何一条断言"温度在完整路径上只被应用一次"——
+        缝隙又一次长在两块正确之间。
+      </p>
+
+      <h2 id="stops">停止三重：generator 的三道闸</h2>
+      <p>
+        生成循环什么时候停？答案是<b>三重停止条件</b>（generator.py:1-7 文件头原文"缺一不可"），
+        也是本课第二个新概念——<b>停止条件体系</b>：token 级、循环级、后处理级三道闸各管一层，
+        少任何一道都会出一种具体事故。循环主体 M03 ④站巡游过，这里只看三颗螺丝：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/inference/generator.py.html">src/minimind_reborn/inference/generator.py</a> · 三道闸的落笔处</span><span class="lang">python</span></div><pre class="code"><code><span class="c"># 闸 1（token 级）：已结束序列冻结为 eos 占位；finished 只由"新 token"更新</span>
+if eos_token_id is not None:
+    next_token = torch.where(finished.unsqueeze(-1),
+                             torch.full_like(next_token, eos_token_id), next_token)
+input_ids = torch.cat([input_ids, next_token], dim=-1)      <span class="c"># (b, T) → (b, T+1)</span>
+...
+if eos_token_id is not None:
+    <span class="c"># 只认"生成位"的 eos——input 里已有的 eos 不会触发（finished 掩码只由新 token 更新）</span>
+    finished |= next_token.squeeze(-1).eq(eos_token_id)
+    if bool(finished.all()):                                <span class="c"># 闸 2（循环级）：batch 全停才 break</span>
+        break
+...
+<span class="c"># 闸 3（后处理级）在 chat/engine 层：解码后按 eos 截断残留（chat.py:103 / engine.py:198）</span></code></pre></div>
+      <p><b>闸 1 为什么"prompt 里的 eos 不算数"</b>——这是最反直觉的一条。eos（end of sequence，
+      对话结束标记 <code>&lt;|im_end|&gt;</code>）在 pretrain 语料里身兼数职：文档之间的分隔符、
+      凑批时的 pad 位都用 <code>&lt;|endoftext|&gt;</code>（M03 ①站见过常量表）。如果停止条件是
+      "序列里出现 eos 就停"，那么一个合法携带分隔符的 prompt 会让生成<b>在第 0 步前就宣布结束</b>。
+      所以 finished 掩码只由<b>新生成</b>的 token 更新（generator.py:96-97），测试里专门有一条：
+      把 eos 预置进 prompt 再生成，断言 <code>generated_ids.shape[1] &gt; 0</code>——"prompt 内的
+      eos 不应触发生成停止"。</p>
+      <p><b>闸 2 为什么必须"全停"才 break</b>——batch 里两条序列长短不一是常态：短的先抽中 eos，
+      长的还要继续。若一条停就全停，长句被拦腰斩断；若不冻结已停序列（闸 1 的 torch.where），
+      它会继续"生成"垃圾尾巴。三重协作的完整断言在 test_stop_triple_batch_short_and_long：
+      eos 之后全为 eos 占位、finish_reason 逐条如实（stop/length）。</p>
+      <p><b>闸 3 为什么解码后还要截一刀</b>——停止占位与残余 token 在 id 层无法删除（batch 形状要
+      对齐），只能在 decode 前把 eos 之后的部分切掉：<code>ids[: ids.index(eos)]</code>
+      （engine.py:198-202，chat.py:103-109 各有一份）。三道闸各管一层：闸 1 管"谁还在生成"，
+      闸 2 管"循环何时退出"，闸 3 管"用户看到什么"。</p>
+
+      <h3 id="streamer-cancel">streamer 与 cancel：把循环接到外面</h3>
+      <p>
+        主循环还有两个可选挂点。<b>streamer</b>： transformers 的 TextStreamer 约定——
+        循环每产出一个 token 就调 <code>streamer.put()</code>，结束时 <code>streamer.end()</code>
+        （generator.py:67-68/92-93/106-107）；流式输出的全部机制就是"边生成边上交"。
+        <b>cancel</b>：每步开始前检查回调，返回 True 就中止，已生成部分保留、
+        finish_reason 如实标记为 <code>"cancelled"</code>。它是 commit 20c334d 加进来的：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">git show 20c334d --stat</span>
+<span class="out">commit 20c334d849cff71a5745aa3cd752415c81bb1e72</span>
+<span class="out">    feat(inference): generate() 支持 cancel 回调（服务端真停止，已生成部分保留）；Web 试验台需求</span>
+<span class="out"> src/minimind_reborn/inference/generator.py     |  5 +++++</span>
+<span class="out"> tests/test_inference/test_generator.py          | 15 +++++++++++++++</span>
+<span class="p">$ </span><span class="cmd">git show 20c334d | grep -A4 "for _ in range(steps)"</span>
+<span class="out">     for _ in range(steps):</span>
+<span class="out">+        if cancel is not None and cancel():</span>
+<span class="out">+            # 服务端停止（UI 中断/客户端断连）：已生成部分保留，停止原因如实标记</span>
+<span class="out">+            finish_reasons = ["cancelled"] * batch</span>
+<span class="out">+            break</span></code></pre>
+      <p>
+        注意 commit 同时带来 <code>test_generation_cancelled_midway</code>：计数回调第 6 步前中止，
+        断言生成恰好 5 个 token 且 finish_reason 为 cancelled——<b>功能与回归测试同一个 commit</b>，
+        这是"契约要测试锁定"的正面样板（对照上一节的双重温度：有功能、无锁定，就成了潜伏 bug）。
+        实测行为：验收的 14 个用例里它就在。
+      </p>
+
+      <h2 id="chatwin">chat 滑窗：训练怎么截，推理就怎么忘</h2>
+      <p>
+        <a href="codeview/src/minimind_reborn/inference/chat.py.html"><code>inference/chat.py</code></a>
+        的 ChatSession 管"会话记忆"。多轮对话里历史只会越滚越长，最终把 prompt 推过训练窗口——
+        模型在没见过的长度上生成，质量塌缩。M12 讲训练侧怎么处理超窗样本（C1：丢最旧整轮、
+        左截 user 保尾部），推理侧的止血是<b>同一个策略的镜像</b>：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/inference/chat.py.html">src/minimind_reborn/inference/chat.py</a> · _trim_history 全文</span><span class="lang">python</span></div><pre class="code"><code>def _trim_history(self) -&gt; None:
+    """历史超预算时成对丢最旧轮次（至少保留当前 user 消息）；仅剩当前消息仍超时左截其内容保尾部。"""
+    budget = self.history_budget
+    if budget is None:
+        return
+
+    def over(msgs):
+        return self._prompt_tokens(render_chat(self.tokenizer, msgs)) &gt; budget
+
+    # history 形如 [user, assistant, ..., user(本轮)]，每次丢最旧的 (user, assistant) 对
+    while len(self.history) &gt; 1 and over(self.history):
+        self.history = self.history[2:]
+        self.dropped_turns += 1                    # 滑窗丢弃计数（可观测）
+    # 只剩当前 user 消息仍超预算：左截内容保尾部（截字符近似，与训练侧保尾策略同构）
+    if len(self.history) == 1 and over(self.history):
+        text = self.history[0]["content"]
+        while len(text) &gt; 32 and over([{"role": "user", "content": text}]):
+            text = text[max(1, len(text) // 5):]   # 每次砍掉前 1/5，直到装得下
+        self.history[0]["content"] = text</code></pre></div>
+      <p>与 M12 的 C1 逐条对上——<b>"训练怎么截，推理就怎么忘"</b>：</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">策略</th><th>训练侧 C1（datasets.py _fit_turns）</th><th>推理侧滑窗（chat.py _trim_history）</th></tr></thead>
+          <tbody>
+            <tr><td>超窗先丢整轮</td><td>二分丢最旧 (user, assistant) 对，system 恒留</td><td>while 循环丢最旧 <code>history[2:]</code>，本轮 user 恒留</td></tr>
+            <tr><td>单条仍超</td><td>左截 user 内容保尾部（32 字符保底）</td><td>左截内容保尾部（<code>len(text) &gt; 32</code> 保底）</td></tr>
+            <tr><td>assistant 回复</td><td>永不在这里截（监督信号所在）</td><td>不截（还没生成呢——截的是输入）</td></tr>
+            <tr><td>可观测性</td><td>stats 字典（fitted/dangling/…）</td><td><code>dropped_turns</code> 计数</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        同构不是审美，是因果：模型只在"训练时见过的输入形态"上可靠。训练样本从来不会带超窗历史
+        （C1 已经把它们裁成 ≤ max_length），推理若放任历史超窗，等于把模型推到分布外的长度上作答。
+        滑窗让推理侧输入的形态分布<b>贴着训练分布</b>——这是 C1 在推理侧的镜像义务。
+        行为由 test_chat_budget 的 4 个 session 用例锁定：不限预算时全保留、超预算成对丢
+        （user/assistant 数量恒相等）、送入生成的 prompt 不超预算、单条超长消息左截保尾
+        （<code>endswith("结尾标记")</code>）。
+      </p>
+
+      <h2 id="engine-serve">engine 与 serve：四层回收，服务上线</h2>
+      <p>
+        M03 的四层分层（sampling → generator → chat → engine，"内核只认 token"）今天全部拆完，
+        收拢在 <a href="codeview/src/minimind_reborn/inference/engine.py.html"><code>inference/engine.py</code></a>
+        的 MiniMindLLM 门面上：<code>build</code> 工厂（M02 用过：权重→模型→精度回退→设备一次收拢）、
+        <code>generate_tokens</code> 内核层入口、<code>generate_text</code> 文本层入口（渲染→生成→拆
+        think→带 request_id/延迟/停止原因的结构化返回）、<code>chat_session</code> 会话工厂。
+        有一颗螺丝 M02 没讲：<code>_check_context_length</code>——输入超 RoPE 表上限
+        （max_position_embeddings）时<b>显式报错</b>，而不是穿透到位置编码的广播处炸一个张量形状错误：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/inference/engine.py.html">src/minimind_reborn/inference/engine.py</a> · _check_context_length</span><span class="lang">python</span></div><pre class="code"><code>def _check_context_length(self, n_tokens: int) -&gt; None:
+    """输入超 RoPE 表上限时显式报错——此前会穿透到 rotary 广播处炸张量形状错误（multiturn #5）。"""
+    limit = self.model.config.max_position_embeddings
+    if n_tokens &gt; limit:
+        raise ValueError(
+            f"输入长度 {n_tokens} token 超过模型位置编码上限 {limit}。"
+            f"请缩短输入（或缩短对话历史），或在构建模型时开启 inference_rope_scaling 以外推位置编码"
+        )</code></pre></div>
+      <p>
+        test_chat_budget 的前三个用例锁它（tiny 模型上限 128：129 个 id 必炸 ValueError、
+        8 个 id 正常、generate_text 收超长文本同样被拦）。
+        上一层就是 <a href="codeview/tools/serve.py.html"><code>tools/serve.py</code></a>——
+        OpenAI 风格 API（业界事实标准的服务接口约定：<code>/v1/chat/completions</code> 端点、
+        messages 进、choices 出）的流式服务。骨架四件事：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">构件</th><th>位置</th><th>职责</th></tr></thead>
+          <tbody>
+            <tr><td>依赖门控</td><td>serve.py:47-53</td><td>fastapi/uvicorn 缺失 → 启动期 <code>SystemExit</code> 并提示 <code>uv sync --extra serving</code>（可选依赖 fail-fast，M04 extras 思想）</td></tr>
+            <tr><td>请求模型</td><td>serve.py:78-86</td><td>pydantic（把 JSON 解析成带类型校验的对象）的 ChatRequest：temperature/top_p/max_tokens/stream/tools/open_thinking</td></tr>
+            <tr><td>流式管线</td><td>serve.py:98-162</td><td>生成线程 + Queue + TextStreamer（skip_prompt 只吐生成段）；按 <code>&lt;/think&gt;</code> 分流——think 段走 <code>reasoning_content</code> delta、正文走 <code>content</code> delta；每帧 <code>data: {...}\n\n</code> 即 SSE（Server-Sent Events，HTTP 长连接逐帧推送的协议）</td></tr>
+            <tr><td>tool_calls 解析</td><td>serve.py:21-42</td><td>正则抓 <code>&lt;tool_call&gt;{json}&lt;/tool_call&gt;</code>，解析成 OpenAI 的 tool_calls 结构并从正文里剔除（M12 的 Agent 数据集在服务端的消费端）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>真跑一次（后台起服务、curl 两个端点、看完日志再收进程）：</p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/serve.py --port 8998 &amp;</span>
+<span class="out">INFO:     Uvicorn running on http://0.0.0.0:8998 (Press CTRL+C to quit)</span>
+<span class="p">$ </span><span class="cmd">curl -s http://127.0.0.1:8998/health</span>
+<span class="ok">{"status": "ok"}</span>
+<span class="p">$ </span><span class="cmd">curl -s -X POST http://127.0.0.1:8998/v1/chat/completions -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"你好"}],"temperature":0.1,"max_tokens":32,"stream":false}'</span>
+<span class="out">{"id":"chatcmpl-dd493ca0f4df","object":"chat.completion","created":1790823979,</span>
+<span class="out"> "model":"minimind-reborn","choices":[{"index":0,"message":{"role":"assistant",</span>
+<span class="ok">  "content":"你好！有什么我可以帮助你的吗？"},"finish_reason":"stop"}]}</span></code></pre>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">curl -s -N -X POST http://127.0.0.1:8998/v1/chat/completions -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"用一句话介绍你自己"}],"temperature":0.1,"max_tokens":24,"stream":true}' | head -4</span>
+<span class="out">data: {"choices": [{"delta": {"content": "我"}}]}</span>
+<span class="out">data: {"choices": [{"delta": {"content": "是一个"}}]}</span>
+<span class="out">data: {"choices": [{"delta": {"content": "高效"}}]}</span>
+<span class="out">data: {"choices": [{"delta": {"content": "、精"}}]}</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · RTX 4090 · torch 2.14.0+cu130 · full_sft_768.pth · 端口 8998]</b>
+      服务约 20 秒就绪（权重加载占大头）；stream=false 一次返回完整 JSON，stream=true 逐帧 SSE、
+      每帧 1~3 个字——两份证据合起来正好覆盖 serve.py 的两条代码路径（非流式走 generate_text，
+      流式走 generate_tokens + streamer）。本机 serving extras 已安装，未触发门控；
+      若你看到 <code>SystemExit: 缺少服务依赖</code>，按提示 <code>uv sync --extra serving</code> 后重试。</p>
+
+      <h2 id="bug-chat">chat 签名 bug 终章：M02 伏笔的最终盘点</h2>
+      <p>
+        M02 猎场的签名 bug（ChatSession 以三个位置参数调 generate_tokens，而后者 attention_mask
+        是 keyword-only——星号之后只能按关键字传）当时承诺"M20 回收修复"。第一步先核对<b>当前状态</b>：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">git log --oneline --all -- src/minimind_reborn/inference/chat.py</span>
+<span class="out">cf46125 M6 完成：43 单测全绿 + ruff 清零 + bool CLI 覆盖修复 + Makefile 环境变量修正</span>
+<span class="out">0d0a421 M4(1): 推理层（采样纯函数/预分配 KV 生成内核/停止三重/引擎门面）+ …</span>
+<span class="p">$ </span><span class="cmd">echo "你好" | uv run python tools/chat.py --weight full_sft 2&gt;&amp;1 | tail -2</span>
+<span class="err">  File ".../inference/chat.py", line 73, in respond</span>
+<span class="err">TypeError: MiniMindLLM.generate_tokens() takes 3 positional arguments but 4 were given</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130 · HEAD=06db33c]</b>
+      chat.py 自创建期（0d0a421）之后只有一个文档/风格 commit 动过它，73 行原样未修——
+      <b>截至本课写作，bug 仍在</b>，症状与 M02 逐字一致。</p>
+      <p>
+        仓库对本课程只读，修复以<b>补丁形态验证</b>（在 /tmp 给 ChatSession.respond 打上 M02 的一行修复，
+        其余代码原封不动，接<b>真实引擎</b>而非桩）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m20_chat_fix.py</span>
+<span class="out">① 直连复现: MiniMindLLM.generate_tokens() takes 3 positional arguments but 4 were given</span>
+<span class="ok">② 修复后 respond: 你好！有什么我可以帮助你的吗？</span>
+<span class="out">   history roles: ['user', 'assistant']</span>
+<span class="out">③ generate_tokens 必填位置参数: ['gen'] ——其余全部 keyword-only（星号之后）</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · RTX 4090 · torch 2.14.0+cu130 · full_sft_768.pth · 补丁只在 /tmp，仓库未动]</b>
+      ①为直连真实引擎的复现；②③在给 respond 打上 chat.py:73 一行修复后的同一进程内取得。</p>
+      <p>
+        ②证明一行修复（chat.py:73 改为 <code>self.generate_fn(inputs["input_ids"], self.gen,
+        attention_mask=inputs["attention_mask"])</code>）接得通真实引擎；③是 M02 提出的两种契约锁定之一
+        （签名断言）的现场读数。<b>最终复盘——测试桩的缝隙到底宽在哪</b>：
+        test_chat_budget 的桩签名是 <code>(input_ids, attention_mask, gen)</code>，恰好复刻了调用方的
+        <b>错误假设</b>；于是"ChatSession 能与长得像调用方假设的桩合作"被验证，
+        "ChatSession 能与真实 generate_tokens 合作"从未被验证。修复要两边同步（调用方改关键字传参后，
+        桩签名也要改成 <code>(input_ids, gen, attention_mask=None)</code>，否则绿灯变红灯）；
+        根治是加一条<b>真实 tiny 引擎 + ChatSession 的接线测试</b>——让缝隙每次都被踩到。
+        对照双重温度猎场，两个 bug 共享同一个教训：<b>单测验证零件，只有接线测试验证契约</b>。
+        M01 的 make smoke 给训练链做了接线冒烟，推理链的对应物至今缺席——这是留给你的第一个
+        毕业实验候选。
+      </p>
+
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：temperature=0 的输出在共享 GPU 上跨进程漂移</div>
+        <ul class="pit-stages">
+          <li class="sym">本课实测期间，同一脚本同一权重同一 prompt（temperature=0 贪心），先后两次运行的开头不同：一次「大语言模型（LLM）是自然语言处理（NLP）领域的一个重要模型，由Google…」，另一次「大语言模型（LLM）是一种基于深度学习的…」。</li>
+          <li class="cause">贪心本身零随机（argmax 无抽样）；漂移来自数值层：bf16 前向在 GPU 上经 cuBLAS（NVIDIA 的矩阵运算库）执行，其算法选择依赖可用工作区，而工作区随卡上共存进程的显存占用变化——本机两张卡当时被其他进程占着 8GB+、利用率 98/99%。数值微差在两个 logits 近并列的位置翻转 argmax，之后的轨迹整个分岔。同进程内两次调用逐位一致（实测验证），分岔只发生在跨进程、跨负载状态之间。</li>
+          <li class="fix">把复现承诺按 reborn 测试的口径理解——"同 seed 同输出"（test_generation_deterministic_with_seed 锁的是同进程语义）；要跨机对拍数字，用 CPU 路径或独占 GPU，并在 .prov 里记录完整环境指纹。对照闸 1 的教训：停止条件要显式，复现条件也要显式。</li>
+        </ul>
+        <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 共享（他进程各占约 8.3/8.5GB）· torch 2.14.0+cu130 · full_sft_768.pth]</b>
+        同一脚本先后两次跨进程运行开头分岔；同进程内两次调用、以及同输入两次前向的 logits 均逐位一致（torch.equal=True）。</p>
+      </div>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · prompt 里已经出现了 eos，为什么不能据此停止生成？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>pretrain 语料里 eos（&lt;|endoftext|&gt;）身兼数职——文档分隔符与 pad 位都是它，prompt 合法携带它太正常了。若"序列里出现 eos 就停"，这类 prompt 会在生成第 0 步前就被宣布结束。所以 finished 掩码只由<b>新生成</b>的 token 更新（generator.py:96-97），测试专门断言"prompt 内的 eos 不应触发生成停止"。</p>
+            <p class="back">答错回看：<a href="#stops">停止三重</a> 闸 1 段。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · 双重温度为什么"危险"？哪些路径踩不到它？该怎么锁？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>它不崩溃、不报错，只是把采样分布悄悄换成 softmax(z/T²)——旋钮读数与实际行为脱钩（0.85 实际 0.7225），且影响所有显式走 generate 的路径（engine 两入口、ChatSession、tools/chat.py、serve.py、RL rollout）；踩不到的是贪心路径（≤0 原样返回）与 sample_token 直调的单测——所以零件测试全绿也发现不了。锁法：把插桩计数做成回归断言（每步 apply_temperature 恰好一次），或加一条"generate 与手工单次缩放分布一致"的接线测试。</p>
+            <p class="back">答错回看：<a href="#bug-temp">双重温度猎场</a> 的影响面表与不修判断卡。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · ChatSession 的滑窗与训练侧 C1 截断同构，这说明了什么设计原则？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>"训练怎么截，推理就怎么忘"——模型只在训练时见过的输入形态上可靠；C1 已把训练样本裁进窗口（丢最旧整轮、单条左截保尾），推理若放任历史超窗就是把模型推到分布外长度。滑窗逐条复刻 C1（丢最旧 user+assistant 对、本轮恒留、单条左截保尾、dropped_turns 可观测），让推理输入的形态分布贴着训练分布。原则：推理侧的预处理必须是训练侧预处理的镜像，不能自创。</p>
+            <p class="back">答错回看：<a href="#chatwin">chat 滑窗</a> 的对照表。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · 重复惩罚对 logit=−2 的已见 token，为什么是乘 2 得 −4，而不是除 2 得 −1？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>惩罚的目的是压低已见 token 的概率。−2 除以 2 得 −1，负分变小 → softmax 概率反而<b>上升</b>，方向反了；乘 2 得 −4 更负 → 概率继续下降。"正数除、负数乘"保证两种符号下惩罚方向一致（单调压低），这是官方语义，test_repetition_penalty_direction 用 [2,−2] 一行断言锁死。</p>
+            <p class="back">答错回看：<a href="#fn-rep">apply_repetition_penalty</a> 的分段公式。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · repetition_penalty=1.5 对复读输出有什么影响（full_sft 真跑）</div>
+        <div class="ex-body">
+          <p>
+            重复惩罚默认关闭（1.0）。贪心解码下小模型常出现短语级复读——正是这个旋钮的目标场景。
+            脚本对同一 prompt 各生成 128 token（temperature=0 排除采样随机性），
+            统计字符级重复 5-gram 率（5-gram：连续 5 个字符的片段；重复率 = 出现多于一次的片段占比）：
+          </p>
+          <div class="codeblock"><div class="code-head"><span>/tmp/m20_rep_variant.py · 核心循环</span><span class="lang">python</span></div><pre class="code"><code>llm = MiniMindLLM.build("full_sft")
+msgs = [{"role": "user", "content": "介绍一下大语言模型"}]
+for rp in (1.0, 1.5):
+    gen = GenerateConfig(temperature=0.0, repetition_penalty=rp, max_new_tokens=128)
+    r = llm.generate_text(msgs, gen)
+    print(f"rp={rp}: 重复 5-gram 率={dup_rate(r['content']):.1%}",
+          f"「大语言模型」出现 {r['content'].count('大语言模型')} 次")</code></pre></div>
+          <div class="ex-predict"></div>
+          <p>写下预测：rp=1.5 时重复率会怎么变？「大语言模型」这个词的出现次数呢——会一起降吗，还是恰恰相反？内容质量会有代价吗？</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>作者实测（同环境、同权重）：</p>
+            <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m20_rep_variant.py</span>
+<span class="out">rp=1.0: 重复 5-gram 率=8.1% 「大语言模型」出现 5 次 tokens=128</span>
+<span class="out">  大语言模型（LLM）是一种基于深度学习的自然语言处理模型，它能够理解、生成和生成人类语言。大语言模型主要由Transformer架构组成，它能够处理文本数据，包 …</span>
+<span class="out">rp=1.5: 重复 5-gram 率=2.3% 「大语言模型」出现 3 次 tokens=128</span>
+<span class="out">  大语言模型的基本概念和原理是基于深度学习的，它是一种能够理解自然语言文本并生成连贯、有意义输出的技术。在自然语言处理领域中，大语言模型主要用于处理序列数据 …</span></code></pre>
+            <p class="prov">[作者实测 · 2026-09-30 · RTX 4090 · torch 2.14.0+cu130 · full_sft_768.pth · bf16]</p>
+            <p>
+              <b>机制：</b>惩罚作用于<b>已见 token 的 logits</b>——序列里每出现一次「大」「语」「言」……
+              这些 token 的打分就被压低一档（注意是 token 级、非短语级：压的是单字，不是"大语言模型"整串）。
+              于是复读循环难以维持（rp=1.0 那种"它能够……它能够……"的惯性被打断），重复率 8.1%→2.3%；
+              主题词次数同步下降（5→3）——<b>合法重复也被一起罚了</b>，这是免费午餐的账单。
+              质量代价同样可见：rp=1.5 的答案后半段漂到了"多模态学习/图像识别"（跑题）——
+              被推离贪心轨迹后，模型可能落进更差但"没被罚"的分支。工程结论：重复惩罚是急救包不是补品，
+              复读的正解多半在数据与训练（SFT 语料的多样性），旋钮只治标。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M20 验收</div>
+        <div class="acc-body">
+          <p>推理栈全家测试（generator 7 + chat_budget 7）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_inference/ -q</span>
+<span class="out">..............                                                           [100%]</span>
+<span class="ok">14 passed in 2.60s</span></code></pre>
+          <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130 · HEAD=06db33c]</b>
+          纯 CPU 路径（tiny fixture），2.6 秒。14 个用例逐个归位：采样四连（贪心/top_k 条数/top_p 跨 p/惩罚方向）、
+          停止三重与 cancel、seed 复现；上下文硬校验 ×3、滑窗 ×4。</p>
+          <p>双重温度插桩复现（脚本正文已给核心，完整版四段：计数钩、直调对照、分布量化、贪心对照）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m20_double_t.py</span>
+<span class="out">generate max_new_tokens=2 · apply_temperature 调用次数 = 4（2 步 × 每步 2 次）</span>
+<span class="out">sample_token 直调 1 次    · apply_temperature 调用次数 = 1</span></code></pre>
+          <ul class="pass-criteria">
+            <li><code>14 passed</code>，无 failed / error；</li>
+            <li>插桩脚本打出 <code>调用次数 = 4</code> 与 <code>= 1</code> 两行——generate 路径每步两次、直调一次，缝隙可数；</li>
+            <li>五连数值例子脚本能跑通，五个函数各有可复算的输出；</li>
+            <li>变式练习完成预测→观察闭环（重复率对比两行都在）。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按症状分流）</summary>
+            <p>
+              <b>pytest 某用例 failed</b> → 读用例名回对应小节：<code>test_repetition_penalty_direction</code> 回
+              <a href="#fn-rep">惩罚语义</a>，<code>test_stop_triple_batch_short_and_long</code> 回
+              <a href="#stops">停止三重</a>，滑窗三兄弟回 <a href="#chatwin">chat 滑窗</a>；
+              <b>插桩计数不是 4</b> → 检查两处钩子都打上了（只钩 sampling 或只钩 generator 会得 2）；
+              <b>serve 起不来（SystemExit: 缺少服务依赖）</b> → <code>uv sync --extra serving</code>；
+              <b>端口占用</b> → 换 <code>--port</code>；<b>tools/chat.py 的 TypeError</b> → 不是环境问题，
+              那是<b>终章</b>猎场本体，去 <a href="#bug-chat">核对</a>；
+              <b>贪心输出与页面对不上</b> → 先读<a href="#stops">上方坑卡</a>（共享 GPU 跨进程漂移），
+              换 CPU 或独占卡再对拍。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        推理栈拆完了：采样五连、停止三重、滑窗、门面、服务——你现在已经能从一句 curl 解释到
+        每一个旋钮的分毫。但"能生成"与"生成得好"之间隔着一整套<b>测量</b>：固定题打分、多轮套件、
+        与官方权重对表。M21 把这些尺子请出来。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>采样纯函数链契约 <span class="en">sampling chain contract</span></dt><dd>五个 ≤10 行纯函数按固定顺序串联（temperature → repetition_penalty → top_k → top_p → 采样），每个只做一件事、可独立单测；顺序即契约——先定型、再截断。本课证明：零件各自正确不保证串联正确，契约本身要有测试锁定。</dd>
+          <dt>停止条件体系 <span class="en">stop conditions, triple</span></dt><dd>token 级（eos 掩码只认生成位——prompt 携带的 eos 不算，因 pretrain 语料里它是文档分隔/pad）、循环级（batch 全停才 break，已停序列冻结为 eos 占位）、后处理级（decode 前按 eos 截断残留）。三道闸各防一种事故，缺一不可。</dd>
+          <dt>重复惩罚 <span class="en">repetition penalty</span></dt><dd>对已见 token 的 logits 分段缩放：正数除 θ、负数乘 θ（θ&gt;1），保证两种符号下概率都单调下降。token 级而非短语级；合法重复与复读一起被罚——急救包不是补品。</dd>
+          <dt>核采样 <span class="en">top-p / nucleus sampling</span></dt><dd>按概率降序累积，保留质量达到 p 的最小候选集；实现要点是累积掩码右移一位——跨过 p 的那一个 token 必须留下，否则保留质量永远到不了 p。</dd>
+          <dt>滑动窗口 <span class="en">sliding window, history_budget</span></dt><dd>ChatSession 的会话记忆管理：渲染后 prompt 超预算即成对丢最旧轮次、单条超长左截保尾——与训练侧 C1 截断（M12）逐条同构；dropped_turns 计数可观测。"训练怎么截，推理就怎么忘"。</dd>
+          <dt>streamer / cancel <span class="en">流式回调 / 取消回调</span></dt><dd>generator 主循环的两个挂点：streamer 每步上交新 token（流式输出的机制），cancel 每步开始前检查、True 即中止（已生成部分保留，finish_reason="cancelled"；commit 20c334d，功能与回归测试同 commit）。</dd>
+          <dt>SSE <span class="en">Server-Sent Events</span></dt><dd>HTTP 长连接上逐帧推送 <code>data: {...}\n\n</code> 的协议；serve.py 流式端点的传输层，OpenAI 风格 API 的 stream=true 即走它。</dd>
+          <dt>OpenAI 风格 API <span class="en">OpenAI-compatible API</span></dt><dd>业界事实标准的服务接口约定（/v1/chat/completions 端点、messages 进 choices 出、delta 流式增量、tool_calls 结构）。实现它 = 生态里所有现成客户端直接可用。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+  };
+</script>
+<script async src="assets/vendor/tex-svg.js"></script>
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

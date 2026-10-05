@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M06 · KV Cache：预分配设计 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m06">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第二篇 模型：造</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M06</span><span>第二篇 · 模型：造</span></div>
+        <h1>KV Cache：预分配设计</h1>
+        <p class="lede">
+          M05 的 RMSNorm 与 RoPE 是两块无状态的地基件——张量进、张量出，不记得任何事。本课造旅途中第一个
+          <b>有状态</b>的部件：KV 缓存（KV cache，把解码过程中历史 token 的 K/V 向量存下来复用的显存区）。
+          它是 M03 地图④站的核心资产——generator 每生成一个 token，都要到这块内存里读一次历史、写一次新值。
+          先实测"没有它有多慢"，再钻进 57 行的
+          <a href="codeview/src/minimind_reborn/models/kv_cache.py.html"><code>models/kv_cache.py</code></a>，
+          看预分配、切片写与游标协议怎么把推理提速变成一次性的内存交易。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M05</b></span>
+          <span class="chip">时长：<b>约 60 分钟</b></span>
+          <span class="chip">新概念：<b>KV 缓存</b></span>
+          <span class="chip">对照：<code>models/kv_cache.py</code> · <code>inference/generator.py</code> · <code>tests/test_models/test_kv_cache.py</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>用实测数字说出无缓存 vs 有缓存的差距（50 token 省 38.8 倍计算量），并解释为什么墙钟加速比"只有"1.6 倍；</li>
+        <li>解释为什么 K/V 能缓存而 Q 不能，画出一"步"解码时 q_new 与历史 k/v 的注意力关系；</li>
+        <li>逐行读 KVCache 的四个方法（<code>__init__</code>/<code>write</code>/<code>read</code>/<code>advance</code>），说清"预分配、原地切片写、零拷贝视图、游标协议"各自防什么事故；</li>
+        <li>手算一个 2048-token 会话的 KV 显存占用（24 MiB），并从 generator 的 <code>prompt + max_new_tokens</code> 容量公式推出任意配置的账单；</li>
+        <li>复现两类坑（忘 <code>advance</code> 静默变慢、容量开小越界硬错），并解释"逐步解码 vs 全量重算逐位一致"为什么是 KV cache 最硬的正确性关卡。</li>
+      </ul>
+
+      <h2 id="exp">黑箱先行：先生成 50 个 token，亲眼看"慢"</h2>
+      <p>
+        先不管原理，跑一个对照实验。同一个 64M 基座（<code>out/pretrain_768.pth</code>）、同一个 64-token prompt、
+        同样贪心解码（temperature=0，排除采样随机性），生成 50 个 token，只换一件事：
+        <b>无缓存</b>——每步把整个前缀（prompt + 已生成部分）重新喂进模型全量前向，这是最朴素的写法；
+        <b>有缓存</b>——reborn 的 <code>generate()</code>，预分配 KV cache 后每步只喂 1 个新 token。
+        核心脚本（完整版把 NEW 换成 200/500 再跑两轮）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>对照实验脚本 · 在 Reproduce/minimind_reborn 下 uv run 执行</span><span class="lang">python</span></div><pre class="code"><code>import statistics, time, torch
+from minimind_reborn.configuration.schemas import GenerateConfig
+from minimind_reborn.inference.generator import generate
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+from minimind_reborn.models.weights import load_inference_weights
+
+torch.manual_seed(42)
+dev = "cuda" if torch.cuda.is_available() else "cpu"
+cfg = MiniMindConfig()                            # 64M 正主：768 × 8 层，8 头 / 4 KV 头
+model = MiniMindForCausalLM(cfg)
+load_inference_weights(model, "out/pretrain_768.pth", strict=True)
+model = model.to(dev).eval()
+PROMPT, NEW = 64, 50                              # 想扫更长，改 NEW 后重跑
+prompt = torch.randint(0, 6400, (1, PROMPT), device=dev)
+
+def no_cache():
+    cur, fwd = prompt, 0
+    for _ in range(NEW):                          # 每步全量前向：重算整个前缀的注意力
+        with torch.inference_mode():
+            logits = model(cur).logits[:, -1, :]  # (1, 6400)：只取最后一位，却算了全部位置
+        fwd += cur.shape[1]
+        cur = torch.cat([cur, logits.argmax(-1, keepdim=True)], dim=1)
+    return cur, fwd
+
+def with_cache():
+    gen = GenerateConfig(temperature=0.0, max_new_tokens=NEW)
+    out = generate(model, prompt, gen, eos_token_id=None, pad_token_id=0)
+    return out["sequences"], PROMPT + NEW         # prefill 64 + 50 个单 token 步
+
+def bench(fn):
+    if dev == "cuda": torch.cuda.synchronize()
+    t0 = time.perf_counter(); fn()
+    if dev == "cuda": torch.cuda.synchronize()
+    return (time.perf_counter() - t0) * 1000
+
+no_cache(); with_cache()                          # 预热：首次内核加载不计入
+seq_a, tok_a = no_cache(); seq_b, tok_b = with_cache()
+assert (seq_a == seq_b).all()                     # 两条路径必须逐位一致（见"最硬的一条测试"）
+print(statistics.median(bench(no_cache) for _ in range(5)),
+      statistics.median(bench(with_cache) for _ in range(5)))</code></pre></div>
+      <p>三个生成长度的实测（其余设置不变，各取 5 次中位数）：</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">生成 token 数</th><th>无缓存耗时</th><th>有缓存耗时</th><th>墙钟加速</th><th>前向 token 数（无 → 有）</th><th>计算量比</th></tr></thead>
+          <tbody>
+            <tr><td><b>50</b></td><td>305.8 ms</td><td>186.5 ms</td><td><b>1.6×</b></td><td>4425 → 114</td><td><b>38.8×</b></td></tr>
+            <tr><td>200</td><td>1543.0 ms</td><td>751.3 ms</td><td>2.1×</td><td>32700 → 264</td><td>123.9×</td></tr>
+            <tr><td>500</td><td>4676.5 ms</td><td>1970.5 ms</td><td>2.4×</td><td>156750 → 564</td><td>277.9×</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> prompt=64 · 贪心 · fp32 · 预热后各 5 次取中位；三个长度下两条路径输出均<b>逐位一致</b>。"前向 token 数"= 各次 forward 实际吃进去的 token 总数：无缓存生成 50 个时为 64+65+…+113 = (64+113)×50÷2 = 4425；有缓存 = 64（一次 prefill）+ 50×1 = 114。</p>
+      <p>四个观察，比"快"本身更值钱：</p>
+      <ol>
+        <li><b>无缓存的总计算量是平方级的</b>：生成到第 t 步时前缀已有 P+t−1 个 token，全量前向就要算这么多——生成 N 个共 (P + P+N−1)×N÷2。所以 50→200→500 token，前向 token 数从 4425 涨到 156750（35 倍），远超生成长度本身的 10 倍。</li>
+        <li><b>单步耗时在无缓存侧肉眼可见地爬坡</b>：生成 500 个时，第 1 步 ~5.9 ms 涨到第 500 步 13.62 ms——前缀每长一个 token，下一步就多算一点。有缓存侧摊到每步只有 3.7~3.9 ms，全程几乎恒定（每步固定喂 1 个 token）。</li>
+        <li><b>墙钟加速比远小于计算量比</b>（2.4× vs 277.9×）：这个尺寸下每步时间大头是固定开销——Python 循环、几十个小内核（GPU 一次调度执行的计算单元）的启动、采样链——而不是注意力算力。模型越大、上下文越长，固定开销占比越低，KV cache 的收益越逼近计算量比（🏭 工业对照见<a href="#capacity">容量一节</a>）。</li>
+        <li><b>两条路径逐位一致</b>：缓存不该改变任何输出，只该改变耗时——这句话如何变成一条测试，本课<a href="#hardest">专门有一节</a>。</li>
+      </ol>
+
+      <h2 id="why">慢在哪：每一步都在重算"不会变的历史"</h2>
+      <p>
+        无缓存为什么是平方级？看第 5 步解码时模型在算什么。此时序列已有 6 个 token（p0~p3 是 prompt，
+        t4 是上一步生成的），刚喂进去新 token t5，要预测下一个 token。模型内部（M07 精读的 attention）会把
+        每个位置各算出三样东西：Q（query，"我想找什么"）、K（key，"我能被怎样找到"）、V（value，"我携带的信息"），
+        再让每个位置的 Q 与全部位置的 K 打分、按分数加权取回 V。问题就在这：
+      </p>
+      <pre class="ascii"><code>第 5 步解码：序列 = [p0 p1 p2 p3 t4 t5]，预测下一个 token
+
+   历史位置的 K/V —— 第 0~4 步就算过、且【再也不会变】（KV cache 存的就是它们）
+   ┌────────────────────────────────────────────────────────┐
+   k: [ k0 k1 k2 k3 k4 k5 ]      ← t5 是本步新算的，写进 cache
+   v: [ v0 v1 v2 v3 v4 v5 ]
+          ▲   ▲   ▲   ▲   ▲   ▲
+          │   └───┴─┬─┴───┴───┘
+   q_new ─┴────────┘  本步唯一的新 Q（来自 t5）
+   score_j = q_new · k_j          对每个历史位置打分
+   out      = Σ softmax(score)_j · v_j      加权取回历史信息 → 预测 token 6
+
+   历史的 q0..q4？生成它们的那一步已经用过、产出过那个位置的输出——之后永远不再被需要</code></pre>
+      <div class="callout tip">
+        <div class="co-title">💡 概念卡：为什么只缓存 K/V，不缓存 Q</div>
+        <p>
+          自回归解码（M03 讲过的"每生成一个 token 转一圈"）里，每一步只关心<b>一个</b>问题：新 token 的 Q 要跟谁注意？
+          历史 token 的 Q 在它们各自"当红"的那一步用完就作废——因果注意力（每个位置只看得到自己之前的位置，
+          mask 的画法 M07 讲）保证它们的输出已经定稿、不随未来改变。而历史的 K/V 是<b>公共财产</b>：
+          每一个未来 Q 都要来查一遍。所以缓存 K/V 一步到位，缓存 Q 纯属浪费显存。
+          无缓存的平方级浪费，正是每一步都重算这些"不变的公共财产"造成的。
+        </p>
+      </div>
+      <p>
+        剩下的问题是一个纯工程问题：<b>这块"历史仓库"用什么数据结构开出来？</b>官方 minimind 的选择是每层维护一个
+        (k, v) 元组、每步 <code>torch.cat</code> 把新的一列拼上去——直观，但每一步都重新分配能装下全部历史的内存并整体拷贝
+        （<code>kv_cache.py</code> 模块注释里自己写了这条对照）。reborn 的答案是 57 行的预分配设计。
+      </p>
+
+      <h2 id="source">精读 kv_cache.py：预分配 + 切片写 + 游标</h2>
+      <p>
+        <a href="codeview/src/minimind_reborn/models/kv_cache.py.html"><code>models/kv_cache.py</code></a>
+        全文 57 行（含注释），一个类四个方法。先看仓库与容量：
+      </p>
+      <h3 id="alloc">预分配：一次性开满 (L, B, max_seq, kv_heads, head_dim)</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/kv_cache.py.html">src/minimind_reborn/models/kv_cache.py</a> · __init__</span><span class="lang">python</span></div><pre class="code"><code>class KVCache:
+    """所有层共享一个张量组，layer_idx 索引第 0 维。"""
+
+    def __init__(self, num_layers, max_batch_size, max_seq_len,
+                 num_kv_heads, head_dim, dtype, device):
+        shape = (num_layers, max_batch_size, max_seq_len, num_kv_heads, head_dim)
+        self.k = torch.zeros(shape, dtype=dtype, device=device)  # 8 层共用一块，不搞 8 对小张量
+        self.v = torch.zeros(shape, dtype=dtype, device=device)
+        self.cur_len = 0      # 游标：已缓存的真实长度（不含预分配的空位）
+        self.max_seq_len = max_seq_len
+        self.max_batch_size = max_batch_size</code></pre></div>
+      <p>
+        64M 模型、单条请求、容量 2048 时，k 与 v 各是 <code>(8, 1, 2048, 4, 96)</code>——第 0 维是层，
+        kv_heads=4 是 GQA 的 KV 头数（M07 详讲头复用，本课只需知道：每层要存的 K/V 组数是 4，不是 8 个 Q 头）。
+        整块显存在生成<b>开始前</b>一次申请、全程零再分配。为什么不学官方 <code>torch.cat</code> 按需增长？
+      </p>
+      <ul>
+        <li><b>cat 每步都在"搬家"</b>：拼接产生新张量——分配一块装得下全部历史的新内存，把旧历史 + 新一列都拷进去，旧块等垃圾回收。生成 N 个 token 的总拷贝量是 1+2+…+N 的平方级，而且 8 层每层各搬各的；</li>
+        <li><b>分配器碎片</b>：每步一块"恰好大一点"的短命大块，反复申请/释放让 GPU 显存分配器疲于奔命（显存分配本身是毫秒级、会同步设备的贵操作）；</li>
+        <li><b>预分配一次痛完</b>：形状定死，之后所有写都是原地切片——测试 1 用 <code>data_ptr()</code>（张量底层存储的内存地址）断言写前后地址不变，把"零再分配"锁死成回归。</li>
+      </ul>
+      <p>代价也明摆着：容量必须提前知道，开多了浪费（生成提前撞 eos 停止时，空位白占显存）——这笔账怎么算，见<a href="#capacity">下一节</a>。</p>
+
+      <h3 id="contract">write / read / advance / reset：写入、视图与游标协议</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/kv_cache.py.html">src/minimind_reborn/models/kv_cache.py</a> · write 与 read</span><span class="lang">python</span></div><pre class="code"><code>def write(self, layer_idx, k, v, start):
+    """写入一层的新 k/v。k, v: (batch, new_len, kv_heads, head_dim)。"""
+    new_len = k.shape[1]
+    if start + new_len > self.max_seq_len:
+        raise ValueError(
+            f"KV cache 溢出：写入位置 {start}+{new_len} 超过预分配容量 {self.max_seq_len}。"
+            f"请增大 GenerateConfig.max_new_tokens 对应的容量（generator 按 prompt+max_new_tokens 预分配）")
+    self.k[layer_idx, :, start : start + new_len].copy_(k)   # 原地切片写：只动 [start, start+n) 这些列
+    self.v[layer_idx, :, start : start + new_len].copy_(v)
+
+def read(self, layer_idx):
+    """读取一层的全部有效历史（前缀视图，零拷贝）。"""
+    return self.k[layer_idx, :, : self.cur_len], self.v[layer_idx, :, : self.cur_len]
+
+def advance(self, length):
+    """一个 forward 步写入完成后统一推进游标（各层写同一 start，避免逐层竞争）。"""
+    self.cur_len += length
+
+def reset(self):
+    self.cur_len = 0</code></pre></div>
+      <p>四个方法，四个设计决定：</p>
+      <ul>
+        <li><b><code>write</code> 是切片赋值不是 cat</b>：<code>copy_</code>（原地拷入目标张量的 PyTorch 方法）把新 k/v 灌进预分配块的一段"空位"，其余列一个字节不动。开头先做越界检查——预分配的边界必须有人守，否则切片写会静默写到别人的内存里（守门报错长什么样，<a href="#pit">坑卡 2</a> 真触发给你看）。</li>
+        <li><b><code>read</code> 返回视图（view）不是拷贝</b>：<code>self.k[layer_idx, :, : self.cur_len]</code> 是基本索引切片，返回的是指向同一块存储的<b>前缀视图</b>——不复制任何数据，读 2000 个 token 的历史也只是"递一个指针"。若这里是 copy，每次读历史都搬一遍内存，零拷贝视图是增量解码里"读历史免费"的关键。</li>
+        <li><b><code>advance</code> 与 write 分离</b>：一次 forward 里 8 层各写各的列，但游标只在<b>所有层写完后</b>由模型统一推一次（<a href="codeview/src/minimind_reborn/models/model.py.html"><code>model.py</code></a> 第 117-118 行：循环外一句 <code>past_key_values.advance(seq_length)</code>）——若每层写完自己推，第 2 层的 start 就会被第 1 层污染。细节：forward 进行中 <code>cur_len</code> 尚未推进，所以 attention 内部（<code>attention.py</code> 第 73-74 行）直接按 <code>cache_start + seq_len</code> 切片读，<code>read()</code> 的 <code>[: cur_len]</code> 是"步与步之间"视角的同一语义。</li>
+        <li><b><code>reset</code> 只归零游标、不清数据</b>：旧数据留在原地等被覆盖——反正 <code>read</code> 只看游标之前。它当前没有生产调用方（generator 每次生成新建缓存），是为"同一块缓存跨请求复用"预留的接口，M20 深潜推理栈时回头看多轮对话的取舍。</li>
+      </ul>
+      <pre class="ascii"><code>容量 12 = prompt 4 + max_new 8，此刻 cur_len = 7（已生成 3 个 token）
+
+位置:    0   1   2   3   4   5   6 | 7   8   9  10  11
+       ┌── prompt ──┐├─ 已生成 ─┤├────────── 空位（等未来 token）──────────┤
+k[0]:   p0  p1  p2  p3  t4  t5  t6  ·   ·   ·   ·   ·
+                                  ↑
+                          cur_len 游标：advance 才右移
+
+write(0, k_new, start=7) → k[0, :, 7:8].copy_(k_new)   原地写一列，别的列不动
+read(0)                 → k[0, :, :7]                  零拷贝前缀视图（指针，不是拷贝）
+advance(1)              → cur_len 7 → 8                8 层全部写完后统一推进</code></pre>
+
+      <div class="callout danger">
+        <div class="co-title">🛑 红线：运行时状态不进 state_dict——KVCache 是普通 Python 属性</div>
+        <p>
+          state_dict（PyTorch 把模型全部<b>参数</b>收进的一个字典，保存/加载权重就是存/读它）只该装"模型的身份"——权重。
+          KV cache 是"一次会话的运行痕迹"：换一个 prompt 就该作废。若把它用 <code>register_buffer</code>
+          （把张量注册成"随模型设备搬运、（默认）进 state_dict"的机制）挂进模型，两场事故立刻发生：
+          ① <code>save</code> 出的权重文件混进 GB 级会话内存，污染所有 checkpoint；
+          ② <code>strict=True</code> 加载（M02 见过的"缺/多一个 key 都报错"）直接爆 key 不匹配。
+          reborn 的写法：cache 由 generator 构造、作为 <code>past_key_values</code> 参数<b>传进</b> forward，与模型生命周期彻底解耦；
+          同宗的纪律在 RoPE 频率表上——<code>model.py</code> 里它虽是 buffer 但 <code>persistent=False</code>（不落盘）。
+          "什么进 state_dict、什么不进"的完整图景，M09 组装模型、官方权重 strict 互通时正面回收。
+        </p>
+      </div>
+
+      <h2 id="capacity">容量怎么定：prompt + max_new_tokens 的一笔显存账</h2>
+      <p>
+        预分配把"开多大"变成一道必答题。答案在
+        <a href="codeview/src/minimind_reborn/inference/generator.py.html"><code>inference/generator.py</code></a>
+        生成循环开始前：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/inference/generator.py.html">src/minimind_reborn/inference/generator.py</a> · 容量分配与增量喂入</span><span class="lang">python</span></div><pre class="code"><code>batch, prompt_len = input_ids.shape                       # input_ids: (b, prompt_len)
+steps = max_new_tokens if max_new_tokens is not None else gen.max_new_tokens
+
+cache = KVCache(
+    num_layers=model.config.num_hidden_layers,            # 8
+    max_batch_size=batch,
+    max_seq_len=prompt_len + steps,                       # 容量 = prompt + 生成上限，一次开够
+    num_kv_heads=model.config.num_key_value_heads,        # 4
+    head_dim=model.config.head_dim,                       # 96
+    dtype=next(model.parameters()).dtype,                 # 跟随模型精度（fp16/bf16 下 2 字节/元素）
+    device=input_ids.device,
+)
+for _ in range(steps):
+    past_len = cache.cur_len
+    feed = input_ids if past_len == 0 else input_ids[:, past_len:]   # 第 1 步喂整段 prompt（prefill），
+    logits = model(feed, attention_mask=..., past_key_values=cache).logits[:, -1, :]  # 之后每步只喂 1 个新 token</code></pre></div>
+      <p>
+        这里出现了 KV cache 视角下的两阶段：<b>prefill</b>（预填充，第一步把整段 prompt 一次前向、整块写入缓存）与
+        <b>decode</b>（步进解码，之后每步 1 个 token、写 1 列读全部历史）——对照实验里有缓存侧 114 = 64 + 50×1 的那个算式就是它。
+        现在算账：64M 模型（8 层、4 KV 头、head_dim=96）、fp16（16 位半精度，2 字节/元素）、
+        一个 2048-token 会话（batch 1）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>KV 显存账 · python -c 直接核</span><span class="lang">python</span></div><pre class="code"><code>import torch
+from minimind_reborn.models.kv_cache import KVCache
+
+L, KVH, D, S, BYTES = 8, 4, 96, 2048, 2   # 8 层 · 4 KV 头 · head_dim 96 · 2048 token · fp16
+elems = 2 * L * S * KVH * D               # 2 = K 与 V 两份
+print(f"元素个数 = 2×{L}×{S}×{KVH}×{D} = {elems:,}")
+print(f"字节数   = {elems:,} × {BYTES} = {elems*BYTES:,} bytes = {elems*BYTES/1024/1024:.0f} MiB")
+
+cache = KVCache(L, 1, S, KVH, D, torch.float16, "cpu")     # 真实分配核对
+real = (cache.k.numel() + cache.v.numel()) * cache.k.element_size()
+print(f"真实分配核对：k{tuple(cache.k.shape)} + v 同形 = {real/1024/1024:.0f} MiB")</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "…（上文脚本）…"</span>
+<span class="out">元素个数 = 2×8×2048×4×96 = 12,582,912</span>
+<span class="out">字节数   = 12,582,912 × 2 = 25,165,824 bytes = 24 MiB</span>
+<span class="out">真实分配核对：k(8, 1, 2048, 4, 96) + v 同形 = 24 MiB</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 手算与真实分配两路对上：<b>24 MiB</b>（25,165,824 字节）。对照同精度权重：63.91M 参数（M09 的参数账本）× 2 字节 ≈ 122 MiB——一个 2048 会话的 KV 缓存约等于模型权重的 1/5；且这笔账<b>乘 batch</b> 增长：并发 16 条就是 384 MiB。</p>
+      <p>
+        两个立刻能看出的推论：<b>容量公式的每一项都要有人守</b>——<code>max_seq_len</code> 开成 <code>prompt + steps</code> 恰好够，
+        多开是纯浪费（空位永远没人写）；GQA 在这里兑现第二重价值——存的头数是 4 不是 8，KV 显存直接减半（M07 讲头复用）。
+      </p>
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：预分配整块 vs 分页管理</div>
+        <p>
+          "一次开满 max_len"在教学与中小规模下最简单可靠，但有一个已知浪费：生成提前停止（撞 eos）时，
+          剩余空位白占显存；不同请求实际长度差异越大，浪费越大。工业推理引擎 vLLM 的答案是
+          <b>PagedAttention</b>——借操作系统分页：把 KV cache 切成固定大小的 block 按需映射到逻辑位置，
+          论文（SOSP'23）报告显存浪费率从旧系统的 60%~80% 降到 4% 以下，同卡吞吐翻倍级提升。
+          这正是"固定预分配"与"灵活分页 + 复杂度"的经典取舍：reborn 选前者，因为 57 行要能被你逐行读懂。
+        </p>
+      </div>
+      <p class="prov"><b>[事实核对]</b> 官方 minimind 的 cat 式实现对照与 vLLM 浪费率数字，分别来自 <code>kv_cache.py</code> 模块注释与 vLLM 论文 <i>Efficient Memory Management for Large Language Model Serving with PagedAttention</i>（Kwon et al., SOSP 2023）。</p>
+
+      <h2 id="hardest">最硬的一条测试：逐步解码 vs 全量重算，逐位一致</h2>
+      <p>
+        KV cache 的 bug 有个恶劣性质：<b>它不崩</b>。游标错一位、mask 差一列（off-by-one，边界上差一个位置的错误），
+        模型照样吐出"看起来挺像话"的中文——直到某个微妙的重复或胡话让你起疑。所以正确性不能靠肉眼看输出，
+        必须变成可断言的强命题。<a href="codeview/tests/test_models/test_kv_cache.py.html"><code>tests/test_models/test_kv_cache.py</code></a>
+        里最硬的一条就是这个：用贪心解码跑长自回归，断言<b>带 cache 的生成与每步全量重算的参考实现逐 token 相等</b>：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/tests/test_models/test_kv_cache.py.html">tests/test_models/test_kv_cache.py</a> · test_generation_cache_consistency</span><span class="lang">python</span></div><pre class="code"><code>def test_generation_cache_consistency(tiny_model):
+    """逐步解码（带 cache）与全量重算的 logits 必须一致——覆盖长自回归。"""
+    torch.manual_seed(1)
+    model = tiny_model
+    gen_cfg = GenerateConfig(temperature=0.0, max_new_tokens=24)
+    prompt = torch.randint(0, 64, (1, 9))
+    from minimind_reborn.inference.generator import generate
+    result = generate(model, prompt, gen_cfg, eos_token_id=None, pad_token_id=0)
+    seq = result["sequences"]
+
+    cur = prompt                                  # 参考实现：每步全量前向（无 cache）贪心
+    for _ in range(24):
+        logits = model(cur).logits[:, -1, :]
+        cur = torch.cat([cur, logits.argmax(dim=-1, keepdim=True)], dim=1)
+    assert (seq == cur).all(), "带 cache 的生成与全量重算不一致（mask/cache 位置对齐被破坏）"</code></pre></div>
+      <p>
+        它硬在哪：贪心（无采样噪声）+ 24 步长自回归 + <b>整条序列逐位比较</b>。游标或 mask 哪怕错一个位置，
+        第一个分歧 token 就会让 <code>(seq == cur).all()</code> 变 False——一条测试同时踩住"写错位置、读错前缀、推进错量"三族 bug。
+        对照实验里 <code>assert (seq_a == seq_b).all()</code> 那行就是它的精神：先证明"快"没有偷走"对"。
+        测试文件自己的注释把它定位成"生成正确性的头号杀手（mask off-by-one）的长文本自回归测试"。5 个测试各守一段：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>测试</th><th>锁死的不变量</th></tr></thead>
+          <tbody>
+            <tr><td><code>test_kv_cache_inplace_slice_no_realloc</code></td><td><code>data_ptr()</code> 写前后不变——真·原地、零再分配；<code>advance</code> 前游标不动</td></tr>
+            <tr><td><code>test_kv_cache_overflow_raises</code></td><td>越界必须抛 <code>ValueError</code>，不许静默写坏</td></tr>
+            <tr><td><code>test_generation_cache_consistency</code></td><td><b>逐步 vs 全量重算逐位一致</b>（本节主角）</td></tr>
+            <tr><td><code>test_prefill_then_decode_matches_full_forward</code></td><td>prefill 写 cache 后的单步解码 == 全量 forward 对应位置的 logits</td></tr>
+            <tr><td><code>test_sdpa_prefill_path_matches_manual</code></td><td>SDPA 融合路径与 manual 路径等价（M07 三条路径的伏笔）</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 id="pit">坑卡：两类真实的坑</h2>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡 1：忘了 advance——不报错、不错字，只是悄悄回到全量重算</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            现象隐秘到险恶：输出<b>完全正确</b>，只是生成莫名地慢、且越生成越慢。把 <code>advance</code> 打成空操作
+            （模拟手写循环里忘推游标），tiny 模型上真跑 24 步：
+            <pre class="term"><code><span class="out">正常：24 次前向，喂入 token 序列 = [9, 1, 1, …, 1]（总量 32）</span>
+<span class="out">忘了 advance：24 次前向，喂入 token 序列 = [9, 10, 11, …, 32]（总量 492）</span>
+<span class="out">输出仍然逐位一致 = True</span></code></pre>
+          </li>
+          <li class="cause">
+            游标停在 0 → generator 的 <code>feed = input_ids if past_len == 0 else input_ids[:, past_len:]</code>
+            每步都判定"还没 prefill"，把<b>整段</b> input_ids 喂进去、从头重写缓存——增量解码静默退化成全量重算
+            （32 → 492 个前向 token，15 倍）。正确性没破（等价于无缓存路径），性能收益清零。
+          </li>
+          <li class="fix">
+            守住协议：<code>write</code> 归每层、<code>advance</code> 归模型（<code>model.py</code> 在 8 层循环后统一调一次）。
+            自查手段：给 <code>model.model</code> 挂 forward 前钩子记录每次喂入的 <code>shape[1]</code>——prefill 之后它应该恒为 1；
+            本课对照实验打印"前向 token 总数"就是在看这个指标。
+          </li>
+        </ul>
+      </div>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡 2：容量开小了——write 的守门报错长这样</div>
+        <ul class="pit-stages">
+          <li class="sym">容量 8 的缓存，想在位置 6 写入 4 个 token（6+4=10 &gt; 8）：</li>
+          <li class="cause">
+            预分配的形状是硬边界；没有越界检查时，切片写会静默落到错误位置或形状不匹配报一个莫名其妙的错。
+            所以 <code>write</code> 动手前先自检 <code>start + new_len &gt; max_seq_len</code>。
+          </li>
+          <li class="fix">真触发一次（输出逐字）：
+            <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+import torch
+from minimind_reborn.models.kv_cache import KVCache
+cache = KVCache(2, 1, 8, 1, 16, torch.float32, 'cpu')   # 容量只开 8
+k = torch.randn(1, 4, 1, 16)                            # 想在第 6 位写入 4 个
+cache.write(0, k, k, start=6)"</span>
+<span class="err">ValueError: KV cache 溢出：写入位置 6+4 超过预分配容量 8。请增大 GenerateConfig.max_new_tokens 对应的容量（generator 按 prompt+max_new_tokens 预分配）</span></code></pre>
+            报错自带修复指引：容量由 <code>prompt + max_new_tokens</code> 决定，两个旋钮都写在信息里——把容量改对，
+            而不是把检查删掉。
+          </li>
+        </ul>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 两条输出均为当日真跑；坑卡 1 的喂入序列由 forward 前钩子（<code>register_forward_pre_hook</code>）采集。</p>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · 为什么只缓存 K/V，不缓存 Q？多缓存一份 Q 会怎样？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>每一步解码只产生一个"当红"的 Q——新 token 的查询要跟全部历史做注意力；历史 token 的 Q 在它们各自那一步用完即弃（因果注意力保证那些位置的输出已定稿、不再改变），之后永远无人问津。而历史的 K/V 是每个未来 Q 都要查的公共财产，缓存它们一步到位。多缓存 Q 纯属浪费显存——存了也永远读不到，还多一份越界管理的负担。</p>
+            <p class="back">答错回看：<a href="#why">慢在哪</a> 的直觉图与概念卡。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · read 返回 view 与返回 copy 有什么区别？为什么这里必须是视图？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>view 是指向同一块存储的"窗口"（基本索引切片天然如此），不搬运任何数据；copy 会新开内存把元素逐个搬过去。这里必须用视图：decode 阶段每一步都要读一次全部历史，若每次读都拷贝，读历史就成了新的平方级开销，"增量解码"省下的算力被搬运吃掉。配套的另一半是写入侧用 <code>copy_</code> 原地灌——测试 1 用 <code>data_ptr()</code> 写前后不变锁死"存储从未换过"。</p>
+            <p class="back">答错回看：<a href="#contract">write / read / advance 协议</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · 64M 模型 fp16、batch 1，一个 2048-token 会话的 KV 缓存占多少？batch 16 呢？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>2（K 与 V）× 8（层）× 2048（token）× 4（KV 头）× 96（head_dim）× 2（字节）= 25,165,824 字节 = <b>24 MiB</b>。这比只算直觉的小得多，也比想象中"危险"——它随 batch 线性放大：batch 16 就是 16 × 24 = <b>384 MiB</b>（约为 fp16 权重 122 MiB 的 3 倍）。公式里每项都有出处：层数与 KV 头数来自 <code>ModelConfig</code>，序列长来自 <code>prompt + max_new_tokens</code>。</p>
+            <p class="back">答错回看：<a href="#capacity">容量怎么定</a> 的账单与实测核对。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · 忘了调 advance 会看到什么？为什么说它比越界更阴险？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>什么都不报，输出也<b>逐位正确</b>——但 generator 每步都判定"还没 prefill"，把整段序列重喂重算（实测 24 步从 32 个前向 token 涨到 492），增量解码静默退化成全量重算。越界至少当场抛 <code>ValueError</code> 咬你（fail-fast）；忘 advance 是性能 bug 披着正确性的外衣，只有"越生成越慢"和前向 token 计数能揭穿它。</p>
+            <p class="back">答错回看：<a href="#pit">坑卡 1</a> 的实测输出。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · 把容量开成 2 倍（max_seq_len 2048 → 4096），显存和速度怎么变？</div>
+        <div class="ex-body">
+          <p>
+            生成一段短会话（比如 100 token）但把容量故意开大一倍——直觉上"多准备了空间"，动手前先想清楚两笔账各归谁管：
+            分配是一次性的还是每步的？没写到的空位占不占显存？
+          </p>
+          <div class="ex-predict"></div>
+          <p>写下预测：显存占用变成多少？生成速度（每步耗时）变快、变慢还是不变？</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+import time, torch
+from minimind_reborn.models.kv_cache import KVCache
+for cap in (2048, 4096):
+    t0 = time.perf_counter()
+    c = KVCache(8, 1, cap, 4, 96, torch.float16, 'cpu')
+    ms = (time.perf_counter() - t0) * 1000
+    mb = (c.k.numel() + c.v.numel()) * c.k.element_size() / 1024 / 1024
+    print(f'容量 {cap}: k{tuple(c.k.shape)} 显存 {mb:.0f} MiB，一次性分配耗时 {ms:.2f} ms')"</span></code></pre>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>
+              作者实测（同环境）：
+            </p>
+            <pre class="term"><code><span class="out">容量 2048: k(8, 1, 2048, 4, 96) 显存 24 MiB，一次性分配耗时 1.80 ms</span>
+<span class="out">容量 4096: k(8, 1, 4096, 4, 96) 显存 48 MiB，一次性分配耗时 2.19 ms</span></code></pre>
+            <p>
+              <b>机制：</b>显存<b>精确翻倍</b>（48 MiB）——预分配块不管你写没写，字节都实实在在占着；
+              而速度几乎不变（分配只在生成前发生一次，1.80 → 2.19 ms 都在毫秒噪声量级；
+              每步的 write/read 依旧只碰一列/一个前缀，与容量无关）。这正是预分配设计的交易条款：
+              <b>买的是"全程零再分配"的确定性，付的是"按上限而非实际长度"的显存</b>——提前停止的空位全是沉没成本。
+              生成 100 token 开 2048 容量，浪费率超过 95%；vLLM 的分页方案就是为了收回这部分浪费（回看
+              <a href="#capacity">🏭 工业对照</a>）。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M06 验收</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下执行：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_models/test_kv_cache.py -q</span>
+<span class="ok">.....                                                                   [100%]</span>
+<span class="ok">5 passed in 0.05s</span></code></pre>
+          <p>再复现一次容量越界守门（坑卡 2 的命令，应得同样的 <code>ValueError: KV cache 溢出…</code>）。</p>
+          <ul class="pass-criteria">
+            <li><code>5 passed</code>——零再分配、溢出硬错、<b>逐步 vs 全量重算逐位一致</b>、prefill/单步对齐、SDPA/manual 等价，五条不变量全绿；</li>
+            <li>越界命令以 <code>ValueError: KV cache 溢出：写入位置 6+4 超过预分配容量 8</code> 开头，且报错信息提示调 <code>max_new_tokens</code>；</li>
+            <li>完成变式练习的预测与观察（显存翻倍、速度不变——说不出"为什么不变"就回<a href="#alloc">预分配</a>一节）。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按报错分流）</summary>
+            <p>
+              <b>pytest 报 collected 0 items</b> → 确认在仓库根目录执行、<code>uv sync --extra dev</code> 补装 pytest；
+              <b>test_generation_cache_consistency 失败</b> → 断言信息会指向 "mask/cache 位置对齐被破坏"——不要改断言，
+              对照 <a href="#contract">游标协议</a> 检查你有没有动过 advance 相关代码；
+              <b>越界命令没报错</b> → 检查 <code>start</code> 与 <code>new_len</code> 的算术：6+4=10 必须大于容量 8 才触发；
+              <b>GPU 不可用</b> → 本课全部命令 CPU 可跑（验收测试本就全在 CPU）。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        下一课 M07 打开 KV cache 最大的消费方——attention：写进去的 k/v 按 GQA 规则被 8 个 Q 头复用，
+        读出来的前缀视图配上因果 mask 与 QK-Norm（给 Q/K 各做一次 M05 那种 RMSNorm 的稳定化手法，M07 详讲），
+        才是这块缓存的完整用法；本课反复出现的"4 个 KV 头、8 个 Q 头"为什么合法，将在那里正面回答。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>KV 缓存 <span class="en">KV cache</span></dt><dd>把解码过程中历史 token 的 K/V 向量存进显存复用的运行时状态；历史 K/V 不随新 token 改变，而每个新 Q 都要查它们——缓存把解码从平方级降到线性。</dd>
+          <dt>prefill <span class="en">预填充</span></dt><dd>生成的第一步：整段 prompt 一次前向、整块写入缓存；之后每步只喂 1 个新 token（decode，步进解码）。</dd>
+          <dt>预分配 <span class="en">preallocation</span></dt><dd>按上限（prompt + max_new_tokens）一次性开满整块存储、全程零再分配；对照 torch.cat 每步重开内存整体拷贝的平方级浪费与碎片。</dd>
+          <dt>零拷贝视图 <span class="en">zero-copy view</span></dt><dd>基本索引切片返回的、指向同一块存储的"窗口"（view）；read 历史只递指针不搬数据——增量解码里"读历史免费"的关键。</dd>
+          <dt>原地写入 <span class="en">in-place write</span></dt><dd><code>slice.copy_(src)</code> 把数据灌进已有张量的一段，不产生新存储；测试用 <code>data_ptr()</code>（底层内存地址）不变来锁定。</dd>
+          <dt>游标 <span class="en">cursor · cur_len</span></dt><dd>已缓存的真实长度；write 归每层、advance 归模型统一推进（所有层写完才推一次），忘了推会静默退化成全量重算。</dd>
+          <dt>容量公式</dt><dd><code>max_seq_len = prompt_len + max_new_tokens</code>——generator 在循环前一次算定；显存账 2×L×S×kv_heads×head_dim×字节数，随 batch 线性放大。</dd>
+          <dt>state_dict</dt><dd>PyTorch 收纳模型全部参数的字典，保存/加载权重即存/读它；KV cache 是会话级运行痕迹，作为普通属性与参数彻底分家（M09 回收）。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

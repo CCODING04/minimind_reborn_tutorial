@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M08 · FFN：SwiGLU 与 MoE | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m08">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第二篇 模型：造</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M08</span><span>第二篇 · 模型：造</span></div>
+        <h1>FFN：SwiGLU 与 MoE</h1>
+        <p class="lede">
+          M07 的 attention 让词与词<b>交换信息</b>；本课拆 Block 的另一半——FFN，对每个词<b>独立深加工</b>。
+          两件事：SwiGLU 门控前馈（M04 埋的 intermediate_size=2432 伏笔在此兑现），以及 MoE 把一个 FFN
+          扩成一个<b>四专家团队</b>按 token 路由。这块补上，⑤站零件集齐，M09 就能组装整机。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M07</b>（M03 的⑤站图建议在手边）</span>
+          <span class="chip">时长：<b>约 70 分钟</b></span>
+          <span class="chip">新概念：<b>SwiGLU（门控前馈）· MoE（混合专家路由）</b></span>
+          <span class="chip">对照：<code>models/feedforward.py</code> · <code>models/config.py</code> · <code>models/model.py</code> · <code>tests/test_models/test_model.py</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>写出 SwiGLU 公式 $\mathrm{down}(\mathrm{SiLU}(\mathrm{gate}(x)) \odot \mathrm{up}(x))$，解释比经典 FFN 多出的那个矩阵（门）在干什么，算清 8h/3 与 π 的中间维账；</li>
+        <li>沿 <code>(B,T,768) → (B,T,2432) → (B,T,768)</code> 的 shape 链读懂 14 行的 <code>FeedForward</code>，说出 <code>bias=False</code> 的理由；</li>
+        <li>讲清 MoE 路由三步（softmax 打分 → top-k 选专家 → 权重重归一化），实测 4 专家的路由分布与负载均衡 aux loss 的取值范围；</li>
+        <li>解释两个"怪招"各解决什么：top-1 直通估计器（topk 不可导的数学妥协）与未路由专家挂图（DDP 的分布式刚需）；</li>
+        <li>算清 use_moe=True/False 的参数账：<b>总参数 3.10 倍，每 token 激活参数几乎不变</b>。
+        </li>
+      </ul>
+
+      <h2 id="map">⑤站的最后一块零件：FFN 是参数大户</h2>
+      <p>
+        M03 ⑤站的 Block 图纸上只剩一块没造：attention 之后的 FFN（feed-forward network，前馈网络）——
+        对每个 token 位置<b>独立</b>做"升维 → 非线性 → 降维"的子层，<b>不跨位置混合</b>（跨位置是 attention 的活）。
+        先看它在参数账上的分量（768 配置、每层）：
+      </p>
+      <pre class="ascii"><code>Block 内部（model.py:21-49；【M07】= 上课，【M08】= 本课补齐最后一块）
+
+x  ──┬─────────────────────────────────┐
+     └─► RMSNorm ─►【M07】Attention ─►(+)     词与词交换信息（跨位置）
+x₁ ──┬─────────────────────────────────┐
+     └─► RMSNorm ─►【M08】FFN ───────►(+)     每个词独立深加工（不跨位置）
+                        ├─ use_moe=False：SwiGLU           5.6M 参数/层
+                        └─ use_moe=True ：4 专家按 token 路由 22.4M/层（每 token 只激活 5.6M）</code></pre>
+      <p>
+        attention 每层 1,769,664 参数（q/k/v/o 四个投影 + QK-Norm），FFN 每层 5,603,328——<b>FFN 占 76.0%</b>；
+        开 MoE 后 FFN 部分 22,416,384，占每层 92.7%。谁是大户一目了然，所以"扩模型"主要在扩这里，
+        "省计算"的 MoE 也动这里。全部家当在 <a href="codeview/src/minimind_reborn/models/feedforward.py.html"><code>models/feedforward.py</code></a>，73 行两个类。
+      </p>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 两个占比由 <code>sum(p.numel())</code> 分别对 <code>Attention(cfg)</code> 与 <code>FeedForward(cfg)</code> 实算（76.0% = 5,603,328 / (1,769,664 + 5,603,328)）；73 行来自 <code>wc -l</code>。</p>
+
+      <h2 id="swiglu">SwiGLU：自己给自己调音量</h2>
+
+      <h3 id="swiglu-idea">直觉：两路线性，一路当门</h3>
+      <p>
+        经典 Transformer（2017 原版）的 FFN 是两层线性<b>夹</b>一个激活函数（activation function，
+        把线性变换"掰弯"的非线性函数，没有它 8 层线性层叠起来仍等价于一层）：
+        $$ \mathrm{FFN}_{cls}(x) = W_{down}\,\sigma(W_{up}\,x) $$
+        SwiGLU 把它改成<b>三路线性、两路相乘</b>：gate 路过激活函数后，<b>逐元素乘</b>（$\odot$）到 up 路上，再投影回去：
+        $$ \mathrm{SwiGLU}(x) = W_{down}\big(\mathrm{SiLU}(W_{gate}\,x) \odot (W_{up}\,x)\big), \qquad \mathrm{SiLU}(x) = x \cdot \mathrm{sigmoid}(x) $$
+        sigmoid 是把任意实数压进 $(0,1)$ 的 S 形函数——SiLU 的输出大体落在 $(−0.28, \infty)$，于是
+        gate 路出来的每个维度像一排<b>音量旋钮</b>：接近 0 把 up 路对应维度<b>静音</b>，大则放行。关键在"旋钮的位置由输入自己算出来"——
+        <b>自己给自己调音量</b>，这就是门控（gating）。
+      </p>
+      <div class="callout tip">
+        <div class="co-title">💡 直觉：调音台，不是流水线</div>
+        <p>
+          经典 FFN 是流水线：升维 → 过激活 → 降维，信号一路向前。<b>SwiGLU 是调音台</b>：同一输入接两路，
+          gate 路 2432 个旋钮逐个决定 up 路每个通道的音量，混音后才降维输出。
+          哪些通道该开大，是 $W_{gate}$ 学出来的——相当于每个 token 自己决定"这 2432 个加工位我要用哪几个"。
+          论文 <a href="https://arxiv.org/abs/2002.05202" target="_blank" rel="noopener">GLU Variants Improve Transformer（arXiv:2002.05202）</a>
+          的实验结论：同参数量下 SwiGLU 一档全面小优于经典 FFN，LLaMA/Qwen/DeepSeek 系全线采用——也包括 reborn。
+        </p>
+      </div>
+
+      <h3 id="swiglu-code">精读：14 行的 FeedForward</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/feedforward.py.html">src/minimind_reborn/models/feedforward.py</a> · FeedForward 类全文</span><span class="lang">python</span></div><pre class="code"><code>class FeedForward(nn.Module):
+    """SwiGLU：down(act(gate(x)) · up(x))，全部无 bias（与官方/LLaMA 一致）。"""
+
+    def __init__(self, config: MiniMindConfig, intermediate_size: int | None = None):
+        super().__init__()
+        intermediate_size = intermediate_size or config.intermediate_size
+        self.gate_proj = nn.Linear(config.hidden_size, intermediate_size, bias=False)  # 门：768→2432
+        self.down_proj = nn.Linear(intermediate_size, config.hidden_size, bias=False)  # 降维：2432→768
+        self.up_proj = nn.Linear(config.hidden_size, intermediate_size, bias=False)    # 值：768→2432
+        self.act_fn = ACT2FN[config.hidden_act]   # "silu" → SiLU（激活函数注册表查名取函数）
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))</code></pre></div>
+      <p>
+        四个读点。① <b>forward 一行就是公式</b>：<code>act(gate(x)) * up(x)</code> 是逐元素乘（ broadcasting 语义下
+        两个同形状张量对应位置相乘），再交给 <code>down_proj</code>；② <b>三个投影全部 <code>bias=False</code></b>——
+        现代做法（LLaMA 起成为惯例）：FFN 前面有 RMSNorm（M05）管平移，偏置的作用被归一化吸收，去掉后每层省
+        2432×2+768=5632 个参数、计算更快，效果无损；reborn 还有一个硬理由——<b>与官方权重逐键一致</b>（state_dict 键与形状，M02 见过的保存格式），
+        M09 要拿官方 <code>pretrain_768.pth</code> 做 strict 互通，多个 bias 数组形状就对不上；③ <code>ACT2FN</code> 是
+        transformers 的激活函数注册表，配置里写名字（<code>hidden_act="silu"</code>）这里查表取函数——配置驱动，换激活不改代码；
+        ④ 构造参数 <code>intermediate_size</code> 可覆盖——MoE 专家正是靠它用更窄的中间维（下文）。
+        shape 链路真跑核对：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+import torch
+from minimind_reborn.models.feedforward import FeedForward
+from minimind_reborn.models.config import MiniMindConfig
+ffn = FeedForward(MiniMindConfig())
+x = torch.randn(2, 5, 768)
+print('x      :', tuple(x.shape))
+print('gate/up:', tuple(ffn.gate_proj(x).shape))
+print('down   :', tuple(ffn(x).shape))"</span>
+<span class="out">x      : (2, 5, 768)</span>
+<span class="out">gate/up: (2, 5, 2432)</span>
+<span class="out">down   : (2, 5, 768)</span></code></pre>
+      <p>
+        每个位置独立加工的含义在 shape 上就能读出来：gate/up 先把 768 维撑到 <b>2432</b> 维"加工位"，逐元素调音量后
+        down 投回 768——全程没有跨 T 维的运算，<code>(B, T, ·)</code> 里每个 T 互不干扰。
+      </p>
+
+      <h3 id="swiglu-8h3">为什么是三个矩阵：M04 括号里的 π 兑现</h3>
+      <p>
+        M04 讲派生参数时留过一个括号：intermediate_size 的官方公式是
+        <code>ceil(hidden×π/64)×64</code>（768 → 2432），并说"SwiGLU 比经典两矩阵多一个，参数量相当的量级是
+        <b>8h/3</b>"。现在兑现。参数量口径：经典 FFN 两矩阵 $2 \cdot h \cdot d$，SwiGLU 三矩阵 $3 \cdot h' \cdot d$
+        （$h$ 为中间维、$d$=768）。要 SwiGLU 不比经典贵，中间维该从经典的 $4d$ 缩到：
+        $$ h' = \tfrac{2}{3} \times 4d = \tfrac{8d}{3} = \tfrac{8 \times 768}{3} = 2048 $$
+        而官方经验值取 π：$768\pi \approx 2412.7 \Rightarrow$ 向上对齐 64 倍数 $\Rightarrow$ <b>2432</b>，
+        比 8h/3 高 18.8%——略贵一点换 SwiGLU 的门控收益。这就是那个"π 经验公式"的来历：
+        <b>π 不是什么魔法数，是"8/3 再放宽一点"的工程取值</b>，再取整到 64 的倍数吃满硬件对齐。
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+import torch.nn.functional as F, torch, math
+print('silu(1) =', round(float(F.silu(torch.tensor(1.0))), 6), ' 1*sigmoid(1) =', round(1/(1+math.exp(-1)), 6))
+print('8h/3 =', 8*768//3, ' 768π ≈', round(768*math.pi, 1), '→ 2432，比 8h/3 高', round(2432/(8*768/3)*100-100, 1), '%')"</span>
+<span class="out">silu(1) = 0.731059  1*sigmoid(1) = 0.731059</span>
+<span class="out">8h/3 = 2048 768π ≈ 2412.7 → 2432，比 8h/3 高 18.8 %</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> shape 链路、SiLU 数值、8h/3 与 2432 的对比均当日实跑；"作者推算，非官方声明"的标注沿用 M04 原文。</p>
+
+      <h2 id="moe">MoE：不是每次都要全脑运转</h2>
+
+      <h3 id="moe-why">动机：把参数量和计算量解耦</h3>
+      <p>
+        dense FFN 有个死结：参数越多计算越贵——5.6M 参数每个 token 全都要乘一遍。<b>MoE</b>（Mixture of Experts，
+        混合专家）的解法：并排放 N 个独立的 FFN（"专家"），配一个轻量 <b>router</b>（路由器），每个 token 只挑
+        k 个专家加工。<b>参数可以堆很多，每 token 的计算只花在被选中的专家上</b>——这叫<b>稀疏激活</b>（sparse activation）。
+        直觉：医院分科——病人（token）只挂对应科室，不需要全院医生同时出诊。
+      </p>
+      <div class="callout tip">
+        <div class="co-title">💡 概念卡：稀疏激活 = 参数与计算分家</div>
+        <p>
+          dense 模型的"大"要拿每 token 计算量付账；MoE 把两笔账拆开：<b>总参数</b>决定"装了多少知识"（显存），
+          <b>激活参数</b>决定"每个 token 花多少算力"。reborn 的 4 专家 top-1：每层 FFN 参数 ×4，每 token 计算量不变。
+          本课末尾的参数账本会实测：全模型 63.91M → 198.42M（3.10 倍），每 token 激活 63.94M（几乎没变）。
+        </p>
+      </div>
+      <p>
+        开关与旋钮都在 <a href="codeview/src/minimind_reborn/models/config.py.html"><code>models/config.py</code></a>
+        （M04 的 schema 域里同名同默认，所以 CLI 一句 <code>--set model.use_moe=true</code> 就能换结构）：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w200">字段（config.py:39-43）</th><th class="u-w120">默认值</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><code>use_moe</code></td><td><code>False</code></td><td>model.py:30 一行切换：<code>MOEFeedForward(config) if use_moe else FeedForward(config)</code></td></tr>
+            <tr><td><code>num_experts</code></td><td><code>4</code></td><td>专家个数（4 个并列的 SwiGLU）</td></tr>
+            <tr><td><code>num_experts_per_tok</code></td><td><code>1</code></td><td>每 token 激活几个专家（top-k 的 k）</td></tr>
+            <tr><td><code>moe_intermediate_size</code></td><td><code>None→2432</code></td><td>每个专家的中间维，默认与 dense 相同</td></tr>
+            <tr><td><code>norm_topk_prob</code></td><td><code>True</code></td><td>top-k 权重重归一化；k=1 时改走直通估计器（下文）</td></tr>
+            <tr><td><code>router_aux_loss_coef</code></td><td><code>5e-4</code></td><td>负载均衡辅助损失系数（坑卡主角）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>注意 64M 主配方没写 <code>use_moe</code>——默认 False，主线模型是 dense 的；MoE 是随时可开的实验维度（M16/M22 会用到）。</p>
+
+      <h3 id="moe-route">精读路由段：打分 → 选专家 → 定权重</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/feedforward.py.html">src/minimind_reborn/models/feedforward.py</a> · MOEFeedForward 路由段（forward 前半）</span><span class="lang">python</span></div><pre class="code"><code>def forward(self, x: torch.Tensor) -&gt; torch.Tensor:  # (b, seq, hidden) → (b, seq, hidden)
+    batch, seq_len, hidden_dim = x.shape
+    x_flat = x.view(-1, hidden_dim)             # (b·seq, 768)：路由按"单个 token"进行，摊平
+    scores = F.softmax(self.gate(x_flat), dim=-1)  # (b·seq, 4) 路由分数：和为 1 的概率
+    topk_weight, topk_idx = torch.topk(scores, k=self.config.num_experts_per_tok, dim=-1, sorted=False)
+    if self.config.norm_topk_prob:
+        if self.config.num_experts_per_tok &gt; 1:
+            topk_weight = topk_weight / (topk_weight.sum(dim=-1, keepdim=True) + 1e-20)  # 重归一化
+        else:
+            # k=1 归一化是恒等，改用直通估计器把权重钉在 1.0 而梯度仍走 softmax
+            top1 = torch.topk(F.softmax(self.gate(x_flat.detach()), dim=-1), k=1, dim=-1, sorted=False)[0]
+            topk_weight = top1 - top1.detach() + 1.0</code></pre></div>
+      <p>
+        <code>self.gate</code> 是一个 768→4 的线性层（参数仅 3,072 个）——router 本体就这么小。三步：
+        <b>① 打分</b>：每个 token 得 4 个分数，softmax（M07 手算过的归一化：一组数变成和为 1 的概率）成"对每位专家的倾向"；
+        <b>② 选专家</b>：<code>torch.topk</code>（top-k：按值取前 k 名及其下标——一个<b>离散选择</b>，记住这点，直通估计器就为它而生）
+        默认 k=1，只留分最高的那位专家；<b>③ 定权重</b>：k&gt;1 时把选中的 k 个权重<b>重归一化</b>（除以它们的和，只信"入围者内部的相对强弱"），
+        k=1 时除以自己是恒等——于是改走直通估计器分支。
+      </p>
+      <p>真实 768 配置下随机初始化的 router 把 32 个 token 分给了谁？真跑：</p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m08_exp_route.py · 路由分布段（主段；偏心构造与直通验证两段续接其后，输出见下）</span><span class="lang">python</span></div><pre class="code"><code>import torch
+import torch.nn.functional as F
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.feedforward import MOEFeedForward
+
+torch.manual_seed(0)
+cfg = MiniMindConfig(use_moe=True)              # 768 hidden、4 专家、k=1（默认）
+moe = MOEFeedForward(cfg).train()
+x = torch.randn(2, 16, 768)                     # (B, T, C)：32 个 token
+with torch.no_grad():
+    scores = F.softmax(moe.gate(x.view(-1, 768)), dim=-1)   # (32, 4)
+    topk_w, topk_idx = torch.topk(scores, k=1, dim=-1)
+    load = F.one_hot(topk_idx, 4).float().mean(0).flatten() # 每专家实际分到的 token 占比
+    importance = scores.mean(0).flatten()                   # 每专家平均路由分数
+print("load       :", [round(v, 3) for v in load.tolist()])
+print("importance :", [round(v, 3) for v in importance.tolist()])
+print("token0 分数:", [round(v, 3) for v in scores[0].tolist()], "→ 专家", topk_idx[0, 0].item())</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m08_exp_route.py</span>
+<span class="out">config: experts=4 k=1 moe_intermediate=2432 norm_topk=True coef=0.0005</span>
+<span class="out">load       : [0.125, 0.312, 0.156, 0.406]</span>
+<span class="out">importance : [0.243, 0.256, 0.222, 0.278]</span>
+<span class="out">token0 分数: [0.307, 0.139, 0.236, 0.317] → 专家 3</span>
+<span class="out">aux_loss（train, 均匀路由）= 0.000516</span>
+<span class="out">aux_loss（eval）            = 0.000000</span>
+<span class="out">偏心后 load: [1.0, 0.0, 0.0, 0.0]</span>
+<span class="out">偏心后 importance: [1.0, 0.0, 0.0, 0.0]</span>
+<span class="out">aux_loss（train, 偏心路由）= 0.002000</span>
+<span class="out">直通权重前向值: 全部等于 1.0? True  (前向数值上 weight≡1)</span>
+<span class="out">反向后 gate.weight.grad 非零? True</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130 · CPU 执行]</b> 完整脚本 <code>/tmp/m08_exp_route.py</code>（含"偏心 router"构造：把专家 0 的打分行设成输入平均方向，制造全归 0 号；SiLU/直通估计器验证同脚本尾部）。观察两点：<b>importance 接近均匀（0.222~0.278）而 load 很不均（0.125~0.406）</b>——随机初始化的分数差异很小，top-1 选择却把微小差距放大成"赢家通吃"；token0 的 4 个分数几乎平手（0.307 vs 0.317），专家 3 以 0.01 之差胜出。</p>
+
+      <h3 id="moe-ste">top-1 直通估计器：让梯度绕过"选择"</h3>
+      <p>
+        最费解的一行来了：<code>topk_weight = top1 - top1.detach() + 1.0</code>。要懂它，先看清问题。
+        路由链里有一处<b>天然断裂</b>：<code>torch.topk</code> 是离散选择——"从 4 个分数里挑最大那个"。
+        假如 router 把分数微调 0.01 使专家 3 反超专家 0，输出会<b>整个换成另一个人</b>；但"选了谁"这件事本身
+        <b>没有梯度</b>（导数无处定义：输入的微小变化导致输出跳变，而不是平滑变化）。而 k=1 时重归一化又是恒等
+        （除以自己恒得 1）——若老老实实把权重算成 1.0，<b>router 的 gate 将收不到任何梯度</b>：损失怎么变都与打分无关，
+        router 永远学不会"什么 token 该找什么专家"。两难：前向需要常数 1.0，反向需要梯度。
+      </p>
+      <div class="callout note">
+        <div class="co-title">📐 严谨卡：直通估计器（straight-through estimator）拆到符号</div>
+        <p>
+          <code>detach()</code> 返回同值但<b>剪断计算图</b>的副本（计算图：autograd 为反向传播记录的那张运算路径图，
+          detached 副本对梯度"装死"——梯度流到它就停）。于是这一行的两个视角：
+          $$ \text{前向：} \ w = \mathrm{top1} - \overbrace{\mathrm{top1}.\mathrm{detach}()}^{\text{数值=top1}} + 1 = 1.0 \qquad \text{反向：} \ \frac{\partial w}{\partial\, \mathrm{top1}} = 1 - 0 + 0 = 1 $$
+          前向数值上权重<b>恒等于 1.0</b>（实测上表：全部等于 1.0? True）——专家输出不缩水；反向时梯度
+          $\partial L/\partial \mathrm{top1}$ 原样传回 softmax、再回 gate 权重（实测：gate.weight.grad 非零? True）——
+          router 学得会。<b>一个表达式，前向一副面孔、反向另一副面孔</b>。行内还有个细节：重算 top1 时喂的是
+          <code>x_flat.detach()</code>——这条捷径梯度只更新 gate 自己的权重，不再穿过输入回传主干，避免与专家路径的梯度重复计账。
+          为什么不干脆用 <code>weight = top1</code>（拿概率当权重）？梯度也有了——但前向语义变了：初始化时 top1≈0.25，
+          专家输出被整体压到 1/4；STE 保住"前向全强度、反向有梯度"两头。这是教科书级的<b>工程妥协数学</b>：
+          离散选择不可导，就在前向/反向各用一套近似，两头都不撒手。
+        </p>
+      </div>
+
+      <h3 id="moe-experts">专家执行段与"挂图"怪招</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/feedforward.py.html">src/minimind_reborn/models/feedforward.py</a> · 专家循环（forward 后半）</span><span class="lang">python</span></div><pre class="code"><code>y = torch.zeros_like(x_flat)
+for i, expert in enumerate(self.experts):          # 逐专家认领自己的 token
+    mask = topk_idx == i                           # (b·seq, k)：本专家分到哪些 token
+    if mask.any():
+        token_idx = mask.any(dim=-1).nonzero().flatten()
+        weight = topk_weight[mask].view(-1, 1)     # 被选中处的路由权重
+        y.index_add_(0, token_idx, (expert(x_flat[token_idx]) * weight).to(y.dtype))
+        # index_add_：把每个专家的产出按 token 位置累加回 y（k&gt;1 时一个 token 收多份）
+    elif self.training:
+        y[0, 0] += 0 * sum(p.sum() for p in expert.parameters())   # ← 未路由专家"挂图"</code></pre></div>
+      <p>
+        正常路径（<code>mask.any()</code> 为真）：抽出分到的 token，过专家、乘路由权重，累加回 y——
+        <b>每个专家只算自己的 token，这就是稀疏激活的落点</b>。怪的是 <code>elif self.training</code> 那行：
+        本步<b>一个 token 都没分到</b>的专家，往输出上加一个<b>乘以 0 的参数和</b>。0 乘不改任何数值，为什么多此一举？
+      </p>
+      <p>
+        因为 <b>DDP</b>（DistributedDataParallel，分布式数据并行——多卡各持一份模型副本、各算各的 batch、
+        反向后同步梯度的训练方式；M15 详讲，本课只需要这一句）。DDP 的同步前提是<b>每个参数都参与了前向</b>、
+        反向时都有梯度可发。top-1 路由 + 4 专家，某个专家这步空手很常见（上节实测 load=[0.406, …, 0.125]，
+        0.125 意味着常有无票专家）——它的参数没进计算图，反向时无梯度可发，<b>DDP 第二步直接报错</b>。
+        <code>y[0,0] += 0·Σp</code> 用一次 0 乘在计算图上建立对这些参数的依赖：autograd 会为它们生成（全零的）梯度，
+        reducer 视其为"已使用"。单进程就能复现这个报错与修复：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m08_exp_ddp.py · 玩具 2 专家 MoE：无技巧 vs 挂图（gloo 后端，单进程 world=1）</span><span class="lang">python</span></div><pre class="code"><code>import os
+import torch
+import torch.distributed as dist
+import torch.nn as nn
+from torch.nn.parallel import DistributedDataParallel as DDP
+
+os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+os.environ.setdefault("MASTER_PORT", "29517")
+dist.init_process_group("gloo", rank=0, world_size=1)   # CPU 也能起 DDP
+
+class BiasedMoE(nn.Module):
+    """路由结果全落专家 0（模拟偏心），专家 1 本步收不到 token。"""
+    def __init__(self, d=16, hang=False):
+        super().__init__()
+        self.experts = nn.ModuleList([nn.Linear(d, d) for _ in range(2)])
+        self.hang = hang
+    def forward(self, x):                       # x: (T, d)
+        y = self.experts[0](x)                  # 专家 1 本步未被路由到
+        if self.hang:
+            y[0, 0] += 0 * sum(p.sum() for p in self.experts[1].parameters())
+        return y
+
+for hang in (False, True):
+    ddp = DDP(BiasedMoE(hang=hang))
+    label = "无挂图技巧" if not hang else "y[0,0]+=0·Σp 挂图"
+    try:
+        for step in range(2):                   # 第 1 步能过，第 2 步撞上检查
+            loss = ddp(torch.randn(8, 16)).pow(2).sum()
+            loss.backward()
+        print(f"{label}: 两步都通过")
+    except RuntimeError as e:
+        print(f"{label}: RuntimeError: {str(e).splitlines()[0]}")</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m08_exp_ddp.py</span>
+<span class="out">无挂图技巧: RuntimeError: Expected to have finished reduction in the prior iteration before starting a new one. This error indicates that your module has parameters that were not used in producing loss. You can enable unused parameter detection by passing the keyword argument `find_unused_parameters=True`, ...</span>
+<span class="out">y[0,0]+=0·Σp 挂图: 两步都通过</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130 · gloo/CPU]</b> 报错原文截取自真实 traceback 首行。另一条路是 <code>DDP(..., find_unused_parameters=True)</code>（让 DDP 每步扫描未使用参数）——但那要每步额外遍历整图，官方 minimind 与 reborn 都选了免费的 0 乘挂图。注意源码把它放在 <code>elif self.training</code>：eval 不建图、不需要梯度，自然也不挂。</p>
+
+      <h3 id="moe-aux">负载均衡 aux loss：不许 router 偏心</h3>
+      <p>
+        router 有个自毁倾向：<b>强者愈强</b>。某专家初期略强 → 分到更多 token → 被训练得更充分 → 更强 →
+        分到更多……极端时 4 个专家坍缩成 1 个（上节"偏心 router"实测 load=[1.0, 0, 0, 0] 就是这个终态的样子）——
+        MoE 退化成 dense 还白付 3 份参数的显存。解法是给"偏心"上税：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/feedforward.py.html">src/minimind_reborn/models/feedforward.py</a> · aux loss 段（forward 尾部）</span><span class="lang">python</span></div><pre class="code"><code>if self.training and self.config.router_aux_loss_coef &gt; 0:
+    # 负载均衡：路由频率 load 与平均分数 importance 的点积，越小越均衡
+    load = F.one_hot(topk_idx, self.config.num_experts).float().mean(0)  # 实际分票频率
+    self.aux_loss = (load * scores.mean(0)).sum() * self.config.num_experts * self.config.router_aux_loss_coef
+else:
+    self.aux_loss = scores.new_zeros(1).squeeze()   # 评估期恒 0</code></pre></div>
+      <p>
+        两个量：<b>load</b>=每位专家实际分到的 token 频率（one_hot 把选中下标变成 4 维指示向量再取均值；
+        不可导——它是"选择"的统计）；<b>importance</b>=每位专家的平均路由分数（<code>scores.mean(0)</code>，可导——
+        梯度经它流回 gate）。乘积逐元素求和：
+        $$ \mathrm{aux} = \Big(\sum_{i=1}^{N} \mathrm{load}_i \cdot \mathrm{importance}_i\Big) \times N \times \mathrm{coef} $$
+        完全均匀时每项 $\frac{1}{N}\cdot\frac{1}{N}$，和为 $\frac{1}{N}$（最小）；全偏心时和为 1（最大）。
+        乘 N 把区间归一到 $[1, N]$，再乘系数缩放——<b>取值范围天然是 $[\mathrm{coef},\ N\cdot\mathrm{coef}]$</b>，
+        4 专家默认系数下就是 $[5\mathrm{e}{-4},\ 2\mathrm{e}{-3}]$。实测三点对上：均匀路由 0.000516、偏心路由
+        0.002000（恰好触顶 $4\times5\mathrm{e}{-4}$）、eval 恒 0.000000。评估期为什么置零？aux 是<b>训练正则项</b>——
+        它与前向输出 y 完全无关，只影响 gate 的更新；eval 不更新参数，置零省计算且输出语义不变。
+        <code>test_moe_aux_loss_positive</code> 把这三点写成了断言。
+      </p>
+      <p>
+        这条损失怎么进训练？模型把各层加总（model.py:120-124 的 <code>sum(layer.mlp.aux_loss ...)</code>）挂在输出里，
+        8 个 workflow 的消费姿势一致，pretrain 版一行：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/pretrain/workflow.py.html">src/minimind_reborn/training/pretrain/workflow.py</a> · compute_loss（第 17-19 行）</span><span class="lang">python</span></div><pre class="code"><code>def compute_loss(batch, m):
+    out = m(batch["input_ids"], labels=batch["labels"])
+    loss = out.loss + out.aux_loss  # aux 仅 MoE 非零；dense 恒 0，加法等价官方
+    return loss, {...}</code></pre></div>
+      <p>
+        <b>主损失 + 辅助损失</b>的加法组合：dense 时 aux 恒 0（FeedForward 根本没有 aux_loss 属性这条路——
+        model.py 只对 MOEFeedForward 求和），MoE 时一个小系数的均衡税悄悄加进总损失。系数就是 $[\mathrm{coef}, N\cdot\mathrm{coef}]$
+        里那个 coef——它的数量级为什么是 5e-4，坑卡见。
+      </p>
+
+      <h3 id="moe-params">参数账本：3.10 倍的家底，1.000 倍的工钱</h3>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m08_exp_params.py · dense vs MoE（真实 768 配置，钩子数专家调用）</span><span class="lang">python</span></div><pre class="code"><code>import torch
+
+torch.manual_seed(0)
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.feedforward import FeedForward, MOEFeedForward
+from minimind_reborn.models.model import MiniMindForCausalLM
+
+n = lambda m: sum(p.numel() for p in m.parameters())
+cfg = MiniMindConfig()
+ffn, expert = n(FeedForward(cfg)), n(FeedForward(cfg))  # 同构：一个专家 = 一份 dense FFN
+moe = MOEFeedForward(MiniMindConfig(use_moe=True))
+gate = n(moe.gate)                                       # router：768×4
+d = n(MiniMindForCausalLM(cfg))
+m = n(MiniMindForCausalLM(MiniMindConfig(use_moe=True)))
+print(f"dense FFN 参数（3 矩阵 768×2432）: {ffn:,}")
+print(f"MoE 每层总参数（gate + 4 专家）  : {n(moe):,}  = gate {gate:,} + 4×{expert:,}")
+print(f"MoE 每 token 激活（gate + 1 专家）: {gate + expert:,}  → 占总参数 {100*(gate+expert)/n(moe):.1f}%")
+
+called = []
+for i, e in enumerate(moe.experts):      # forward hook：模块被真调用时记一笔
+    e.register_forward_hook(lambda mod, inp, out, idx=i: called.append(idx))
+moe.eval()
+with torch.no_grad():
+    _ = moe(torch.randn(1, 1, 768))       # 只喂 1 个 token：只应激活 1 个专家
+print(f"单 token 前向实际调用的专家: {sorted(called)}")
+
+print(f"全模型 dense: {d:,}（{d/1e6:.2f}M）")
+print(f"全模型 MoE : {m:,}（{m/1e6:.2f}M）  总参数 {m/d:.2f}×dense")
+act = d + 8 * gate  # 每层：dense FFN 换成 gate+1 专家（专家与 dense FFN 同构，净增仅 gate）
+print(f"MoE 每 token 激活参数 ≈ {act:,}（{act/1e6:.2f}M）  ≈ dense 的 {act/d:.3f}×")</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m08_exp_params.py</span>
+<span class="out">dense FFN 参数（3 矩阵 768×2432）: 5,603,328</span>
+<span class="out">MoE 每层总参数（gate + 4 专家）  : 22,416,384  = gate 3,072 + 4×5,603,328</span>
+<span class="out">MoE 每 token 激活（gate + 1 专家）: 5,606,400  → 占总参数 25.0%</span>
+<span class="out">单 token 前向实际调用的专家: [0]  （其余专家的参数一次都没碰）</span>
+<span class="out">全模型 dense: 63,912,192（63.91M）</span>
+<span class="out">全模型 MoE : 198,416,640（198.42M）  总参数 3.10×dense</span>
+<span class="out">MoE 每 token 激活参数 ≈ 63,936,768（63.94M）  ≈ dense 的 1.000×</span></code></pre>
+      <p>
+        账本三行读法：<b>家底</b>——FFN 参数 ×4（每层 5.6M → 22.4M，gate 那 3,072 只是零头），全模型
+        63.91M → 198.42M；<b>工钱</b>——每 token 只调 1 个专家（钩子实测：<code>[0]</code>，其余 3 位专家的参数
+        一次都没碰），激活参数 63.94M ≈ dense 的 1.000 倍，矩阵乘计算量与激活参数成正比，<b>计算几乎不变</b>；
+        <b>代价</b>——显存（参数要全驻留）与优化器状态翻 3 倍，训练通信也变重（M15 的账）。63.91M 这个数记住，
+        M09 的参数账本还会逐项把它拆开。
+      </p>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130 · CPU 执行]</b> 全部数字当日实算；"激活参数"按"单 token 前向真正参与矩阵乘的参数"口径（gate + 被路由专家），forward hook 验证调用集合；dense 63,912,192 与 M09 将展示的官方参数账本 63.91M 同源。</p>
+
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：top-1、top-2 与细粒度专家</div>
+        <p>
+          reborn 的"4 选 1"是 <a href="https://arxiv.org/abs/2101.03961" target="_blank" rel="noopener">Switch Transformer（arXiv:2101.03961）</a>的路数：
+          top-1 稀疏路由 + load·importance 负载均衡损失（本课 aux loss 公式的出处）。
+          <a href="https://arxiv.org/abs/2401.04088" target="_blank" rel="noopener">Mixtral（arXiv:2401.04088）</a>用 8 选 2；DeepSeek 系走"细粒度专家"——
+          更多更窄的专家（reborn 源码 docstring 也自称"细粒度 MoE"），靠 <code>moe_intermediate_size</code> 一根旋钮就能
+          把专家调窄做同款实验。共同取舍：专家越多越专，但 router 更难均衡、显存越贵；教学上 4 选 1 是最小的完整闭环——
+          路由、直通、挂图、均衡税，一只不缺。
+        </p>
+      </div>
+
+      <h2 id="pit">坑卡：aux 系数抄错数量级，路由被钉死在均匀</h2>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：router_aux_loss_coef 从 5e-4 改成 0.5，训练一切照常——只是专家永远学不出分工</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            症状极安静：从别的论文搬来 aux 系数（0.1/0.5 很常见），训练不报错、总 loss 照降；
+            唯一线索是日志里 <code>train/aux_loss</code> 一栏始终贴着上限 $N\cdot\mathrm{coef}$，且路由分布纹丝不动地均匀——
+            4 个专家谁的活都干一点，谁都不专。
+          </li>
+          <li class="cause">
+            aux 的取值范围 $[\mathrm{coef},\ N\cdot\mathrm{coef}]$ <b>由系数一手决定</b>。数量级实测（交叉熵 CE：语言模型的
+            预测损失，随机猜测时 $\approx \ln(6400)=8.764$；M09 详讲它的移位版本）：
+            <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+import math
+ce0 = math.log(6400)
+for coef in (5e-4, 0.5):
+    aux = 1.0 * 4 * coef   # 全偏心: (load·importance).sum()=1
+    print(f'coef={coef}: aux上限={aux:.6g}  占总损失 {aux/(ce0+aux)*100:.1f}%')"</span>
+<span class="out">coef=0.0005: aux上限=0.002  占总损失 0.0%</span>
+<span class="out">coef=0.5: aux上限=2  占总损失 18.6%</span></code></pre>
+            系数放大 1000 倍，均衡税从总损失的 0.0% 涨到 18.6%——router 每步收到的"拉均匀"梯度与主任务同量级，
+            分工信号被系统性淹没。
+          </li>
+          <li class="fix">
+            两个习惯：① 改前先算上限 <code>num_experts × coef</code>，与当前 loss 水位比一比（默认 4×5e-4=2e-3，
+            对 8.76 的 CE 是万分之二——均衡税就该是零钱）；② 训练时盯 <code>train/aux_loss</code> 与 <code>train/loss</code> 的比值，
+            常态应远小于 1%。reborn 的 5e-4 与官方 minimind 一致，没有实测证据前别动它。
+          </li>
+        </ul>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 上限公式与两组占比为当日实算（aux 范围推导见 <a href="#moe-aux">aux loss 小节</a>）；"18.6% 压制主损失"是量级论证——本课没有跑完整 MoE 训练对照，结论以公式与量级账为据。</p>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · SwiGLU 为什么是三个矩阵？多出来的那个在干什么？参数量怎么补回来？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>多出的是 <b>gate 矩阵</b>：它那一路过 SiLU 后输出大体在 $(−0.28,\infty)$，逐元素乘到 up 路——像由输入自己算出的一排音量旋钮，决定 2432 个加工位各开多大，这是"门控"。三个矩阵比经典两个多一份，参数量相当就要把中间维从 $4d$ 压到 $\frac{8d}{3}$（768 → 2048）；官方经验公式取 π·768≈2432，比 8h/3 再高 18.8%——M04 括号里的伏笔即此。</p>
+            <p class="back">答错回看：<a href="#swiglu-idea">直觉：两路线性，一路当门</a> 与 <a href="#swiglu-8h3">为什么是三个矩阵</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · top1 - top1.detach() + 1.0 的前向值是多少？反向呢？它解决什么问题？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>前向恒 <b>1.0</b>（detach 只剪图不改数，两项相消）；反向 $\partial w/\partial\mathrm{top1}=1$，梯度原样流回 softmax 与 gate。解决的是 <b>topk 不可导</b>：k=1 时"选了谁"是离散选择、重归一化又是恒等——老实写权重 1.0 则 router 收不到任何梯度、永远学不会路由。直通估计器让前向/反向各用一套近似：前向全强度、反向有梯度。</p>
+            <p class="back">答错回看：<a href="#moe-ste">top-1 直通估计器</a> 的严谨卡与实测输出。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · y[0,0] += 0·Σp 这行为什么存在？删掉它，单卡训练会坏吗？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>为 <b>DDP</b> 而生：分布式训练要求每个参数都参与前向，否则反向无梯度可发、同步报错（实测 <code>RuntimeError: ... parameters that were not used in producing loss</code>）；top-1 路由下某专家这步分不到 token 是常态，0 乘在计算图上建立依赖、生成全零梯度，让 reducer 视其为已使用。单卡（无 DDP）删掉它<b>不坏</b>——数值一分不变，只是上了多卡立刻翻车。它也只在 <code>self.training</code> 生效：eval 不建图。</p>
+            <p class="back">答错回看：<a href="#moe-experts">专家执行段与"挂图"怪招</a> 的玩具 DDP 实验。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · aux loss 由哪两个量相乘？取值范围是多少？评估期为什么是 0？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b><b>load</b>（每位专家实际分票频率，不可导）乘 <b>importance</b>（平均路由分数，可导——梯度经它流回 gate），求和后乘 N 乘 coef，范围 $[\mathrm{coef},\ N\cdot\mathrm{coef}]$（均匀最小、全偏心最大，默认 4 专家即 $[5\mathrm{e}{-4}, 2\mathrm{e}{-3}]$，实测 0.000516 → 0.002000）。评估期为 0：aux 是训练正则项，与前向输出无关，eval 不更新参数，置零省计算且不改输出——测试里两条断言锁定了这对行为。</p>
+            <p class="back">答错回看：<a href="#moe-aux">负载均衡 aux loss</a> 的公式与实测。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 1 · num_experts_per_tok=2：路由和计算量怎么变？</div>
+        <div class="ex-body">
+          <p>
+            把 k 从 1 改成 2（<code>MiniMindConfig(use_moe=True, num_experts_per_tok=2)</code>），同一批 token 喂进去。
+            先跑路由三件套（分数 → top-2 → 重归一化），再用 forward hook 数单 token 调了几个专家：
+          </p>
+          <div class="codeblock"><div class="code-head"><span>变式 1 实验脚本（节选）</span><span class="lang">python</span></div><pre class="code"><code>import torch
+import torch.nn.functional as F
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.feedforward import MOEFeedForward
+
+torch.manual_seed(0)
+moe = MOEFeedForward(MiniMindConfig(use_moe=True, num_experts_per_tok=2))
+x = torch.randn(2, 16, 768)
+scores = F.softmax(moe.gate(x.view(-1, 768)), dim=-1)
+topk_w, topk_idx = torch.topk(scores, k=2, dim=-1, sorted=False)
+w = topk_w / (topk_w.sum(-1, keepdim=True) + 1e-20)     # 源码同款重归一化
+print("token0 选中:", topk_idx[0].tolist(), " 原始权重:", topk_w[0].tolist(), " 重归一化:", w[0].tolist())
+called = []
+for i, e in enumerate(moe.experts):
+    e.register_forward_hook(lambda m_, i_, o_, idx=i: called.append(idx))
+moe.eval()
+with torch.no_grad():
+    _ = moe(torch.randn(1, 1, 768))
+print("单 token 调用的专家:", sorted(called))</code></pre></div>
+          <div class="ex-predict"></div>
+          <p>写下预测：① token0 的两个重归一化权重是多少、和为几？② 单 token 会调用几个专家？③ 每 token 激活参数变成多少（k=1 时 5,606,400）？④ 直通估计器那行还会执行吗？</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>作者实测（同环境）：</p>
+            <pre class="term"><code><span class="out">token0 选中: [3, 0]  原始权重: [0.317, 0.307]  重归一化: [0.508, 0.492]  和= 1.0</span>
+<span class="out">load（每专家得票占比）: [0.25, 0.266, 0.188, 0.297]  和= 1.0 （每个 token 投 2 票）</span>
+<span class="out">单 token 调用的专家: [1, 3]</span>
+<span class="out">每 token 激活: gate+2专家 = 11,209,728（k=1 时 5,606,400） 占每层总参数 50.0%</span></code></pre>
+            <p>
+              <b>机制：</b>① 权重重归一化只看入围者内部相对强弱——0.317:0.307 变成 0.508:0.492，<b>和恒为 1</b>（对 k=1
+              这步是恒等、才引出直通估计器；k=2 有了真分母，走普通除法）；② 单 token 调 <b>2</b> 个专家，输出是两份
+              加权和（<code>index_add_</code> 累加的那个分支终于派上用场）；③ 激活参数翻倍到 11,209,728——k 是<b>计算量的旋钮</b>，
+              与专家数（容量旋钮）正交；④ 直通行不执行——它在 <code>else</code>（k=1）分支里，k&gt;1 走上面的重归一化。
+              留一个思考：aux loss 的 load 现在每 token 投 2 票，均衡税的语义自动适配，公式一行不用改。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M08 验收</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下两步。第一步，模型测试（含 MoE 用例）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_models/test_model.py -q</span>
+<span class="out">........                                                                 [100%]</span>
+<span class="ok">8 passed, 1 warning in 0.92s</span></code></pre>
+          <p>第二步，亲手复现路由与 aux loss（主体见 <a href="#moe-route">路由小节</a>，补上偏心 router 构造与直通验证两段，存为 /tmp/m08_exp_route.py）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m08_exp_route.py</span>
+<span class="out">load       : [0.125, 0.312, 0.156, 0.406]</span>
+<span class="out">aux_loss（train, 均匀路由）= 0.000516</span>
+<span class="out">aux_loss（eval）            = 0.000000</span>
+<span class="out">aux_loss（train, 偏心路由）= 0.002000</span></code></pre>
+          <ul class="pass-criteria">
+            <li><code>8 passed</code>——其中 <code>test_moe_aux_loss_positive</code> 锁定本课一对关键行为：训练期 aux &gt; 0、评估期 == 0；<code>test_forward_shapes_and_loss</code> 顺带断言 dense 模型 aux 恒 0；</li>
+            <li>路由脚本打出：均匀路由 aux ≈ 5e-4 量级、偏心路由触顶 2e-3、eval 归零——三条与公式 $[\mathrm{coef}, N\cdot\mathrm{coef}]$ 对得上；</li>
+            <li>（可选）<code>/tmp/m08_exp_ddp.py</code> 复现挂图技巧：无技巧 RuntimeError、有技巧两步通过；无环境约束（gloo/CPU 可跑）。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按症状分流）+ 那个 warning 的身世</summary>
+            <p>
+              <b>aux 恒 0</b> → 检查是否忘了 <code>.train()</code>（测试夹具默认 <code>eval()</code>，源码只在 training 分支记 aux）；
+              <b>偏心实验不偏</b> → 别用 <code>gate.weight[0] += 常数</code>——分数是 $W x$，加常数会被随机输入的正负抵消，
+              要把打分行对准输入的公共方向（脚本用的是均值方向）；<b><code>1 warning</code></b> → M07 卖的关子在此兑现：
+              <code>test_moe_aux_loss_positive</code> 里 <code>float(out.aux_loss)</code> 对<b>带梯度的张量</b>取标量，
+              PyTorch 提醒你可能忘了 detach——测试只取数值做断言，无害；
+              <b>DDP 脚本起不来</b> → 端口被占就换 <code>MASTER_PORT</code>，或确认在仓库根目录跑（uv 环境）。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        ⑤站零件至此集齐：RMSNorm、RoPE（M05）、KV cache（M06）、attention（M07）、FFN 的 dense 与 MoE 两种形态（本课）。
+        下一课 M09 组装整机 <code>MiniMindForCausalLM</code>——embedding 与输出层的 weight tying、移位交叉熵，
+        把今天算出的 63.91M 逐项拆成参数账本，最后请官方权重 <code>pretrain_768.pth</code> 以 strict=True 验明正身：🏁A。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>FFN <span class="en">feed-forward network</span></dt><dd>前馈子层：对每个 token 位置独立做升维→非线性→降维，不跨位置混合（跨位置是 attention 的职责）。SwiGLU 形态下每层 5.6M 参数，占 Block 的 76%。</dd>
+          <dt>SwiGLU</dt><dd>三矩阵门控 FFN：down(SiLU(gate(x)) ⊙ up(x))。gate 路经激活后逐元素乘 up 路——"自己给自己调音量"；参数量与经典 FFN 相当时中间维取 8d/3，官方经验公式取 π·d 再对齐 64 倍数（768→2432）。LLaMA/Qwen/DeepSeek 系标配。</dd>
+          <dt>SiLU <span class="en">swish 激活</span></dt><dd>x·sigmoid(x)，非单调光滑激活函数；输出大体在 (−0.28, ∞)，负半轴小幅下潜——门控旋钮的"关"不必是零。</dd>
+          <dt>门控 <span class="en">gating</span></dt><dd>用一路可学习的信号逐元素乘另一路，控制其通/断/强弱；GLU 家族（SwiGLU/GeGLU/ReGLU）的区别只在门上的激活函数。</dd>
+          <dt>MoE <span class="en">mixture of experts</span></dt><dd>混合专家层：N 个并列 FFN + 轻量 router，每个 token 只激活 k 个专家。reborn：4 专家 top-1，总参数 ×4、每 token 激活不变。</dd>
+          <dt>router / top-k 路由</dt><dd>768→N 的线性层打分，softmax 归一，torch.topk 取前 k 名。topk 是离散选择、本身不可导——梯度问题的根源。</dd>
+          <dt>直通估计器 <span class="en">straight-through estimator</span></dt><dd>前向取离散/常数值、反向按连续近似传梯度的技巧；reborn 写作 top1 − top1.detach() + 1.0：前向恒 1.0，反向梯度照走 softmax 回 gate。</dd>
+          <dt>负载均衡 aux loss <span class="en">load balancing loss</span></dt><dd>(load·importance).sum() × N × coef：实际分票频率与平均路由分数的乘积和，均衡最小（1/N）、偏心最大（1）；防"强者愈强"的专家坍缩。Switch Transformer 提出。</dd>
+          <dt>稀疏激活 <span class="en">sparse activation</span></dt><dd>参数量与每 token 计算量解耦的性质：参数驻留显存但不逐 token 全算；用 forward hook 数"被调用的模块"可实测激活集合。</dd>
+          <dt>挂图技巧 <span class="en">DDP unused parameters</span></dt><dd>y[0,0] += 0·Σp：为未被路由的专家在计算图上建立 0 乘依赖，使其获得全零梯度、被 DDP 视为已使用——多卡同步的刚需（M15 详讲 DDP）。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+  };
+</script>
+<script async src="assets/vendor/tex-svg.js"></script>
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M18 · 蒸馏与 LoRA：小成本改造 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m18">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第四篇 训练</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M18</span><span>第四篇 · 训练</span></div>
+        <h1>蒸馏与 LoRA：小成本改造</h1>
+        <p class="lede">
+          M17 的 DPO 给模型装上了"品味"——在两个回答里挑更好的那个。但到 M17 为止，
+          每次训练都在动<b>全部 63.91M 参数</b>。本课学两个"省钱术"：<b>蒸馏</b>不抄答案、抄老师的完整概率分布；
+          <b>LoRA</b> 冻结基座、只训 0.6% 的旁路参数。M02 埋的"自称 Qwen"伏笔，也在这课兑现。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M17</b>（全参微调的代价已见，本课把它砍下来）</span>
+          <span class="chip">时长：<b>约 70 分钟</b></span>
+          <span class="chip">新概念：<b>知识蒸馏（KL 散度）· LoRA（低秩适配）</b></span>
+          <span class="chip">对照：<code>training/distill/</code> · <code>models/lora.py</code> · <code>training/lora/</code> · <code>configs/{distill,lora}_64m.yaml</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>说出软标签比硬标签多出的"暗知识"，并回收 M02 伏笔：复述"模型自称 Qwen"背后的完整蒸馏链条；</li>
+        <li>写出蒸馏损失 $\alpha\cdot\mathrm{CE} + (1-\alpha)\cdot T^2\cdot\mathrm{KL}$，解释温度为什么软化分布、KL 项为什么乘 $T^2$；</li>
+        <li>沿 <code>distill/loss.py</code> 的 16 行与 workflow 的 76 行读出教师冻结三连、只算回答段（回收 M12 的 loss mask），并从 smoke 实测里摘出 CE/KL 分项曲线；</li>
+        <li>算清 LoRA rank=16 的参数账（393,216 = <b>0.615% &lt; 1%</b>），解释 A 高斯 / B 零初始化与"只挂方形 Linear"（GQA 下只有 q/o_proj 中选）；</li>
+        <li>用 merge 把 $W' = W + B\cdot A$ 写回主权重，实测合并前后输出一致（fp16 舍入级），说出 LoRA 推理零额外延迟的原因。
+        </li>
+      </ul>
+
+      <h2 id="distill">蒸馏：抄答案，不如抄老师的思路</h2>
+
+      <h3 id="soft-label">硬标签 vs 软标签：暗知识</h3>
+      <p>
+        回忆 M16 的 SFT：每个位置的监督信号是 labels 里那个 token 的编号，训练时被交叉熵
+        （M01 见过的"预测分布 vs 真实分布"的账）当成 <b>one-hot</b> 目标——6400 维向量里只有正确答案是 1，
+        其余 6399 个全是 0。这叫<b>硬标签</b>。<b>软标签</b>则是另一个模型对同一位置给出的<b>完整概率分布</b>：
+        正确答案也许 0.6，但"语义近似的错误答案"各分到一点概率。
+      </p>
+      <div class="callout tip">
+        <div class="co-title">💡 直觉：一道选择题的两种讲评</div>
+        <p>
+          硬标签是"答案是 C"——你只知道对错。软标签是"C 60%，B 25%，D 10%，A 5%"——
+          你额外知道了 <b>B 比 D 更像正确答案</b>。这些"错误答案之间的相似度结构"叫<b>暗知识</b>（dark knowledge，
+          Hinton 的术语）：硬标签里它全部被压成 0，软标签里它整份保留。同一个训练样本，
+          软标签的信息量稠密得多——每个位置都带着 6400 个非零（或接近零）的分数，而不是 1 个编号。
+        </p>
+      </div>
+      <p>
+        现在兑现 M02 的伏笔。M02 你见过模型一本正经地自称"Qwen / 通义千问"，当时的解释是：
+        SFT 语料本身就是拿 Qwen 当老师生成的——用大模型的回答训练小模型，这件事有个正式名字，就是
+        <b>知识蒸馏</b>（knowledge distillation）：拿一个强模型当<b>教师</b>（teacher），训练一个小<b>学生</b>（student）。
+        注意 M02 那条链其实只蒸馏了一半：Qwen 的回答被<b>采样成了文本</b>，分布结构（哪些错误答案也像样）丢了，
+        留下来的仍是硬标签。本课的 <code>distill</code> 范式把这一步做完整——学生的分布直接对齐教师的分布。
+        也就是说：你从 M02 起就一直在用蒸馏的产物，现在才第一次亲手做蒸馏。
+      </p>
+
+      <h3 id="kl-math">数学：KL 散度与温度</h3>
+      <p>
+        "两个分布差多远"需要一个度量——<b>KL 散度</b>（Kullback–Leibler divergence）：
+        $$ \mathrm{KL}(p \,\|\, q) = \sum_i p_i \log\frac{p_i}{q_i} \;\geq\; 0 $$
+        读作"拿 q 当编码器去表示 p，平均每个符号要多付多少比特"。它<b>不对称</b>（$\mathrm{KL}(p\|q) \neq \mathrm{KL}(q\|p)$），
+        两个分布完全相等时为 0。reborn 的蒸馏损失（α 混合，CE 是对硬标签的交叉熵）：
+        $$ \mathcal{L} = \alpha \cdot \mathrm{CE}_{\text{硬}} + (1-\alpha)\cdot T^2 \cdot \mathrm{KL}\Big(\underbrace{\mathrm{softmax}(z_t / T)}_{\text{教师分布}}\;\Big\|\;\underbrace{\mathrm{softmax}(z_s / T)}_{\text{学生分布}}\Big) $$
+        其中 $z_t, z_s$ 是教师/学生在同一位置的 logits（M03 起一直在用的"词表原始得分"，每词一个数）。
+        <b>温度 $T$</b> 你在 M02 调过采样温度时已经见过同一公式：logits 除以 $T$ 再 softmax。M02 用它"读"生成分布的平陡；
+        这里在训练侧用同一招<b>软化教学分布</b>：$T$ 越大，softmax 越平，正确答案与"近似答案"的差距被压小、
+        相对结构被放大——暗知识从背景里浮出来，变得可学。
+      </p>
+      <div class="callout note">
+        <div class="co-title">📐 严谨卡：KL 项为什么乘 $T^2$——梯度尺度补偿</div>
+        <p>
+          温度不是免费软化。设 $p=\mathrm{softmax}(z_s/T)$、教师分布 $q$ 固定，对 $z_{s,i}$ 求导（softmax 的
+          Jacobian 自带一个 $1/T$）：$ \dfrac{\partial\, \mathrm{KL}(q\|p)}{\partial z_{s,i}} = \dfrac{1}{T}(p_i - q_i) $。
+          大 $T$ 时 $p, q$ 都被摊平，逐项差 $(p_i-q_i)$ 本身又缩小约 $1/T$——两个 $1/T$ 相乘，
+          软标签项的梯度被压成 $1/T^2$：不补偿的话，$T{=}1.5$ 时 KL 的"嗓门"只有名义的 44%，
+          温度越高蒸馏越失声。乘 $T^2$ 恰好补回，让软、硬两项对梯度的贡献与 $T$ 无关地保持 $\alpha$ 配比。
+          这是 <a href="https://arxiv.org/abs/1503.02531" target="_blank" rel="noopener">Distilling the Knowledge in a Neural Network（Hinton et al., arXiv:1503.02531）</a>的原始设定。
+          推导可跳过，记住结论：$T^2$ 不是超参，是温度带进来的尺度修正。
+        </p>
+      </div>
+      <p>
+        还有一个读源码前必须拆穿的陷阱：PyTorch 的 <code>F.kl_div(input, target)</code> 参数序是
+        <b>input = log Q、target = P</b>，算出来的是 $\sum_i P_i(\log P_i - \log Q_i)=\mathrm{KL}(P\|Q)$。
+        reborn 写的是 <code>F.kl_div(student_log_probs, teacher_probs)</code>——所以实际方向是
+        $\mathrm{KL}(\text{教师} \| \text{学生})$（loss.py 的 docstring 写反了，以代码为准）。
+        这个方向正是 Hinton 的选择：最小化它时，学生必须<b>覆盖</b>教师的每个概率高峰，不许漏。
+      </p>
+
+      <h3 id="distill-code">精读：16 行损失 + 76 行 workflow</h3>
+      <p>
+        全部数学落在一个 16 行的函数里，先看全文：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/distill/loss.py.html">src/minimind_reborn/training/distill/loss.py</a> · 全文 16 行</span><span class="lang">python</span></div><pre class="code"><code>def distillation_loss(
+    student_logits: torch.Tensor, teacher_logits: torch.Tensor, temperature: float = 1.0
+) -> torch.Tensor:
+    """softmax(T) 教师分布 → KL(student‖teacher) × T²，batchmean 归约。"""
+    with torch.no_grad():
+        teacher_probs = F.softmax(teacher_logits / temperature, dim=-1).detach()
+    student_log_probs = F.log_softmax(student_logits / temperature, dim=-1)
+    return (temperature**2) * F.kl_div(student_log_probs, teacher_probs, reduction="batchmean")</code></pre></div>
+      <p>
+        四个读点：① <b>教师进 no_grad</b>——不建计算图（autograd 的反向记录，M08 的 detach 同款语义），
+        教师只出题不学习；② 学生用 <code>log_softmax</code>（比先 softmax 再取 log 数值稳定，直接配 kl_div 的 input 口味）；
+        ③ <code>reduction="batchmean"</code>——对所有 answer token 取平均，得到"每个回答 token 的平均 KL"；
+        ④ $\times T^2$ 按位置补梯度尺度（上文严谨卡）。方向：teacher_probs 在 target 位——$\mathrm{KL}(\text{教师}\|\text{学生})$。
+      </p>
+      <p>
+        再看 workflow（76 行）怎么把教师立起来、把损失接到 M16 那台引擎上。第一段：<b>建教师并冻结</b>：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/distill/workflow.py.html">src/minimind_reborn/training/distill/workflow.py</a> · 教师构建段（26–40 行）</span><span class="lang">python</span></div><pre class="code"><code>teacher_cfg = MiniMindConfig(
+    hidden_size=dc.teacher_hidden_size,        # 教师拓扑可配：可以更大
+    num_hidden_layers=dc.teacher_num_layers,
+    use_moe=dc.teacher_use_moe,
+    vocab_size=cfg.model.vocab_size,
+    # attention 拓扑跟随 student 配置（teacher 只在 hidden/layers/MoE 上与学生不同）
+    num_attention_heads=cfg.model.num_attention_heads,
+    num_key_value_heads=cfg.model.num_key_value_heads,
+    head_dim=cfg.model.head_dim,
+)
+teacher = MiniMindForCausalLM(teacher_cfg)
+teacher_path = resolve_weight_path(dc.teacher_weight, cfg.output_dir, dc.teacher_hidden_size, dc.teacher_use_moe)
+load_inference_weights(teacher, teacher_path, strict=True)   # M14 的命名约定 {名}_{hidden}.pth + 严格加载
+teacher.eval().requires_grad_(False).to(device)              # 冻结三连：eval + 关梯度 + 上设备</code></pre></div>
+      <p>
+        教师不必与学生同构：hidden、层数、MoE 三个旋钮独立可配（<code>teacher_use_moe=true</code> 就能请出
+        M08 那台 198M 的 MoE 教），attention 头数与 head_dim（M07）跟随学生。冻结三连各司其职：
+        <code>eval()</code> 关 dropout、<code>requires_grad_(False)</code> 让教师参数收不到梯度、
+        交给 Trainer 的只有学生——优化器里根本没有教师的名字。<b>第二段：compute_loss 闭包</b>——
+        范式对引擎的全部接口（M16 立的规矩），这里终于比 SFT 版长出了实质内容：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/distill/workflow.py.html">src/minimind_reborn/training/distill/workflow.py</a> · compute_loss（45–62 行）</span><span class="lang">python</span></div><pre class="code"><code>def compute_loss(batch, m):
+    labels = batch["labels"]
+    out = m(batch["input_ids"], labels=labels)
+    mask = (labels[..., 1:] != -100).float().view(-1)     # M12 的 loss mask 回收：-100 = 非回答区
+    shift_labels = labels[..., 1:].contiguous().view(-1)  # 移位对齐：位置 t 预测 t+1（M09）
+    logits = out.logits[..., :-1, :].contiguous()         # (B, T-1, V) 学生的移位 logits
+    ce = torch.nn.functional.cross_entropy(
+        logits.view(-1, logits.size(-1)), shift_labels, ignore_index=-100, reduction="none"
+    )
+    ce_mean = (ce * mask).sum() / (mask.sum() + 1e-8)     # 只对回答 token 平均
+    with torch.no_grad():
+        t_logits = teacher(batch["input_ids"]).logits[..., :-1, :][..., :vocab_student].contiguous()
+        # 教师读同一段 input_ids，同样移位；词表超过学生时切片对齐
+    flat_s = logits.view(-1, logits.size(-1))[mask == 1]  # (N_ans, V) 只挑回答行
+    flat_t = t_logits.view(-1, t_logits.size(-1))[mask == 1]
+    kl = distillation_loss(flat_s, flat_t, temperature=dc.temperature)
+    loss = (dc.alpha * ce_mean + (1 - dc.alpha) * kl) + out.aux_loss  # aux 仅 MoE 非零（M08）
+    return loss, {"train/ce": ce_mean.item(), "train/kl": kl.item(), "train/aux_loss": float(out.aux_loss)}</code></pre></div>
+      <p>
+        三个设计值得念出声。<b>① 账本口径与 SFT 完全一致</b>：M12 的 loss mask（labels 里非回答区是 -100）
+        在这里被复用了两次——CE 的 <code>ignore_index</code> 与 KL 的行选择（<code>mask == 1</code>），
+        蒸馏也<b>只教回答段</b>：prompt 段人人都会读，不值得付学费。<b>② 教师读的是 input_ids，不是答案</b>：
+        它要给出的正是"面对这个问题你怎么想"的分布。<b>③ 分项日志</b>：返回的字典里 CE 与 KL 分开记账
+        （写进 metrics.jsonl），等下的实测靠它拆开看两项各自的动向。收尾看 64M 主配方：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/configs/distill_64m.yaml.html">configs/distill_64m.yaml</a> · 全文</span><span class="lang">yaml</span></div><pre class="code"><code># 同构自蒸馏（teacher=pretrain 权重，student 从 SFT 权重继续）——对照官方 distill 配方
+stage: distill
+data:
+  dataset: sft_t2t_mini
+  max_seq_len: 340
+train:
+  epochs: 2
+  batch_size: 32
+  learning_rate: 5.0e-6     # 比全参 SFT 的 1e-5 再小一半：精修中的精修
+  dtype: bf16
+  init_from: full_sft       # 学生从 SFT 权重继续（M16 的交接棒同款语义）
+distill:
+  teacher_weight: pretrain  # 教师权重名 → out/pretrain_768.pth
+  teacher_hidden_size: 768
+  teacher_num_layers: 8
+  alpha: 0.5                # 总损失 = 0.5·CE + 0.5·KL
+  temperature: 1.5          # 推荐 1.0~2.0</code></pre></div>
+      <p>
+        reborn 的默认是<b>自蒸馏</b>：教师与学生同构（768×8 层），教师用自家 pretrain 权重、
+        学生从 full_sft 权重继续——把"预训练学语言"的软知识回灌给"对齐中"的学生。
+        想做经典意义上的"大教小"，改 <code>teacher_hidden_size/num_layers</code> 两个键即可（需备好对应权重）。
+      </p>
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：蒸馏是小模型产业的底座</div>
+        <p>
+          Hinton 2015 论文里最有攻击力的一句话：软目标让蒸馏<b>不需要标注数据</b>——α 取 0，
+          教师对任意输入的分布就是全部教材。工业界因此形成"大模型产出、小模型继承"的流水线：
+          DistilBERT 把 BERT 压到 60% 参数保 97% 效果；DistilWhisper、TinyLlama 皆是此路；
+          DeepSeek-R1 的"蒸馏小模型"（拿 R1 产出的推理数据 SFT 小模型）就是你 M02 那条链的当代版本。
+          国内语境里"XX 小模型是 YY 大模型蒸馏的"是常规披露，不是贬义。
+        </p>
+      </div>
+
+      <h3 id="distill-run">实测：smoke_distill 20 步，CE/KL 分项</h3>
+      <p>
+        冒烟配方里教师与学生都是 tiny 尺寸（教师 = <code>out/pretrain_64.pth</code>，M16 你训过的小基座；学生从零）。
+        把步数放大到 20 真跑（tiny + SFT 数据逐条模板渲染，M16 讲过数据侧慢，全程约 8 分钟）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_distill.yaml --set train.max_steps=20 --set train.resume=false</span>
+<span class="out">10:37:33 | INFO | minimind.distill | 教师权重：pretrain_64.pth（0.53M）</span>
+<span class="out">10:37:34 | INFO | minimind.trainer | 训练启动 stage=distill recipe=smoke_distill | 0.53M 可训练参数 | dtype=bf16 device=cuda world=1 | 数据=sft_t2t_mini</span>
+<span class="out">10:40:50 | INFO | minimind.trainer | Epoch[1/2](1/555730) loss=5.0080 lr=5.00e-04 grad_norm=0.63 tok/s=2 mfu=0.0%</span>
+<span class="dim">…（每步一行，tok/s 在 2 与 5 万间跳动——tiny 上数据装载主导，还夹了两次长停顿）…</span>
+<span class="out">10:45:29 | INFO | minimind.trainer | Epoch[1/2](20/555730) loss=4.8189 lr=5.28e-05 grad_norm=0.79 tok/s=2117 mfu=0.0%</span>
+<span class="out">10:45:29 | INFO | minimind.trainer | 已保存：full_dist_64.pth（epoch=1 step=20 best_val=None）</span>
+<span class="ok">10:45:33 | INFO | minimind.trainer | 训练结束：best_val_loss=4.926980018615723 optimizer_steps=20</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · seed=42 · 存档 runs/smoke_distill/20261001_103732]</b>
+      教师行证明冻结的教师已在场；总 loss 是 α 混合后的合成值。要拆开两项，读 metrics.jsonl
+      （compute_loss 返回的分项字典由 M13 的指标层落盘）：</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w120">micro step</th><th class="u-w130">CE（硬标签项）</th><th class="u-w130">KL（软标签项）</th><th class="u-w130">0.5·CE + 0.5·KL</th><th>日志 loss</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>8.7623</td><td>1.2538</td><td>5.0080</td><td>5.0080 ✓</td></tr>
+            <tr><td>5</td><td>8.6287</td><td>1.6566</td><td>5.1426</td><td>5.1426 ✓</td></tr>
+            <tr><td>10</td><td>8.6312</td><td><b>0.8489</b></td><td>4.7400</td><td>4.7400 ✓</td></tr>
+            <tr><td>15</td><td>8.5428</td><td>1.0098</td><td>4.7763</td><td>4.7763 ✓</td></tr>
+            <tr><td>20</td><td>8.5491</td><td>1.0887</td><td>4.8189</td><td>4.8189 ✓</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测 · 同上 · runs/smoke_distill/20261001_103732/metrics.jsonl]</b>
+      合成列与训练日志逐行对上——α 混合就是字面意义的两项平均。</p>
+      <p>
+        分项表有三个读数。<b>① CE 起点 8.7623 ≈ ln(6400)=8.764</b>：学生从零（<code>init_from: null</code>），
+        M09 的初始 loss 体检同款。<b>② CE 20 步只降 0.2</b>：768 个 token 的阅读量学不动语言（M16 的账）。
+        <b>③ KL 从 1.25 掉到 1 上下，比 CE 灵敏得多</b>——模仿一个"分布长什么样"比学会"下一个词是什么"容易。
+        还能反推教师的质量：学生初始分布近似均匀时 $\mathrm{KL} \approx \ln 6400 - H(\text{教师})$，
+        1.25 意味着教师自己的熵还有 7.5 nat——这位教师也只学了些词频（毕竟它就是 tiny pretrain 存档）。
+        冒烟的意义在于<b>链路通了、分项对账了</b>；真要尝到暗知识的甜头，得请大教师（64M 配方改 teacher 拓扑，🎮 需 GPU）。
+      </p>
+
+      <h2 id="lora">LoRA：只训 0.6% 的参数</h2>
+
+      <h3 id="lora-idea">直觉：微调的增量是低秩的</h3>
+      <p>
+        换一个省钱角度。全参 SFT/DPO 的账（M13/M16）：动 63.91M 参数，且 AdamW 优化器（M13）要给
+        <b>每个可训练参数</b>再背两份状态（动量与二阶矩），显存约 3 倍于参数本体。
+        <b>LoRA</b>（Low-Rank Adaptation，低秩适配）的出发点是一个经验观察：微调前后权重的<b>变化量</b>
+        $\Delta W$ 是<b>低秩</b>的（low-rank）——它只沿着少数几个方向改动，不需要一个满秩的 768×768 修正矩阵。
+        于是干脆不学 $\Delta W$ 本身，学它的<b>低秩分解</b>：
+        $$ W' = W + \Delta W \approx W + B\cdot A, \qquad B \in \mathbb{R}^{768\times r},\; A \in \mathbb{R}^{r\times 768},\; r = 16 $$
+        <b>秩</b>（rank）$r$ = 旁路里保留的独立方向数。一个 768×768 的投影有 589,824 个权重；
+        LoRA 旁路只要 $16\times768 + 768\times16 = 24{,}576$ 个——<b>4.2%</b>，且 W 冻结不背优化器状态。
+      </p>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130]</b>
+      单矩阵账 24,576 / 589,824 = 4.2% 为算术；全模型口径的实测（只挂方阵，0.615%）见
+      <a href="#lora-ratio">实测一</a>——两个比例不同，因为挂载点只有 16 个方形投影，不是全部权重矩阵。</p>
+      <div class="callout tip">
+        <div class="co-title">💡 直觉：改书不重排印，贴批注条</div>
+        <p>
+          全参微调是重排一版书；LoRA 是原版冻结、在页边贴批注条——书（基座）不变，新的意思全在批注（B·A）里。
+          换个任务就换一套批注，书还是那本书：这正是"一个基座 + 一抽屉适配器"的多任务形态。
+          批注条要有多少信息？r=16 说的是"这次修改只涉及 16 个独立方向"。
+        </p>
+      </div>
+
+      <h3 id="lora-code">精读 lora.py：B(A(x))、A 高斯 B 零、方阵注入</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/lora.py.html">src/minimind_reborn/models/lora.py</a> · LoRA 类（22–34 行）</span><span class="lang">python</span></div><pre class="code"><code>class LoRA(nn.Module):
+    """低秩旁路：B(A(x))，A 高斯初始化、B 零初始化。"""
+
+    def __init__(self, in_features: int, out_features: int, rank: int):
+        super().__init__()
+        self.rank = rank
+        self.A = nn.Linear(in_features, rank, bias=False)    # 768 → 16：降到 r 维"批注空间"
+        self.B = nn.Linear(rank, out_features, bias=False)   # 16 → 768：升回原维
+        self.A.weight.data.normal_(mean=0.0, std=0.02)       # A：小方差高斯，非零
+        self.B.weight.data.zero_()                           # B：全零 → 初始 ΔW = B·A = 0
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.B(self.A(x))</code></pre></div>
+      <p>
+        初始化是 LoRA 最讲究的两行。$\Delta W = B\cdot A$——<b>B 全零则 $\Delta W$ 全零</b>，
+        训练起点与原基座<b>逐位等价</b>：LoRA 是"外挂"上去的，绝不允许第一步就破坏基座已学会的东西
+        （M16 的灾难性遗忘）。那 A 为什么不能也置零、图个对称？因为梯度会死锁：
+        $\partial L/\partial B \propto A$、$\partial L/\partial A \propto B$——两个都为零，
+        两个梯度永远为零，旁路永远学不动。A 非零保证第一步 B 先收到梯度动起来，随后 A 也有梯度可收。
+        <b>"B 零保起点、A 非零保流动性"</b>，一对儿各管一头。
+      </p>
+      <p>
+        旁路怎么挂到模型上？<code>apply_lora(model, rank)</code> 扫描所有 Linear，<b>只挂方阵</b>（in==out）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/lora.py.html">src/minimind_reborn/models/lora.py</a> · apply_lora（37–48 行）</span><span class="lang">python</span></div><pre class="code"><code>def apply_lora(model: Any, rank: int = 16) -> None:
+    """对方阵 Linear（in==out，即 q/k/v/o_proj 等）注入 LoRA 并接管 forward。"""
+    for module in model.modules():
+        if isinstance(module, nn.Linear) and module.in_features == module.out_features:
+            lora = LoRA(module.in_features, module.out_features, rank=rank).to(model.device)
+            module.lora = lora  # 挂为子模块：参数自动进 state_dict、被 DDP 管理
+            original_forward = module.forward
+
+            def forward_with_lora(x, layer1=original_forward, layer2=lora):
+                return layer1(x) + layer2(x)   # 输出 = 原投影 + 旁路：W·x + B(A(x))
+
+            module.forward = forward_with_lora  # monkey-patch：替换该实例的 forward</code></pre></div>
+      <p>
+        这里的手法叫 <b>monkey-patch</b>（运行时替换对象的方法）：不改 attention.py 一行源码，
+        把命中条件的 Linear 的 forward 换成"原计算 + 旁路"。原 forward 用<b>默认参数</b>存进闭包
+        （<code>layer1=original_forward</code>）而不是外层变量——避免循环变量晚绑定把所有层指到同一个 forward。
+        <b>哪些矩阵恰好是方阵？</b>q_proj 输出维 = 头数 × head_dim = 8×96 = 768 = 输入维（M07 的形状约定），
+        o_proj 把拼接后的 768 投回 768——这两个天然方形。但<b>源码 docstring 写的"q/k/v/o_proj"在 GQA 下并不成立</b>：
+        M07 的 GQA 让 k/v_proj 是 768→384（KV 头只有 4 个），非方阵，挂不上；FFN 三个投影
+        （768→2432 / 2432→768，M08）也不是方阵。实测挂载点（下一节）只有 <b>q_proj 与 o_proj × 8 层 = 16 个</b>——
+        方阵判据是唯一事实，docstring 的举例按"无 GQA"口径写，读源码以判据为准。
+      </p>
+
+      <h3 id="lora-ratio">实测一：参数账 0.615% &lt; 1%</h3>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m18_exp_lora.py · 参数占比段（64M 与 tiny 两档）</span><span class="lang">python</span></div><pre class="code"><code>import torch
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.lora import apply_lora
+from minimind_reborn.models.model import MiniMindForCausalLM
+
+for tag, cfg, rank in [
+    ("64M  (768×8层, rank=16)", MiniMindConfig(), 16),   # lora_64m.yaml 同款
+    ("tiny (64×2层,  rank=8 )", MiniMindConfig(hidden_size=64, num_hidden_layers=2,
+                                               num_attention_heads=4, num_key_value_heads=2), 8),
+]:
+    m = MiniMindForCausalLM(cfg)
+    base = sum(p.numel() for p in m.parameters())        # 挂载前：基座参数
+    apply_lora(m, rank=rank)
+    hooked = [n for n, mod in m.named_modules() if hasattr(mod, "lora") and n]
+    lora_n = sum(p.numel() for n, p in m.named_parameters() if "lora" in n)
+    print(f"{tag}: 基座 {base:,} | LoRA {lora_n:,} | 占比 {100*lora_n/base:.3f}% | 挂载点 {len(hooked)} 个")
+    print(f"  {sorted(set(h.rsplit('.', 1)[1] for h in hooked))}")</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m18_exp_lora.py</span>
+<span class="out">64M  (768×8层, rank=16): 基座 63,912,192 | LoRA 393,216 | 占比 0.615% | 挂载点 16 个</span>
+<span class="out">  ['o_proj', 'q_proj']</span>
+<span class="out">tiny (64×2层,  rank=8 ): 基座 532,864 | LoRA 4,096 | 占比 0.769% | 挂载点 4 个</span>
+<span class="out">  ['o_proj', 'q_proj']</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · CPU 执行]</b>
+      393,216 的构成：16 个挂点 × (16×768 + 768×16) = 16 × 24,576。占比 0.615%——
+      <b>"只训 1% 参数"的招牌说法在这台 64M 上兑现且有富余</b>。挂载点集合验证了方阵判据：q/o 入选，
+      GQA 下的 k/v（768→384）落选。</p>
+
+      <h3 id="lora-freeze">实测二：smoke_lora 20 步——冻结基座只训旁路</h3>
+      <p>
+        <a href="codeview/src/minimind_reborn/training/lora/workflow.py.html">training/lora/workflow.py</a>（64 行）
+        与 M16 母版同构，多出来的三件事正好对应 Trainer（M13）预留的三个扩展点：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/lora/workflow.py.html">src/minimind_reborn/training/lora/workflow.py</a> · 与母版的三处差异（19–62 行节选）</span><span class="lang">python</span></div><pre class="code"><code>model = build_model(cfg, tokenizer)
+apply_lora(model, rank=cfg.lora.rank)                      # 差异①：注入旁路
+
+lora_params = [p for n, p in model.named_parameters() if "lora" in n]
+for n, p in model.named_parameters():
+    p.requires_grad = "lora" in n                          # 差异②：基座全冻结，只留旁路可训
+logger.info("LoRA rank=%d：%.3fM/%.3fM（%.2f%%）", ...)     # 启动即报参数账（下节实测）
+
+def save_lora_only(m, path):                               # 差异③：保存钩子——只存适配器
+    raw = m.module if hasattr(m, "module") else m          # 剥 DDP 壳（M15）
+    raw = getattr(raw, "_orig_mod", raw)                   # 剥 torch.compile 壳
+    atomic_save({f"{n}.lora.{k}": v.detach().cpu().half()  # 半精度：B/A 各 32 张量
+                 for n, mod in raw.named_modules() if hasattr(mod, "lora")
+                 for k, v in mod.lora.state_dict().items()}, path)
+
+trainer = Trainer(cfg, model, tokenizer, train_ds, eval_ds,
+                  compute_loss=compute_loss,               # 与 SFT 版一字不差：旁路在 forward 里
+                  save_weight=cfg.lora.lora_name,          # 产物名 lora_reborn（smoke 里 lora_smoke）
+                  save_weights_fn=save_lora_only,          # 钩子①：保存内容换成"只有适配器"
+                  optimizer_params=lora_params)            # 钩子②：优化器只收旁路参数
+trainer.run()</code></pre></div>
+      <p>
+        注意 compute_loss 与 SFT <b>完全相同</b>——范式没换损失，换的是"谁在学"：梯度经由冻结的基座
+        流到旁路的 A、B（链式法则穿过 W 的计算即可，不需要 W 本身更新）。优化器状态也只为 0.6% 的参数存在。
+        真跑 20 步（tiny、rank=8；紧跟着 distill 跑，数据页缓存已热，全程 19 秒）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_lora.yaml --set train.max_steps=20 --set train.resume=false</span>
+<span class="out">10:45:54 | INFO | minimind.lora | LoRA rank=8：0.004M/0.537M（0.76%）</span>
+<span class="out">10:45:55 | INFO | minimind.trainer | 训练启动 stage=lora recipe=smoke_lora | 0.00M 可训练参数 | dtype=bf16 device=cuda world=1 | 数据=sft_t2t_mini</span>
+<span class="out">10:45:56 | INFO | minimind.trainer | Epoch[1/2](1/555730) loss=8.7735 lr=5.00e-04 grad_norm=0.02 tok/s=1207 mfu=0.0%</span>
+<span class="out">10:46:08 | INFO | minimind.trainer | Epoch[1/2](20/555730) loss=8.7420 lr=5.28e-05 grad_norm=0.04 tok/s=5762 mfu=0.0%</span>
+<span class="out">10:46:08 | INFO | minimind.trainer | 已保存：lora_smoke_64.pth（epoch=1 step=20 best_val=None）</span>
+<span class="ok">10:46:11 | INFO | minimind.trainer | 训练结束：best_val_loss=8.773457527160645 optimizer_steps=20</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · seed=42 · 存档 runs/smoke_lora/20261001_104552]</b>
+      workflow 的参数账行：0.004M/0.537M（0.76%）——分子是 4,096 个旁路参数，分母含旁路（532,864+4,096）。
+      trainer 行的"0.00M 可训练参数"是引擎只数 requires_grad 的口径，4,096 被四舍五入成了 0.00。</p>
+      <p>
+        两个读数要想清楚。<b>① loss 8.77 → 8.74，grad_norm 只有 0.02~0.04</b>（对照蒸馏跑的 0.5~0.9）：
+        冒烟配方 <code>init_from: null</code>——基座是<b>随机权重</b>又被整个冻结，0.76% 的旁路救不了一个随机网络，
+        loss 钉在 ln(6400)≈8.764 附近。这不是 LoRA 失效，是<b>前提缺席</b>：LoRA 的隐含假设是"基座已经会说话"，
+        主配方 <code>lora_64m.yaml</code> 里 <code>init_from: full_sft</code>（lr 1e-4，比全参 SFT 大 10 倍——
+        要动的参数少了百倍，每份梯度可以更大）。<b>② 产物大小</b>：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">ls -l out/lora_smoke_64.pth out/full_dist_64.pth | awk '{print $5, $9}'</span>
+<span class="out">1893551 out/full_dist_64.pth    ← 蒸馏产物：全量权重（fp16）</span>
+<span class="ok">12057 out/lora_smoke_64.pth     ← LoRA 产物：只有 32 个 B/A 张量，157 分之一</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 同环境]</b> save_lora_only 钩子的落点：发给别人只需 12 KB 适配器 + 一句"基座用 full_sft_768.pth"——
+      这就是 HuggingFace 上海量 "base model + LoRA adapter" 组合的形态。</p>
+
+      <h3 id="lora-merge">实测三：merge——推理时零额外延迟</h3>
+      <p>
+        旁路再小也是额外的矩阵乘。推理部署不想背它？<code>merge_lora</code> 把旁路<b>算进主权重</b>再存盘：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/lora.py.html">src/minimind_reborn/models/lora.py</a> · merge_lora（76–88 行）</span><span class="lang">python</span></div><pre class="code"><code>def merge_lora(model: Any, lora_path: str | Path, save_path: str | Path) -> Path:
+    """把 LoRA 合并进基模权重（W' = W + B·A）并保存为基模结构。"""
+    load_lora(model, lora_path)
+    merged: dict[str, torch.Tensor] = {}
+    for name, module in model.named_modules():
+        lora = getattr(module, "lora", None)
+        if isinstance(module, nn.Linear) and lora is not None:
+            delta = (lora.B.weight.data @ lora.A.weight.data).cpu().half()  # (768,16)@(16,768) → ΔW
+            merged[f"{name}.weight"] = (module.weight.data.clone().cpu().half() + delta).half()
+    base = {k: v.cpu().half() for k, v in model.state_dict().items() if ".lora." not in k}
+    base.update(merged)     # 用 W' 覆盖同名键，剔除所有 .lora. 键
+    return atomic_save(base, save_path)</code></pre></div>
+      <p>
+        数学上 $W'x = (W + B A)x = Wx + B(A(x))$——两种算法<b>恒等</b>。合并后存出的文件没有任何
+        <code>.lora.</code> 键：它就是一份普通基座权重，推理引擎根本不知道 LoRA 存在过，<b>零额外延迟</b>。
+        恒等性实测（把 B 随机化模拟"训过的适配器"，同输入比对三条路线的输出 logits）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m18_exp_lora.py   # 尾部 merge 一致性段（64M, rank=16, fp16 存档）</span>
+<span class="out">adapter 路线 vs 纯基座（同模型 B 归零）  max|Δ| = 0.4551    ← 旁路确实改了输出</span>
+<span class="ok">adapter 路线 vs merge 后基座            max|Δ| = 0.002657  ← 恒等（fp16 舍入级）</span>
+<span class="out">merged 权重里还有 .lora. 键? False</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · CPU 执行]</b>
+      残差 0.0027 来自两处半精度：适配器按 fp16 存档（save_lora_only 的 <code>.half()</code>），
+      合并也在 fp16 里做加法——部署视角这点误差换"结构与基座完全相同"。另实测 merge 后再
+      <code>apply_lora</code>（在合并版上开新适配器）：新 B 全零，输出与合并版逐位一致——这是<b>正确</b>的叠层姿势，不是坑。</p>
+
+      <h2 id="compare">四种改造方式对账</h2>
+      <p>
+        到这里，你手里有四种"改模型"的方式了。放进一张表（64M 口径，"改什么/花多少/适合什么"）：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w120">方式</th><th class="u-w200">改什么</th><th class="u-w200">每步开销</th><th>适合什么</th></tr></thead>
+          <tbody>
+            <tr><td><b>全参 SFT</b><br>(M16)</td><td>全部 63.91M 权重</td><td>1 次前向 + 反向；优化器状态 ≈ 3 倍参数显存</td><td>教基座新技能（学"当助手"）；数据最多最直接</td></tr>
+            <tr><td><b>DPO</b><br>(M17)</td><td>全部权重（另冻结一个只读参考模型）</td><td>策略 + 参考 2 个模型的前向（M17 拼批），反向只回策略</td><td>教"品味"：在两个回答间挑更好的；数据是偏好对</td></tr>
+            <tr><td><b>蒸馏</b><br>(本课)</td><td>学生全部权重（教师冻结只读）</td><td>学生前向 + 反向 + 教师 1 次前向（无反向）</td><td>把教师的能力连"暗知识"搬进学生；α=0 时连标注答案都不需要</td></tr>
+            <tr><td><b>LoRA</b><br>(本课)</td><td>只 B·A 旁路 393,216 个（<b>0.615%</b>），基座冻结</td><td>基座前向 + 两个小矩阵；优化器状态只为 0.6% 参数存在</td><td>冻结基座做低成本定制；一基座多适配器；产物 12 KB 可分发</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        四者不是互斥选项而是可组合的积木：常见流水线是"蒸馏出强基座 → 各任务挂 LoRA →
+        偏好数据 DPO"。<b>共同的经济逻辑</b>：训练要动的东西越少，同样 GPU 预算能养的模型/任务越多——
+        蒸馏省的是<b>数据与教师算力的一次性成本</b>（换来学生更快的收敛），LoRA 省的是<b>每次微调的常驻成本</b>。
+      </p>
+
+      <h2 id="pit">坑卡：静默失败的两张面孔</h2>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：merge 前忘了 apply_lora——不报错，存出来的还是基座</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            症状安静得可怕：新建一个干净基座模型，直接 <code>merge_lora(model, "lora.pth", "merged.pth")</code>，
+            函数正常返回、文件正常落盘；加载 merged.pth 后行为与基座<b>一模一样</b>。作者实测：
+            合并版与"真值"输出 max|Δ|=1.0558——适配器根本没进去。
+          </li>
+          <li class="cause">
+            <code>load_lora</code> 只对 <code>hasattr(module, "lora")</code> 的挂点装权重——干净基座一个挂点都没有，
+            整个循环<b>空转</b>；后面的合并字典也是空的，<code>base</code> 原样写出。没有任何一步报错：
+            每个"没找到东西"的分支都被静默跳过了。
+          </li>
+          <li class="fix">
+            合并前先 <code>apply_lora(model, rank=…)</code> 再 <code>merge_lora</code>（rank 必须与训练时一致，
+            形状对不上才会报错）；并且<b>永远用一行输出验证</b>——合并版与"基座+适配器"同输入比对
+            max|Δ| 应在 1e-3 量级（本课实测 0.0027），差到个位数就是没合上。
+          </li>
+        </ul>
+      </div>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：双重 apply_lora——旧适配器被冻进闭包，训练照常、保存丢失</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            对同一个模型调用两次 <code>apply_lora</code>（比如"保险起见再注入一次"）：不报错、loss 正常降。
+            但 <code>state_dict</code> 里只剩第二套（B=0 的新适配器），第一套训练成果<b>存不下来</b>；
+            而它仍通过闭包参与前向——输出却和注入前一模一样（实测第二次注入后 max|Δ|=0.000000）。
+          </li>
+          <li class="cause">
+            第二次注入把 <code>module.lora</code> 指向新对象（旧参数脱离注册、不再被优化器和保存钩子看见），
+            但新 <code>forward_with_lora</code> 捕获的 <code>original_forward</code> 是<b>已被 patch 过的旧 forward</b>——
+            旧旁路被永久冻结在闭包里：不训练、不保存、却一直参与计算。
+          </li>
+          <li class="fix">
+            一个模型只 apply 一次；注入前自查 <code>any(hasattr(m, "lora") for m in model.modules())</code>。
+            相关红线：<code>lora.py</code> 模块 docstring 明示 <b>monkey-patch 与 torch.compile 不兼容</b>
+            （官方已知）。作者实测 torch 2.14 上小模型能跑通编译与反传，但 dynamo 对被 patch 的
+            forward 报 graph break、编译优化承诺失效——所以 reborn 的 <code>train.compile</code> 默认 False，
+            LoRA 配方也从不开它。想提速请用 bf16（M13 的 AMP），别对 LoRA 开 compile。
+          </li>
+        </ul>
+      </div>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · 软标签比硬标签多了什么信息？为什么同一批数据软标签"更稠密"？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>多的是<b>暗知识</b>——错误答案之间的相对结构与相似度排序。硬标签 one-hot 里 6399 个错误答案全是 0（"差得远"和"差一点"被压成同一种 0）；软标签给每个位置一个完整分布，"B 比 D 更像对的"这类信息整份保留。每个位置的监督信号从 1 个编号变成 6400 个带权重的分数，所以说更稠密。M02 的 SFT 语料是 Qwen 蒸馏后采样成文本的——暗知识在采样时被丢掉，只剩硬标签；distill 范式把分布直接对齐，才算把蒸馏做完整。</p>
+            <p class="back">答错回看：<a href="#soft-label">硬标签 vs 软标签：暗知识</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · KL 项为什么要乘 T²？不乘会发生什么？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>梯度尺度补偿。温度把 logits 除以 T：softmax 的 Jacobian 自带一个 1/T，而大 T 下教师/学生分布都被摊平、逐项差又缩小约 1/T——两个 1/T 相乘，软标签项的梯度只剩 1/T²。不补偿时 T=1.5 下 KL 的"嗓门"只有名义的 44%，α=0.5 名义配比实际失效：温度越高蒸馏越失声。乘 T² 恰好补回，使软硬两项对梯度的贡献与 T 无关地维持 α 配比。这是 Hinton 2015 论文的原始设定，不是可调超参。</p>
+            <p class="back">答错回看：<a href="#kl-math">数学：KL 散度与温度</a> 的严谨卡。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · LoRA 的 B 为什么零初始化？A 为什么不能也是零？GQA 下哪些投影挂不上？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>ΔW = B·A，B 全零 ⇒ ΔW 全零 ⇒ 训练起点与基座逐位等价——外挂的第一原则是不破坏基座已会的东西。A 若也为零则梯度死锁：∂L/∂B ∝ A、∂L/∂A ∝ B，两个都为零则两个梯度恒为零，旁路永远学不动。A 非零保证第一步 B 先动，随后 A 也有梯度。挂载判据是"方形 Linear（in==out）"：q_proj（8×96=768→768）与 o_proj（768→768）中选；GQA（M07）下 k/v_proj 是 768→384 非方阵、FFN 三投影也不是方形——实测挂载点恰为 q/o × 8 层 = 16 个，docstring 里的"q/k/v/o"按无 GQA 口径写，以判据为准。</p>
+            <p class="back">答错回看：<a href="#lora-code">精读 lora.py</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · LoRA 为什么推理零额外延迟？merge 前后输出差多少量级、差在哪？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>merge 把 W'=W+B·A 写回主权重：数学恒等 (W+BA)x = Wx + B(A(x))，合并后模型结构与基座完全相同（state_dict 里没有任何 .lora. 键），推理引擎只做一个普通矩阵乘——旁路"从未存在过"。实测残差 max|Δ|≈0.0027，是 fp16 舍入级：适配器存档 .half() 与合并加法都在半精度里做。顺带：merge 后再 apply_lora 是在合并版上开新适配器（新 B=0，输出与合并版逐位一致）——正确的叠层姿势。</p>
+            <p class="back">答错回看：<a href="#lora-merge">实测三：merge</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">✏️ 变式 · rank=4 vs rank=64：可训参数量差多少？1% 门槛谁失守？</div>
+        <div class="ex-body">
+          <p>
+            64M 主配方（768×8 层、挂载点 16 个）下把 rank 从 16 改成 4 与 64
+            （<code>apply_lora(m, rank=r)</code> 后数参数）。先笔算再实测：
+          </p>
+          <div class="ex-predict"></div>
+          <p>写下预测：① rank=4 与 rank=64 的 LoRA 参数量各是多少（rank=16 时 393,216）？
+          ② 参数量随 rank 怎么变化（线性/平方）？③ 哪个仍然 &lt;1%、哪个失守？
+          ④ rank 一路加大到 768，LoRA 在逼近什么？</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.lora import apply_lora
+from minimind_reborn.models.model import MiniMindForCausalLM
+for r in (4, 64):
+    m = MiniMindForCausalLM(MiniMindConfig())
+    apply_lora(m, rank=r)
+    n = sum(p.numel() for nm, p in m.named_parameters() if 'lora' in nm)
+    print(f'rank={r:>2}: LoRA {n:,} | 占 64M 基座 {100*n/63_912_192:.3f}%')"</span>
+<span class="out">rank= 4: LoRA 98,304 | 占 64M 基座 0.154%</span>
+<span class="out">rank=64: LoRA 1,572,864 | 占 64M 基座 2.461%</span></code></pre>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>
+              <b>机制：</b>每个挂点参数 = A 的 r×768 + B 的 768×r = 2·r·768，<b>线性于 r</b>——
+              rank=4 是 16 的 1/4（98,304 = 393,216÷4），rank=64 是 4 倍（1,572,864）。
+              门槛：rank=4 的 0.154% 更省，rank=64 的 <b>2.461% 已失守 1%</b>——但注意"失守"只是丢了招牌说法，
+              换来的是旁路能表达的独立方向从 4 个涨到 64 个：任务与基座差异越大（如换语言/换领域），
+              需要的秩越高；风格类小改动 rank=4~8 往往就够。极限情形 r=768 时 B·A 是 768×768 的满秩乘积，
+              LoRA 在<b>表达能力上逼近全参微调</b>（仍是不同的参数化：冻结 W、只优化低秩因子，优化器状态依旧省）。
+              这就是 rank 的真实语义：<b>你愿意给"这次修改"几个自由方向</b>。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M18 验收：两条冒烟 + 参数占比断言</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下三步。第一步，蒸馏 20 步（tiny 约 8 分钟，SFT 数据侧慢）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_distill.yaml --set train.max_steps=20 --set train.resume=false</span>
+<span class="out">… | minimind.distill | 教师权重：pretrain_64.pth（0.53M）</span>
+<span class="out">… | minimind.trainer | 已保存：full_dist_64.pth（epoch=1 step=20 best_val=None）</span>
+<span class="ok">… | minimind.trainer | 训练结束：best_val_loss=4.926980018615723 optimizer_steps=20</span></code></pre>
+          <p>第二步，LoRA 20 步（约 20 秒；若机器冷启动可能到几分钟——数据侧渲染）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_lora.yaml --set train.max_steps=20 --set train.resume=false</span>
+<span class="out">… | minimind.lora | LoRA rank=8：0.004M/0.537M（0.76%）</span>
+<span class="ok">… | minimind.trainer | 训练结束：best_val_loss=8.773457527160645 optimizer_steps=20</span></code></pre>
+          <p>第三步，参数占比断言脚本（/tmp/m18_ratio_assert.py，正文实测一的同款加断言）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m18_ratio_assert.py</span>
+<span class="out">LoRA rank=16: 393,216/63,912,192 = 0.615%（挂载点 16 个：q/o_proj × 8 层）</span>
+<span class="ok">3 checks passed</span></code></pre>
+          <ul class="pass-criteria">
+            <li>第一步首行日志含 <code>教师权重：pretrain_64.pth</code>（冻结教师在场），
+              且 runs/smoke_distill/&lt;时间戳&gt;/metrics.jsonl 里能 grep 到 <code>train/ce</code> 与 <code>train/kl</code> 两条分项；</li>
+            <li>第二步首行日志是 <code>LoRA rank=8：0.004M/0.537M（0.76%）</code>，且
+              out/lora_smoke_64.pth 只有 ~12 KB（保存钩子只存适配器）；loss 钉在 8.77 附近<b>不算失败</b>——
+              冒烟基座是随机的（<code>init_from: null</code>），见正文"前提缺席"；</li>
+            <li>第三步打印 <code>3 checks passed</code>——393,216 / 16 个挂点 / 占比 &lt;1% 三条断言全过。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按症状分流）</summary>
+            <p>
+              <b>第一步报 FileNotFoundError: out/pretrain_64.pth</b> → 教师权重缺失：先跑 M16 的
+              smoke_pretrain 200 步（或任何 tiny pretrain）把教师备好；<b>第一步卡在数据段、tok/s 只有几十</b> →
+              正常（SFT 逐条模板重编码 + 冷缓存，M16 讲过），耐心或减 max_steps；<b>第二步想看 loss 真的下降</b> →
+              给它一个会说话的基座：<code>--set train.init_from=full_sft</code>（需先有 out/full_sft_64.pth，M16 的 SFT 产物）；
+              <b>断言脚本 rank 不匹配</b> → 断言按 rank=16 写死，改 rank 请同步改期望值 16×挂点×2×r×768；
+              <b>想在 64M 上真跑</b> → 🎮 需 GPU：<code>configs/distill_64m.yaml</code> / <code>configs/lora_64m.yaml</code>，
+              注意两者的 <code>init_from: full_sft</code> 都要求 out/full_sft_768.pth 先在场。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        两个省钱术收进工具箱，第四篇只剩最后一站。到目前为止，模型所有的本事都来自<b>别人的数据</b>——
+        语料写好、偏好标好、教师的分布摆好。M19 走进强化学习：让模型<b>自己生成、自己试错</b>，
+        用奖励当唯一老师——rollout 的世界。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>知识蒸馏 <span class="en">knowledge distillation</span></dt><dd>用教师模型的输出训练学生模型。软标签版直接对齐教师的完整概率分布（KL 项），保留暗知识；M02 的 SFT 语料（Qwen 生成）是其"采样成文本"的硬标签版。α=0 时不需要标注数据。</dd>
+          <dt>软标签 / 硬标签 <span class="en">soft / hard label</span></dt><dd>硬标签 = one-hot 编号（只有一个 1）；软标签 = 完整概率分布。软标签多出的信息是错误答案之间的相对结构，每个位置的监督信号从 1 个数变成整个词表的 6400 个。</dd>
+          <dt>暗知识 <span class="en">dark knowledge</span></dt><dd>Hinton 术语：教师分布里"哪些错误答案也像样、彼此差多少"的结构。硬标签把它压成 0；温度软化把它放大到可学习的量级。</dd>
+          <dt>KL 散度 <span class="en">Kullback–Leibler divergence</span></dt><dd>KL(p‖q)=Σ p·log(p/q)≥0，两个分布相等时为 0；不对称。PyTorch 的 F.kl_div(input=log Q, target=P) 算的是 KL(P‖Q)——reborn 实际优化 KL(教师‖学生)，学生须覆盖教师每个高峰。</dd>
+          <dt>温度（蒸馏语境）<span class="en">temperature</span></dt><dd>与 M02 采样温度同一公式（logits/T 再 softmax），训练侧用来软化教学分布：T 大分布更平、类间结构暴露更多。配套 T² 系数补偿梯度尺度，见本课严谨卡。</dd>
+          <dt>LoRA <span class="en">low-rank adaptation</span></dt><dd>冻结基座，给方形 Linear 挂旁路 B(A(x))，ΔW≈B·A 低秩分解。reborn 只挂 in==out 的投影（GQA 下 q/o_proj，16 个挂点）；rank=16 时 393,216 参数 = 0.615%。merge 可写回主权重，推理零额外延迟。</dd>
+          <dt>秩 <span class="en">rank</span></dt><dd>旁路保留的独立方向数 r。参数量随 r 线性（每挂点 2·r·768）；r 越大能学的改动越复杂，r=hidden 时逼近全参的表达能力。"这次修改需要几个自由方向"的预算旋钮。</dd>
+          <dt>适配器 <span class="en">adapter</span></dt><dd>插在基座上、可单独保存分发的小型可训练模块。LoRA 适配器经 save_weights_fn 钩子单独落盘（12 KB 级），配一句基座名即可复现；一基座多适配器是多任务标准形态。</dd>
+          <dt>monkey-patch</dt><dd>运行时替换对象方法：apply_lora 把命中方阵判据的 Linear 的 forward 换成"原计算+旁路"，不改源码一行。代价：与 torch.compile 不兼容（官方已知），LoRA 配方保持 compile 关闭。</dd>
+          <dt>merge <span class="en">权重合并</span></dt><dd>W'=W+B·A 写回主权重并剔除所有 .lora. 键：输出与"基座+旁路"恒等（fp16 舍入级，实测 max|Δ|≈0.003），推理结构与基座完全相同。坑：merge 前没 apply_lora 会静默存出纯基座。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+  };
+</script>
+<script async src="assets/vendor/tex-svg.js"></script>
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

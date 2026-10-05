@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M01 · 课程导览与第一个绿灯 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m01">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第一篇 开箱</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M01</span><span>第一篇 · 开箱：用</span></div>
+        <h1>课程导览与第一个绿灯</h1>
+        <p class="lede">
+          在理解任何概念之前，先把武器拿在手里：装好环境、让一个 64 维的"tiny 模型"在 11 秒内跑完
+          pretrain→SFT→DPO 全链路。从这一刻起，你的每一步都有绿灯作证。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>无（课程起点）</b></span>
+          <span class="chip">时长：<b>约 45 分钟</b></span>
+          <span class="chip">新概念：<b>冒烟测试 · 配方（recipe）</b></span>
+          <span class="chip">对照：<code>Makefile</code> · <code>tools/verify_env.py</code> · <code>tools/train.py</code> · <code>configs/smoke/</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>说清这门课的学习方式：<b>跟读真实代码 + 动手跑 + 绿灯验收</b>三件事如何配合；</li>
+        <li>用 <code>uv</code> 一条命令装出锁定的 Python 环境，并用 <code>verify_env.py</code> 验证 torch/CUDA；</li>
+        <li>让数据集就位（<code>MINIMIND_REBORN_DATA_ROOT</code> 或 ModelScope 下载），并读懂数据缺失时的三要素报错；</li>
+        <li>跑通 <code>make smoke</code>——tiny 模型三阶段全链路，并<b>逐行读懂训练日志</b>在说什么；</li>
+        <li>用"重跑一次冒烟"亲手观察到 <b>resume-by-default</b>（默认断点续训）行为——为 M14 埋下伏笔。</li>
+      </ul>
+
+      <h2 id="how">这门课怎么学</h2>
+      <div class="callout note">
+        <div class="co-title">📐 先见三个词：pretrain · SFT · DPO</div>
+        <p>
+          导语里那串箭头是这门课的<b>主线三阶段</b>，先用一句话混个脸熟，后面每篇都会亲手做：
+          <b>pretrain（预训练）</b>＝喂海量文本，学会"文字接龙"——给定前文预测下一个词（M16）；
+          <b>SFT（Supervised Fine-Tuning，监督微调）</b>＝喂问答对话，学会"按对话格式好好回答"（M16）；
+          <b>DPO（Direct Preference Optimization，直接偏好优化）</b>＝喂"好答案 vs 坏答案"的对比，学会"挑更好的那种回答"（M17）。
+          现在只需记住：<b>三个阶段是接力赛，后一棒吃前一棒的权重</b>——冒烟日志里 DPO 段那句"起点：pretrain_64.pth"说的就是这件事。
+        </p>
+      </div>
+      <p>
+        这门课只有一个实现目标：<a href="codeview/README.md.html"><code>Reproduce/minimind_reborn</code></a>——
+        一个 64M 参数中文小模型的<b>工程化全流程训练项目</b>。我们不为你准备"教学专用玩具代码"：
+        你在课里读的每一行，都在真实仓库里服役；你跑的每一条命令，都是这个项目日常工作流的一部分。
+      </p>
+      <p>学习由三件事构成，每个模块都缺一不可：</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w120">环节</th><th>做什么</th><th class="u-w200">完成标志</th></tr></thead>
+          <tbody>
+            <tr><td><b>跟读</b></td><td>按模块精读 reborn 对应源码，页面上有逐段讲解与"为什么这么写"；</td><td>能向别人复述该模块的职责</td></tr>
+            <tr><td><b>动手</b></td><td>跑冒烟配方、改旋钮、先预测再观察（变式练习）；</td><td>终端里看到与页面一致的输出</td></tr>
+            <tr><td><b>验收</b></td><td>跑该模块的验收命令——多数直接复用 reborn 的 <b>85 个单元测试</b>（课程写作时实测，随仓库演进）或冒烟链路；</td><td><b>绿灯</b>（如 <code>5 passed</code>）</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout note">
+        <div class="co-title">📐 什么是"绿灯验收"？</div>
+        <p>
+          每个模块底部的<b>验收块</b>给出具体命令与可判定的通过标准（"3 passed"、"输出含 <code>已保存：pretrain_64.pth</code>"），
+          而不是"你理解了"。完成的定义是客观的——这是从参照课程继承的最重要的纪律之一。
+          本页的绿灯就是 <code>make smoke</code> 三段全绿。
+        </p>
+      </div>
+
+      <div class="callout tip">
+        <div class="co-title">💡 数字溯源：页面里的数字从哪来？</div>
+        <p>
+          本课程页面出现的每个数字（loss、耗时、参数量……）都有两种来源之一：
+          ① <b>作者实测</b>——附环境指纹（本文写作时：2×RTX 4090 · torch 2.14.0+cu130 · Python 3.12 · uv 0.12.5）；
+          ② <b>reborn 存档</b>——格式如 <code>[存档 runs/pretrain_64m/... · 2×RTX 4090]</code>。
+          你跑出的数字若与页面有微小差异（耗时、 tok/s），通常是硬件差异；<b>结构性数字</b>（参数量、初始 loss、测试数）应当一致。
+        </p>
+      </div>
+
+      <p>整个课程 22 个模块、6 篇，路线图如下（你也可以随时在左侧课程树或<a href="index.html#map">课程地图</a>里看到自己的位置）：</p>
+
+      <pre class="ascii"><code>第一篇 开箱·用     M01 ── M02 ── M03                「把模型跑起来，画出全链路地图」
+                     ↑ 你在这里
+第二篇 模型·造     M04 ── M05 ── M06 ── M07 ── M08 ── M09 🏁A   自底向上读模型源码
+第三篇 数据        M10 ── M11 ── M12                       语料 → 样本 → loss mask
+第四篇 训练        M13 ── M14 ── M15 ── M16 🏁B ── M17 ── M18 ── M19   基座到对齐全家桶
+第五篇 推理·评测   M20 ── M21                              白箱推理 + 给模型打分
+第六篇 毕业        M22 🏁C                                  全链路一条命令 + 毕业小实验</code></pre>
+
+      <h2 id="target">先认识实现目标：minimind_reborn</h2>
+      <p>
+        <b>minimind_reborn</b> 是开源项目 minimind 的工程化重构。64M 参数（hidden 768 × 8 层，词表 6400），
+        覆盖八种训练范式与完整推理栈。它和官方版本的关键区别（也是本课程的看点）：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>维度</th><th>官方 minimind</th><th>minimind_reborn（本课程主线）</th></tr></thead>
+          <tbody>
+            <tr><td>配置</td><td>每个脚本一套 argparse</td><td>分域 dataclass + YAML <b>配方</b> + CLI 覆盖（M04 专讲）</td></tr>
+            <tr><td>训练范式</td><td>pretrain/SFT/DPO/LoRA 等</td><td>8 种：+ 蒸馏、GRPO、PPO、Agent-RL，全部有冒烟配方</td></tr>
+            <tr><td>测试</td><td>无</td><td><b>85 个</b>（写作时实测）CPU 快速单元测试（验收锚点）</td></tr>
+            <tr><td>权重</td><td>—</td><td>与官方 <b>state_dict 逐键兼容</b>（官方权重可直接加载，M09 验证）</td></tr>
+            <tr><td>分布式</td><td>torchrun DDP</td><td>DDP + no_sync 梯度累积修复（M15 专讲，吞吐提升 31%）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[事实核对]</b> 85 测试（2026-10-01 实测；课程早期记录为 49，随仓库长上下文工作扩容）· 8 冒烟配方 · 64M≈63.91M 参数 · 官方权重 strict 互通——均可在 <a href="codeview/README.md.html"><code>Reproduce/minimind_reborn/README.md</code></a> 与 <code>tests/</code> 目录核对。</p>
+
+      <h2 id="env">环境准备：uv 与锁定环境</h2>
+      <p>
+        reborn 用 <a href="https://docs.astral.sh/uv/" target="_blank" rel="noopener noreferrer">uv</a> 管理依赖——
+        <code>uv.lock</code> 锁定全部版本，任何人任何时候装出的环境<b>逐位一致</b>。这是可复现性的第一块地基。
+      </p>
+      <div class="codeblock"><div class="code-head"><span>Shell · 在仓库任意父目录执行</span><span class="lang">bash</span></div><pre class="code"><code><span class="c"># 1. 安装 uv（已装可跳过；Linux/macOS）</span>
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+<span class="c"># 2. 进入 reborn 仓库，安装锁定环境（含开发工具）</span>
+<span class="c">#    首次会自动创建 .venv 并下载 torch 等依赖，约几分钟</span>
+cd Reproduce/minimind_reborn
+uv sync --extra dev</code></pre></div>
+
+      <p>装完第一件事：验证 torch 与 CUDA 可用——</p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">make verify-env</span>
+<span class="out">torch: 2.14.0+cu130 | cuda runtime: 13.0
+GPU 可用: True
+设备数: 2
+设备名: NVIDIA GeForce RTX 4090
+矩阵乘 OK: True</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-29 · 2×RTX 4090 · uv 0.12.5]</b> 无 GPU 的机器上输出会是 <code>GPU 可用: False</code>——<b>不影响本课程主线</b>（tiny 配方 CPU 可跑），只有 🎮 选做的 64M 实训需要 GPU。</p>
+
+      <h2 id="data">数据就位</h2>
+      <p>
+        训练数据不进 git 仓库，reborn 用一个环境变量告诉代码"数据根目录在哪"：
+        <code>MINIMIND_REBORN_DATA_ROOT</code>（未设置时默认 <code>~/Code/WorkSpace/minimind-reproduce/dataset</code>，
+        见 <code>src/minimind_reborn/envs.py</code>）。两种就位方式任选：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>方式 A：已有数据目录 → 指过去（加进 ~/.bashrc 持久化）</span><span class="lang">bash</span></div><pre class="code"><code>export MINIMIND_REBORN_DATA_ROOT=/path/to/dataset
+
+<span class="c"># 方式 B：从 ModelScope 下载（国内直连）</span>
+uv run python tools/download_data.py --name pretrain_t2t_mini
+uv run python tools/download_data.py --name sft_t2t_mini
+uv run python tools/download_data.py --name dpo_mini</code></pre></div>
+
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：数据没就位就开跑？</div>
+        <ul class="pit-stages">
+          <li class="sym">训练启动时抛出 <code>FileNotFoundError</code>，末行提到一个你从没创建过的路径。</li>
+          <li class="cause"><code>MINIMIND_REBORN_DATA_ROOT</code> 未设置或指向的目录里没有该数据集文件。</li>
+          <li class="fix">照报错做即可——reborn 的报错是"三要素"式的（作者实测，值得停下来欣赏）：</li>
+        </ul>
+        <pre class="term"><code><span class="err">FileNotFoundError: 数据集文件不存在：/tmp/nonexistent_data/pretrain_t2t_mini.jsonl
+（注册名 'pretrain_t2t_mini'）。请检查 MINIMIND_REBORN_DATA_ROOT
+或运行 tools/download_data.py --name pretrain_t2t_mini 从 modelscope 下载</span></code></pre>
+        <p class="pit-note">缺什么（文件路径）、叫什么（注册名）、怎么办（两种解法）——一句废话没有。M11 讲数据注册表时你会看到这条消息是怎么生成的。</p>
+      </div>
+
+      <h2 id="smoke">第一个绿灯：make smoke</h2>
+      <p>
+        万事俱备。现在跑整个课程的第一条核心命令——<b>tiny 模型全链路冒烟</b>：
+        一个 64 维 2 层的迷你模型（0.53M 参数），把 pretrain→SFT→DPO 三阶段各跑几步，11 秒内验证整条管线无断点。
+      </p>
+
+      <div class="callout tip">
+        <div class="co-title">💡 概念卡：冒烟测试（smoke test）</div>
+        <p>
+          一句话：<b>用最小的代价验证"整条链路能通"，而不是"每一步都做对"</b>。
+          词源是电子工程——新电路板第一次通电，先看冒不冒烟，再谈性能。
+          在 ML 工程里，冒烟 = tiny 模型 + 少量步数 + 全流程串联：数据加载、前向、反向、保存、续训每一环都碰到一下。
+          它跑得快（秒级），所以你敢在每次改动后都跑一遍——这正是 reborn 把它做成 <code>make smoke</code> 的原因。
+        </p>
+      </div>
+
+      <p>执行（在 <code>Reproduce/minimind_reborn/</code> 目录下）：</p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">make smoke</span>
+<span class="dim">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml</span>
+<span class="out">15:06:17 | INFO    | minimind.train | 配方=smoke_pretrain stage=pretrain overrides=[]</span>
+<span class="out">15:06:20 | INFO    | minimind.env | 环境指纹：{&#34;torch&#34;: &#34;2.14.0+cu130&#34;, &#34;cuda_runtime&#34;: &#34;13.0&#34;, &#34;gpu&#34;: [...], &#34;seed&#34;: 42}</span>
+<span class="out">15:06:20 | INFO    | minimind.trainer | 训练启动 stage=pretrain recipe=smoke_pretrain | 0.53M 可训练参数 | dtype=bf16 device=cuda world=1 | 数据=pretrain_t2t_mini</span>
+<span class="out">15:06:20 | INFO    | minimind.trainer | Epoch[1/2](2/317242) loss=8.7871 lr=4.70e-04 grad_norm=0.71 tok/s=2494 mfu=0.0% eta=814.2min</span>
+<span class="out">15:06:20 | INFO    | minimind.trainer | Epoch[1/2](4/317242) loss=8.7595 lr=2.75e-04 grad_norm=0.68 tok/s=49402 mfu=0.1% eta=427.7min</span>
+<span class="out">15:06:20 | INFO    | minimind.trainer | Epoch[1/2](6/317242) loss=8.7654 lr=8.01e-05 grad_norm=0.78 tok/s=81198 mfu=0.2% eta=293.4min</span>
+<span class="out">15:06:20 | INFO    | minimind.trainer | 达到 max_steps=6 截断（冒烟/调试预算）</span>
+<span class="out">15:06:20 | INFO    | minimind.trainer | 已保存：pretrain_64.pth（epoch=1 step=6 best_val=None）</span>
+<span class="out">15:06:20 | INFO    | minimind.trainer | 评估：val/loss=8.7748（固定 2 batch）</span>
+<span class="out">15:06:20 | INFO    | minimind.trainer | 已保存：pretrain_64.pth + best（epoch=1 step=6 best_val=8.774835109710693）</span>
+<span class="out">15:06:20 | INFO    | minimind.trainer | 训练结束：best_val_loss=8.774835109710693 optimizer_steps=3</span>
+<span class="dim">uv run python tools/train.py configs/smoke/smoke_sft.yaml</span>
+<span class="out">15:06:24 | INFO    | minimind.trainer | 续训恢复清单：epoch=0 step=60 best_val=7.871570110321045 optimizer=['state','param_groups'] scaler=ok（恢复清单让加载错误第一步现形）</span>
+<span class="out">15:06:24 | INFO    | minimind.trainer | 训练启动 stage=sft recipe=smoke_sft | 0.53M 可训练参数 | dtype=bf16 device=cuda world=1 | 数据=sft_t2t_mini</span>
+<span class="out">15:06:25 | INFO    | minimind.trainer | 已保存：full_sft_64.pth（epoch=1 step=61 best_val=7.871570110321045）</span>
+<span class="dim">uv run python tools/train.py configs/smoke/smoke_dpo.yaml</span>
+<span class="out">15:06:28 | INFO    | minimind.dpo | DPO 起点：pretrain_64.pth | beta=0.150</span>
+<span class="out">15:06:28 | INFO    | minimind.trainer | 严格加载起点权重：out/pretrain_64.pth</span>
+<span class="out">15:06:28 | INFO    | minimind.trainer | Epoch[1/2](1/8583) loss=0.6931 lr=5.00e-04 grad_norm=0.00 tok/s=1956 mfu=0.0% eta=37.4min</span>
+<span class="out">15:06:28 | INFO    | minimind.trainer | Epoch[1/2](2/8583) loss=0.6931 lr=4.34e-04 grad_norm=6.05 tok/s=82599 mfu=0.2% eta=19.2min</span>
+<span class="out">15:06:28 | INFO    | minimind.trainer | Epoch[1/2](4/8583) loss=0.6908 lr=1.16e-04 grad_norm=7.61 tok/s=102373 mfu=0.2% eta=9.9min</span>
+<span class="out">15:06:28 | INFO    | minimind.trainer | 已保存：dpo_64.pth（epoch=1 step=4 best_val=None）</span>
+<span class="out">15:06:28 | INFO    | minimind.trainer | 训练结束：best_val_loss=None optimizer_steps=4</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 完整日志 30 行，此处节选主干；你机器上的时间戳/tok/s 会不同，结构性内容（阶段顺序、权重名、loss 初值）应当一致。完整日志另见 <code>Reproduce/minimind_reborn/runs/smoke_*/</code>。</p>
+
+      <h3 id="smoke-reading">逐行读懂这份日志</h3>
+      <p>训练日志是这门课的"第二语言"。拿 pretrain 段的几行做精读：</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w44">日志片段</th><th>在说什么</th></tr></thead>
+          <tbody>
+            <tr><td><code>配方=smoke_pretrain stage=pretrain overrides=[]</code></td><td>本次运行的<b>配方文件</b>（YAML）与训练阶段；<code>overrides</code> 是 CLI 覆盖项，本课练习会用到。</td></tr>
+            <tr><td><code>环境指纹：{torch..., seed: 42}</code></td><td>把影响可复现性的版本信息打成一条指纹写进日志——出了问题能对出"当时是什么环境"。</td></tr>
+            <tr><td><code>0.53M 可训练参数 | dtype=bf16 | world=1</code></td><td>模型规模（64 维 2 层）、混合精度类型、进程数（world=1 单卡，M15 会变 2）。</td></tr>
+            <tr><td><code>loss=8.7871 … loss=8.7654</code></td><td><b>交叉熵损失</b>——衡量"模型给正确答案的概率"有多低：猜得越准损失越小。本课只需建立直觉（初值 <b>≈8.77</b> 不是随机数，测验 1 解释它），公式与训练力学 M13 专讲。</td></tr>
+            <tr><td><code>lr=4.70e-04 grad_norm=0.71</code></td><td><b>学习率</b>（每步参数更新的步长）与<b>梯度范数</b>（这步更新有多"猛"）——训练篇词汇，M13 逐个讲，本课当两个随步数变化的数字看即可。</td></tr>
+            <tr><td><code>Epoch[1/2](2/317242)</code></td><td>第 1 轮 / 共 2 轮；括号里是<b>当前步 / 全数据集总步数</b>——317242 是这个数据集按 batch 切完的总 micro 步数（冒烟只走 6 步就截断，离走完很远）。</td></tr>
+            <tr><td><code>tok/s=81198 mfu=0.2% eta=293.4min</code></td><td>吞吐、<b>MFU</b>（模型算力利用率，M13 专讲）、按当前速度估计的剩余时间。tiny 模型 MFU 低是正常的——它小到"喂不饱"GPU。</td></tr>
+            <tr><td><code>达到 max_steps=6 截断</code></td><td>配方里 <code>train.max_steps: 6</code> 生效：这是冒烟预算，不是训练终点。</td></tr>
+            <tr><td><code>已保存：pretrain_64.pth + best</code></td><td>权重落在 <code>out/pretrain_64.pth</code>（64 = hidden_size）。注意 DPO 段的 <code>DPO 起点：pretrain_64.pth</code>——<b>三阶段是链式的</b>，后一阶段吃前一阶段的产物。</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：make smoke 之外</div>
+        <p>
+          "改完代码跑一遍冒烟"在工业界是提交前的标准动作（常挂进 CI 的 pre-merge job）。
+          reborn 的 <code>Makefile</code> 把它固化成一条命令，等价于 CI 里跑
+          <code>pytest -m "not slow"</code> + 冒烟链路。你在本课程里会重复执行它几十次——每次大改动后，
+          11 秒换一个"管线没断"的确认，极其划算。
+        </p>
+      </div>
+
+      <div class="callout note">
+        <div class="co-title">📐 概念卡：配方（recipe）</div>
+        <p>
+          一句话：<b>一个 YAML 文件 = 一个可复现实验</b>，文件名即实验名。
+          <code>configs/smoke/smoke_pretrain.yaml</code> 只有 8 行——它只写与默认值<b>不同</b>的部分
+          （tiny 模型尺寸、6 步预算、数据集名），其余超参全部来自代码里的分域默认值。
+          三条铁律：配方只含差异、CLI <code>--set</code> 可临时覆盖、未知 key 直接报错。
+          M04 会带你通读整个配置系统——这是 reborn 与官方版本差异最大的一层。
+        </p>
+      </div>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · pretrain 的初始 loss 为什么是 8.77 左右？</summary>
+        <div class="quiz-body">
+          <p>刚初始化的模型对 6400 个词表中"下一个 token 是谁"一无所知。如果它把概率均匀撒给每个词，交叉熵应该是多少？动笔算算，再对照日志。</p>
+          <div class="quiz-ans">
+            <p><b>答案：</b>均匀分布的交叉熵 = <code>ln(6400) ≈ 8.7636</code>，与日志的 8.7871 几乎重合（差值来自随机初始化的不完全均匀）。</p>
+            <p><b>机制：</b>交叉熵 $-\sum p_i \log q_i$ 在 $q_i = 1/V$ 时等于 $\log V$。所以"初始 loss ≈ ln(词表大小)"是语言模型的通用体检指标——M09 组装模型后你会用它验证"组装没装错"。</p>
+            <p class="back">答错回看：<a href="#smoke-reading">逐行读懂这份日志</a> 中 loss 一行。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · DPO 段的 loss 为什么从 0.6931 开始？</summary>
+        <div class="quiz-body">
+          <p>提示：DPO 起点是刚加载的 <code>pretrain_64.pth</code>，它对"哪个回答更好"还没有任何偏好。0.6931 = ?</p>
+          <div class="quiz-ans">
+            <p><b>答案：</b><code>0.6931 = ln(2)</code>。DPO 的损失含 $-\log\sigma(\cdot)$ 项；<b>策略</b>（正在被训练的模型）与<b>参考模型</b>（冻结作对照的它自己，M17 详讲）此刻完全相同（还没训练），$\sigma(0)=0.5$，损失恰为 $-\log 0.5 = \ln 2$。</p>
+            <p><b>机制：</b>"和参考模型一样" = 对 chosen/rejected 五五开 = 猜硬币。M17 推 DPO 公式时这个数字会再次出现，它是所有偏好训练的"零点"。</p>
+            <p class="back">答错回看：<a href="#smoke">make smoke</a> 的 DPO 段日志 + <a href="#target">实现目标</a> 一节的范式表。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · 冒烟测试能证明"模型训练正确"吗？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>不能，它只证明<b>链路无断点</b>。tiny 模型 6 步训练的 loss 变化没有任何统计意义。正确性由 85 个单元测试（写作时实测）（形状、不变量、等价性）与验收实验保障，那是后面每个模块的"验收块"在做的事。两种手段互补：<b>冒烟抓"断了"，测试抓"错了"</b>。</p>
+            <p class="back">答错回看：<a href="#how">这门课怎么学</a> 三环节表 + <a href="#smoke">概念卡：冒烟测试</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · 重跑一次冒烟，会发生什么？</div>
+        <div class="ex-body">
+          <p>
+            刚才 <code>make smoke</code> 已经在 <code>out/</code> 留下了 <code>pretrain_64.pth</code> 等产物。
+            现在<b>不做任何清理</b>，单独重跑 pretrain 冒烟：
+          </p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml</span></code></pre>
+          <div class="ex-predict"></div>
+          <p>写下你的预测：会从头重训 6 步吗？日志会和第一次有何不同？然后执行，重点找两类行：<b>含"恢复/续训"字样的</b>和 <b>step 计数</b>。</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>
+              作者实测（同环境）：第二次运行<b>没有从零训练</b>——日志出现
+              <code>RNG 状态已恢复（位精确续训）</code> 与 <code>续训恢复清单：epoch=… step=… optimizer=[…]</code>，
+              step 计数从上次的 6 继续走而不是回到 1。
+            </p>
+            <p>
+              <b>机制：</b>reborn 的训练器 <b>resume-by-default</b>——只要 <code>checkpoints/</code> 里有上次的状态
+              （不只权重，还有优化器、调度器进度、随机数状态），就默认接续。想真从头训练？删掉对应 checkpoint 或 <code>--set train.resume=false</code>。
+            </p>
+            <p>
+              这是工程化项目与"脚本玩具"的分水岭之一：训练中断（机器宕机、kill -9）后能无损接续。
+              M14 会拆开那个"六件套 checkpoint"看每一件的作用，还会复现一次 kill -9 续训实验。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · 用 --set 把步数改成 4</div>
+        <div class="ex-body">
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.max_steps=4</span></code></pre>
+          <div class="ex-predict"></div>
+          <p>基于上一题的发现预测：这条命令会打印几行 loss 日志？为什么？执行验证。</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>
+              作者实测：一行 loss 都没有——因为上次已到 step 6，超过 max_steps=4，训练循环直接跳过并只做保存
+              （<code>达到 max_steps=4 截断</code>，<code>optimizer_steps=0</code>）。
+              这正是"配方只含差异、状态存在 checkpoint"两个设计叠加出的行为：
+              <b>配方说你最多走 4 步，而你已经走过了，于是一步都不再走</b>。
+              想看到 4 步从头训练，需要 <code>--set train.max_steps=4 train.resume=false</code>（或清掉 checkpoint）。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M01 验收</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下执行：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">make verify-env &amp;&amp; make smoke</span></code></pre>
+          <ul class="pass-criteria">
+            <li><code>verify_env</code> 输出 <code>矩阵乘 OK: True</code>（GPU 可用性不影响通过）；</li>
+            <li>smoke 三段（pretrain/sft/dpo）各出现 <code>已保存：…_64.pth</code>，无任何 <code>Traceback</code>；</li>
+            <li><code>ls out/</code> 能看到 <code>pretrain_64.pth</code>、<code>full_sft_64.pth</code>、<code>dpo_64.pth</code> 三个产物；</li>
+            <li>完成了变式练习 1 的预测与观察（哪怕预测错了——预测错了才有东西可学）。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按报错第一行分流）</summary>
+            <p>
+              <b>FileNotFoundError（数据集文件不存在）</b> → 回到<a href="#data">数据就位</a>一节，设 <code>MINIMIND_REBORN_DATA_ROOT</code> 或用 download_data.py；
+              <b>torch 相关 ImportError / CUDA error</b> → 确认 <code>uv sync --extra dev</code> 完整跑完，再跑 <code>uv run python tools/verify_env.py</code> 看细节；
+              <b>make: command not found</b> → Windows 用户请在 Git Bash / WSL 中运行，或直接执行 Makefile 里对应的三条 python 命令；
+              <b>smoke 单段失败</b> → 读该段日志第一行报错，多数是上一段产物缺失——按顺序重跑三段。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>冒烟测试 <span class="en">smoke test</span></dt><dd>tiny 模型 + 少量步数跑通全链路的快速验证，抓"断了"不抓"错了"。</dd>
+          <dt>配方 <span class="en">recipe</span></dt><dd>一个 YAML 文件 = 一个可复现实验；只写与默认值的差异，文件名即实验名。</dd>
+          <dt>绿灯验收</dt><dd>以具体命令输出（测试通过、日志行）为完成标准，而非"读懂了"。</dd>
+          <dt>环境指纹 <span class="en">env fingerprint</span></dt><dd>把 torch/CUDA/seed 等影响可复现性的版本信息写入日志的一条 JSON。</dd>
+          <dt>tiny 模型</dt><dd>缩小版模型配置（64 维 2 层，0.53M 参数），供测试与冒烟使用，CPU 可跑。</dd>
+          <dt>resume-by-default</dt><dd>检测到 checkpoint（六件套状态）时默认断点续训的行为约定。</dd>
+          <dt>MFU <span class="en">model FLOPs utilization</span></dt><dd>模型算力利用率：实际吞吐折算的 FLOPs ÷ 硬件峰值，M13 详讲。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+  };
+</script>
+<script async src="assets/vendor/tex-svg.js"></script>
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

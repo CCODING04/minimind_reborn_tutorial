@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M13 · 训练基座：Trainer 生命周期与可观测 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m13">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第四篇 训练</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M13</span><span>第四篇 · 训练</span></div>
+        <h1>训练基座：Trainer 生命周期与可观测</h1>
+        <p class="lede">
+          M12 备齐了五种范式的数据集，加上 M09 组装的模型，柴火与炉子都齐了——本课<b>点火</b>。
+          前两篇造的"模型"与"数据"，此刻被塞进同一台引擎：第四篇第一课拆开它——
+          所有八种训练范式<b>共用</b>的 <code>Trainer</code>。M01 冒烟日志里欠下的词
+          （lr / grad_norm / optimizer_steps / MFU / eta）今天全部兑现。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M12</b>（数据就绪；M09 的模型本课点火）</span>
+          <span class="chip">时长：<b>约 80 分钟</b></span>
+          <span class="chip">新概念：<b>训练循环生命周期 · 学习率调度</b></span>
+          <span class="chip">对照：<code>training/common/</code> · <code>tests/test_training/</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>画出 Trainer 的生命周期骨架（run → _train_epoch → evaluate → _save），说出范式唯一能注入的东西是什么；</li>
+        <li>区分 micro step 与 optimizer step，解释 6 个 micro step 在累积 2 下为何只记 3 个 optimizer step、grad_norm 为什么在 unscale 之后测；</li>
+        <li>手算 warmup→余弦调度在任意一步的 lr，并解释 reborn 把它写成"纯函数"换来什么；</li>
+        <li>说出 bf16 与 fp16 的分野（为什么 fp16 要 GradScaler 而 bf16 不要），用实测数字说明混合精度的收益随模型变大而放大；</li>
+        <li>打开任意一个 <code>runs/&lt;recipe&gt;/&lt;时间戳&gt;/</code> 目录，逐件指认四件套，用 MFU 公式解释 tiny 模型为何只有 0.1%。</li>
+      </ul>
+
+      <h2 id="lifecycle">一台引擎，八种范式</h2>
+      <p>
+        reborn 有八种训练范式（pretrain / SFT / DPO / 蒸馏 / LoRA / GRPO / PPO / Agent），但它们<b>不各写一个训练循环</b>。
+        循环、精度、梯度累积、裁剪、评估、保存——全部长在同一个类里：
+        <a href="codeview/src/minimind_reborn/training/common/trainer.py.html">training/common/trainer.py</a>
+        的模块 docstring 第一行就立了规矩：<i>"范式子包只提供 compute_loss(batch, model) -&gt; (loss, log_metrics) 与数据组装。
+        梯度/AMP/裁剪/续训/评估/保存的顺序与不变量固定在此处，任何范式不得绕过。"</i>
+      </p>
+      <p>
+        先看骨架，再逐段精读。<b>epoch</b>（轮）：把训练数据完整过一遍；一个 batch（批）：一次喂给模型的一组样本。
+        整个 <code>run()</code> 就是"epoch 循环 → 每 epoch 末评估 → 存档"三件事：
+      </p>
+      <pre class="ascii"><code>Trainer.run() 生命周期（trainer.py:184）—— 所有八种范式共用这一台引擎
+│
+├─ try:
+│   └─ for epoch in range(start_epoch, epochs)        ← 续训从存档的 epoch 接着数
+│       ├─ _train_epoch(epoch)                        ← 微观循环（本课主角）
+│       │   ├─ _build_loader：种子打乱 + SkipBatchSampler（续训对齐）
+│       │   ├─ CUDAPrefetcher：CUDA 侧流预取（CPU 设备自动旁路）
+│       │   └─ for batch in loader:                   ← 一个 micro step
+│       │       ├─ get_lr(全局步) → 写回 optimizer 的 lr
+│       │       ├─ autocast 里 compute_loss(batch, model)   ★范式唯一注入点
+│       │       ├─ (loss/累积步数).backward()          ← 梯度累积：先记账不动手
+│       │       ├─ 累积满：unscale_ → clip → step → zero_grad   ← optimizer step
+│       │       └─ 每 log_interval 步：metrics.jsonl + train.log
+│       ├─ evaluate()：固定 batch 算 val/loss（NaN batch 全过滤）
+│       ├─ _save(is_best)：刷新最优另存 _best；常规存档带 checkpoint 六件套【M14】
+│       └─ exhausted → break（max_steps 冒烟预算截断）
+│
+└─ finally: metrics.close() + 收尾总账（best_val_loss / optimizer_steps）</code></pre>
+
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/common/trainer.py.html">src/minimind_reborn/training/common/trainer.py</a> · run 全文（日志参数裁剪）</span><span class="lang">python</span></div><pre class="code"><code>def run(self) -&gt; None:
+    logger.info("训练启动 stage=%s recipe=%s | %.2fM 可训练参数 | dtype=%s device=%s ...", ...)
+    try:
+        for epoch in range(self.start_epoch, cfg.train.epochs):   # 续训：从存档 epoch 接着数
+            last_step, exhausted = self._train_epoch(epoch)       # 微观循环，见下节
+            val = self.evaluate()                                  # 每 epoch 收官评估
+            if val is not None:
+                improved = self.best_val_loss is None or val &lt; self.best_val_loss
+                if improved:
+                    self.best_val_loss = val
+                    self._save(epoch, last_step, is_best=True)     # 刷新最优 → 另存 _best
+            self._save(epoch, last_step)                           # 常规存档（六件套，M14 详拆）
+            if exhausted:                                          # max_steps 截断：冒烟/调试预算
+                break
+    finally:
+        self.metrics.close()                                       # 指标后端收尾（句柄必须关）
+        logger.info("训练结束：best_val_loss=%s optimizer_steps=%d", ...)</code></pre></div>
+      <p>
+        M01 冒烟日志的最后一行你见过 <code>训练结束：best_val_loss=8.7748… optimizer_steps=3</code>——
+        就是这行 finally 日志。<b>best_val_loss</b>（最优验证损失）驱动 <code>_save(is_best=True)</code>：
+        验证损失是"模型在没见过的数据上的表现"，比训练损失更能代表真实进步，所以最优权重按它另存一份。
+      </p>
+
+      <h3 id="micro">micro step 与 optimizer step：训练的两种"步"</h3>
+      <p>
+        本课第一个关键区分。跑一个 batch 的前向+反向，是一个 <b>micro step</b>（微步）；
+        优化器真正更新一次参数，是一个 <b>optimizer step</b>。两者之间隔着<b>梯度累积</b>
+        （gradient accumulation）：显存装不下大 batch 时，把一个大 batch 切成 N 份逐份算，
+        每份只把损失除以 N 记进梯度（<code>backward()</code> 是<b>累加</b>进 <code>.grad</code> 的，不清零就不覆盖），
+        N 份攒齐才动一次参数——等效于大 batch 训练。
+        <code>_train_epoch</code> 的核心二十行把整台引擎的机械结构都装进去了：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/common/trainer.py.html">src/minimind_reborn/training/common/trainer.py</a> · _train_epoch 主循环（裁剪）</span><span class="lang">python</span></div><pre class="code"><code>for offset, batch in enumerate(data_iter, start=start_step):
+    global_micro = epoch * full_iters + offset               # LR 调度用的全局 micro 步数
+    lr = get_lr(global_micro, total_micro, t.learning_rate,
+                warmup_steps=t.warmup_steps, min_ratio=t.lr_min_ratio)
+    for group in self.optimizer.param_groups:                # 不用 scheduler 对象：
+        group["lr"] = lr                                     #   直接把 lr 写回优化器
+
+    batch = _to_device(batch, self.device)                   # (B, T) 整批搬卡（non_blocking）
+    is_sync_step = (offset + 1) % t.gradient_accumulation_steps == 0 or is_last
+    sync_ctx = nullcontext() if (no_sync is None or is_sync_step) else no_sync()
+    with sync_ctx:                                           # DDP 梯度累积省通信【M15 详讲】
+        with self.autocast_ctx:                              # bf16/fp16 才生效；fp32 是空上下文
+            loss, log_metrics = self.compute_loss(batch, self.model)   # ★范式唯一注入点
+        scaled = loss / t.gradient_accumulation_steps        # 累积：每份只记账 1/N
+        self.scaler.scale(scaled).backward()
+
+    if is_sync_step:                                         # 累积满（或最后一步）→ 优化步
+        self.scaler.unscale_(self.optimizer)                 # 先还原真实梯度，裁剪阈值才有意义
+        last_grad_norm = torch.nn.utils.clip_grad_norm_(params, t.grad_clip)
+        self.scaler.step(self.optimizer)                     # bf16：直通 step；fp16：查 inf/nan 才放行
+        self.scaler.update()
+        self.optimizer.zero_grad(set_to_none=True)           # 引用置 None：省内存，不留僵尸梯度
+        self.optimizer_steps += 1</code></pre></div>
+      <p>
+        三个"为什么"值得逐个过：<b>① loss 为什么要除以累积步数？</b>backward 累加不平均，
+        不除的话累积 N 份的梯度是单份的 N 倍，等效 batch 大了梯度也大了，lr 语义就变了。
+        <b>② unscale_ 为什么在裁剪之前？</b>fp16 下 scaler 把梯度整体放大了 65536 倍（下节详讲），
+        此时的"梯度范数"是虚胖的——先还原真实大小，<code>clip_grad_norm_</code>（梯度范数裁剪：
+        当所有参数梯度的总模长超过阈值 <code>grad_clip=1.0</code> 时等比例缩小，防某一步的坏梯度把参数打飞）
+        的阈值语义才成立。<b>③ zero_grad(set_to_none=True)？</b>把 <code>.grad</code> 引用直接置空
+        而不是写零张量——省一块显存，也让下一步 backward 必须重新分配（不留上一步的僵尸梯度）。
+      </p>
+      <p>
+        账目上：M01 冒烟跑了 <code>max_steps=6</code> 个 micro step、累积 2，所以
+        <code>optimizer_steps=3</code>——6 ÷ 2 = 3，参数真的只动过 3 次。
+        <b>metrics.jsonl 里所有曲线的 x 轴都用 optimizer step</b>（这把尺子统一是 2026-09-24 修的缺陷，猎场见）。
+      </p>
+
+      <h3 id="iso">同构：范式只提供 compute_loss</h3>
+      <p>
+        预训练范式对这台引擎的全部"定制"，是一个 37 行的 workflow 文件（M16 说的"37 行母版"就是它）：
+        组装三件套 + 一个 compute_loss 闭包：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/pretrain/workflow.py.html">src/minimind_reborn/training/pretrain/workflow.py</a> · run 全文（组装段）</span><span class="lang">python</span></div><pre class="code"><code>def run(cfg, *, device=None, local_rank=0) -&gt; Trainer:
+    setup_logging(cfg.run_dir)
+    tokenizer = load_tokenizer()                     # 四件组装：tokenizer
+    model = build_model(cfg, tokenizer)              #   模型（先过词表断言）
+    train_ds, eval_ds = build_lm_dataset(cfg, tokenizer, kind="pretrain")   #   数据集
+    def compute_loss(batch, m):                      #   ★损失 = 与引擎的全部接口
+        out = m(batch["input_ids"], labels=batch["labels"])
+        loss = out.loss + out.aux_loss               # aux 仅 MoE 非零（M08）；dense 恒 0
+        return loss, {"train/loss": out.loss.item(), "train/aux_loss": float(out.aux_loss)}
+    trainer = Trainer(cfg, model, tokenizer, train_ds, eval_ds,
+                      compute_loss=compute_loss, save_weight="pretrain", ...)
+    trainer.run()                                    # 之后的一切都是基座的事
+    return trainer</code></pre></div>
+      <p>
+        DPO 的 compute_loss 吃 <code>{x, y, mask}</code> 三个张量、RL 的吃 <code>messages</code> 列表——
+        但循环骨架、lr、AMP、裁剪、保存<b>一字不改</b>。引擎对 batch 的内容只有一个假设：
+        "取第一个张量字段的 batch 维当 token 数"（trainer.py:278）。
+        这就是 M16 要展开的"37 行母版"同构之美，本课先把引擎本体看透。
+      </p>
+      <p>
+        组装段里的三个助手来自
+        <a href="codeview/src/minimind_reborn/training/common/setup.py.html">training/common/setup.py</a>：
+        <code>load_tokenizer</code> 从 <code>assets/tokenizer/</code> 加载（M10 造的那份）；
+        <code>assert_vocab_match</code> 是 M02 见过的双源断言训练版——模型词表 6400 与 tokenizer 对不上直接
+        <code>ValueError</code> 拒绝训练；<code>build_lm_dataset</code> 走 M11 的 registry 按名字找到语料文件。
+        <b>SkipBatchSampler</b>（trainer.py:39）解决续训对齐：断点存在 epoch 中间时，重跑的数据顺序必须和
+        断点前<b>完全一致</b>（同 seed 打乱），只是跳过前 k 个 batch 不产出——被跳过的样本连加载都不发生。
+        它和 checkpoint 六件套是一对，M14 一起拆。
+      </p>
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：HF Trainer、accelerate 与"母版循环"</div>
+        <p>
+          把训练循环收敛成一个基类 + 回调，是工业界共同的选择：HuggingFace 的 <code>Trainer</code>
+          用几十个回调点（on_step_end、on_epoch_end…）换可插拔，代价是控制流散在回调里、
+          debug 要追注册表。reborn 反其道：接口收到只剩一个 <code>compute_loss</code>，
+          循环骨架永远可读——教学项目要的是"一眼看穿"，不是"万能插槽"。
+          预取器 <code>CUDAPrefetcher</code>（<a href="codeview/src/minimind_reborn/training/common/prefetch.py.html">prefetch.py</a>，
+          YOLOX 同款模式）也是这个路数：用一条独立 CUDA 流（stream：GPU 上的并行任务队列）提前把下一批数据
+          拷到卡上，数据传输与当前步的计算重叠——CPU 设备自动旁路，不引入"GPU 之外无预取语义"的假象。
+        </p>
+      </div>
+
+      <h2 id="lr">学习率调度：一个 15 行的纯函数</h2>
+      <p>
+        M01 说 lr（学习率）是"每步参数更新的步长"。它不该是常数：训练开局模型还很乱，
+        大步长会把参数打飞；训练后期接近收敛，需要小步长精修。
+        <b>学习率调度</b>（LR schedule）就是"步长随进度变化的方案"。reborn 不用 PyTorch 的
+        <code>lr_scheduler</code> 对象，而是
+        <a href="codeview/src/minimind_reborn/training/common/lr.py.html">lr.py</a> 里一个 15 行纯函数
+        （纯函数：只吃参数返回结果、不碰任何外部状态的函数）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/common/lr.py.html">src/minimind_reborn/training/common/lr.py</a> · get_lr 全文</span><span class="lang">python</span></div><pre class="code"><code>def get_lr(step, total_steps, base_lr, *, warmup_steps=0, min_ratio=0.1) -&gt; float:
+    """warmup 线性爬升 → 余弦衰减到 base_lr·min_ratio（官方 get_lr 的地板语义保留）。"""
+    if total_steps &lt;= 0:
+        return base_lr
+    if warmup_steps &gt; 0 and step &lt; warmup_steps:
+        return base_lr * (step + 1) / warmup_steps          # 阶段一：线性爬坡
+    progress = min((step - warmup_steps) / max(total_steps - warmup_steps, 1), 1.0)
+    return base_lr * (min_ratio + (1 - min_ratio) * 0.5 * (1 + math.cos(math.pi * progress)))
+    #      ↑ 阶段二：余弦从 base_lr 光滑滑到 base_lr×0.1（地板），越界钳在 progress=1</code></pre></div>
+      <p>两段拼起来，公式是：</p>
+        $$ \mathrm{lr}(s) = \mathrm{base}\cdot\begin{cases}\dfrac{s+1}{W} &amp; s &lt; W \quad\text{（warmup：线性爬升）}\\[8pt] \rho + (1-\rho)\cdot\dfrac{1+\cos\!\big(\pi\,p\big)}{2} &amp; s \ge W \end{cases}\qquad p=\min\!\Big(\tfrac{s-W}{T-W},\,1\Big),\;\; \rho=\text{min\_ratio}=0.1 $$
+      <p>
+        <b>warmup</b>（预热）：前 W 步让 lr 从 0 线性爬到 base——因为 AdamW 开局时对每个参数的
+        "梯度波动幅度"估计还是零（下节展开），头几步的更新量天然失衡，先小步走几步等统计量稳定。
+        <b>余弦衰减</b>（cosine decay）：之后按余弦曲线光滑滑落，最终停在 <code>base×0.1</code> 的地板
+        ——不是降到 0：训练末段仍要留一点步长，否则最后几步等于白跑。
+        真跑 11 个采样点（base=5e-4、总步 60、warmup 10，与 64M 配方同底）：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w44">step</th><th class="u-w130">lr</th><th>曲线（长度 ∝ lr）</th><th class="u-w130">阶段</th></tr></thead>
+          <tbody>
+            <tr><td>0</td><td>5.000e-05</td><td><code>####</code></td><td>warmup</td></tr>
+            <tr><td>6</td><td>3.500e-04</td><td><code>############################</code></td><td>warmup</td></tr>
+            <tr><td>12</td><td>4.982e-04</td><td><code>########################################</code></td><td>cosine</td></tr>
+            <tr><td>18</td><td>4.722e-04</td><td><code>######################################</code></td><td>cosine</td></tr>
+            <tr><td>24</td><td>4.184e-04</td><td><code>#################################</code></td><td>cosine</td></tr>
+            <tr><td>30</td><td>3.445e-04</td><td><code>############################</code></td><td>cosine</td></tr>
+            <tr><td>36</td><td>2.609e-04</td><td><code>#####################</code></td><td>cosine</td></tr>
+            <tr><td>42</td><td>1.792e-04</td><td><code>##############</code></td><td>cosine</td></tr>
+            <tr><td>48</td><td>1.110e-04</td><td><code>#########</code></td><td>cosine</td></tr>
+            <tr><td>54</td><td>6.580e-05</td><td><code>#####</code></td><td>cosine</td></tr>
+            <tr><td>60</td><td>5.000e-05</td><td><code>####</code></td><td>cosine（地板 = base×0.1）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 脚本 /tmp/m13_lr_curve.py 调 get_lr 原函数]</b>
+      每行调用 <code>get_lr(step, 60, 5e-4, warmup_steps=10, min_ratio=0.1)</code> 打印；bar 长度 = lr/base×40 取整。
+      两段在 s=W 处严丝合缝：warmup 末步（step 9，未采样）与余弦起点都恰为 base——表里 step 12 的 4.98e-04
+      已经是余弦起滑后的值，采样间隔 6 让"峰值平台"看起来缩成了一两个点。</p>
+      <p>
+        再拿 M01 那行冒烟日志验算：<code>lr=4.70e-04 → 2.75e-04 → 8.01e-05</code>。
+        冒烟配方 <code>max_steps=6</code>、warmup 0，所以 total=6、余弦被压缩到 6 步内走完；
+        三个日志点分别是 micro 1、3、5：$5\times10^{-4}\times(0.1+0.45\times(1+\cos(\pi/6)))=4.70\times10^{-4}$，
+        $\cos(\pi/2)$ 处 $=2.75\times10^{-4}$，$\cos(5\pi/6)$ 处 $=8.01\times10^{-5}$——逐位对上。
+        我今天重跑同配方，lr 序列<b>一模一样</b>（seed=42 确定性调度：lr 只依赖步数，不依赖任何随机性）。
+      </p>
+
+      <h3 id="purefn">为什么是纯函数：可单测、可复现、无状态可漂移</h3>
+      <p>
+        <code>lr_scheduler</code> 对象把"当前走到第几步"藏在对象内部状态里——每调一次 <code>step()</code> 它变一点，
+        出了问题你得审对象的一生。纯函数没有这层：<b>lr 是 (step, total, base, …) 的函数</b>，
+        想知道任意一步的 lr，算就是了；想断言"训练结束恰好在地板上"，直接调函数末步。
+        <a href="codeview/tests/test_training/test_common.py.html">test_common.py</a> 前两个用例锁的正是语义：
+        <code>test_lr_official_cosine_floor_semantics</code> 断言与官方公式 <code>lr*(0.1+0.45*(1+cos(pi*t)))</code>
+        逐位一致（误差 &lt; 1e-12），<code>test_lr_warmup_and_clamp</code> 锁 warmup 首步/末步与越界钳制。
+      </p>
+      <p>
+        纯函数还有个隐藏收益：<b>分母口径错了，测试能抓</b>。
+        <a href="codeview/tests/test_training/test_lr_schedule.py.html">test_lr_schedule.py</a>
+        记录了一个真实缺陷（2026-09-29 perf_analysis 案 B）：双卡 DDP（DistributedDataParallel，数据并行多卡训练，
+        M15 详讲）下每卡每 epoch 只迭代全量的 1/world，而余弦分母此前按全量算——
+        2 个 epoch 跑完 lr 只退到 75% 进度处（≈lr×0.23），到不了地板。
+        修复是 <code>per_rank_full_iters()</code>（trainer.py:82）按本 rank 口径折算分母；
+        <code>test_old_bug_signature_locked</code> 把旧口径的错值 ≈2.32e-6 钉成"回归签名"——
+        这个数字再出现，就是 bug 回来了。<b>单卡 world=1 时两种口径恰好一致</b>，所以 mini 时代从未暴露：
+        又一个"单卡测不出、多卡才现形"的案例。
+      </p>
+
+      <h2 id="amp">AMP 混合精度：bf16 与 fp16 的分野</h2>
+      <p>
+        <b>AMP</b>（Automatic Mixed Precision，自动混合精度）：矩阵乘这类大数值吞吐的算子跑低精度
+        （省一半显存与带宽、快一倍），敏感的归约仍留在 fp32——PyTorch 的 <code>autocast</code> 上下文自动逐算子分派，
+        你只需选 16 位类型。M05 见过 bf16 的位宽（8 位指数 + 7 位尾数），这里把它和 fp16 摆在一起看关键差异：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th></th><th class="u-w130">指数位</th><th class="u-w130">尾数位</th><th class="u-w130">最小正规数</th><th>训练要 GradScaler？</th></tr></thead>
+          <tbody>
+            <tr><td><b>bf16</b></td><td>8（同 fp32）</td><td>7</td><td>≈1.2e-38</td><td>不要——动态范围与 fp32 同宽</td></tr>
+            <tr><td><b>fp16</b></td><td>5</td><td>10</td><td>≈6.1e-5</td><td>要——小梯度会下溢为 0</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        fp16 尾数更精（10 位），但指数只有 5 位：绝对值小于 ~6.1e-5 的数在 fp16 里<b>直接变成 0</b>。
+        深网络反向传播到浅层时梯度经常就是这个量级——消失的梯度不会报错，参数只是<b>静默不学</b>。
+        bf16 砍尾数保指数，动态范围和 fp32 一样宽，天生不需要补救。两分钟实机验证：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m13_underflow.py · 同一条小梯度在三种 dtype 下的命运</span><span class="lang">python</span></div><pre class="code"><code>import torch
+g = torch.tensor([2.0e-8], device="cuda")      # 一条典型的小梯度（fp32 里安然无恙）
+print("fp32      : %.3e" % g.item())
+print("fp16 直连 :", g.half().item(), " ← 下溢为 0")
+print("bf16 直连 : %.3e" % g.bfloat16().item(), " ← 保住（指数位与 fp32 同宽）")
+print("fp16×65536: %.4f" % (g * 65536).half().item(), " ← GradScaler 的活：先放大再表示")
+s = torch.amp.GradScaler(device="cuda")
+print("scaler 初始 scale =", s.get_scale(), "（之后按 inf/nan 探测动态升降）")</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m13_underflow.py</span>
+<span class="out">fp32      : 2.000e-08</span>
+<span class="out">fp16 直连 : 0.0 ← 下溢为 0</span>
+<span class="out">bf16 直连 : 2.002e-08 ← 保住（指数位与 fp32 同宽）</span>
+<span class="out">fp16×65536: 0.0013 ← GradScaler 的活：先放大再表示</span>
+<span class="out">scaler 初始 scale = 65536.0 （之后按 inf/nan 探测动态升降）</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 2×RTX 4090 · torch 2.14.0+cu130]</b>
+      <b>GradScaler</b>（梯度缩放器）的工作就是最后一行：把 loss 乘上 65536（梯度随损失等比放大），
+      让原本下溢的小梯度落进 fp16 能表示的区间；优化器更新前再除回去——而"除回去"之前若发现梯度里有
+      inf/nan（放大过头溢出了），这一步直接跳过并调小 scale。整套机制只对 fp16 有意义。</p>
+      <p>
+        reborn 把这三个决定收进
+        <a href="codeview/src/minimind_reborn/training/common/amp.py.html">amp.py</a> 的 43 行里，
+        训练循环只使用、不判断：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/common/amp.py.html">src/minimind_reborn/training/common/amp.py</a> · 三个入口全文（docstring 裁剪）</span><span class="lang">python</span></div><pre class="code"><code>def resolve_dtype(name: str) -&gt; torch.dtype:
+    """配置字符串 → torch dtype；设备不支持 bf16 时回退 fp16 并留痕。"""
+    if name == "fp32":
+        return torch.float32
+    if name == "bf16":
+        if torch.cuda.is_available() and not torch.cuda.is_bf16_supported():
+            logger.warning("当前 GPU 不支持 bf16，AMP 回退 fp16（降级留痕）")   # 老卡（如 V100）路线
+            return torch.float16
+        return torch.bfloat16
+    if name == "fp16":
+        return torch.float16
+    raise ValueError(f"未知精度 {name!r}（守门人应已拦截，说明绕过了 loader）")
+
+def autocast_context(dtype: torch.dtype, device: str):
+    """autocast 上下文：CPU 或 fp32 时 nullcontext（空操作），否则 cuda autocast。"""
+    if device.startswith("cuda") and dtype in (torch.bfloat16, torch.float16):
+        return torch.autocast(device_type="cuda", dtype=dtype)
+    return nullcontext()
+
+def build_scaler(dtype: torch.dtype) -&gt; torch.amp.GradScaler:
+    """scaler 恒创建，enabled 只认 fp16——scaler 的 step/update 调用次数与 optimizer 对齐。"""
+    return torch.amp.GradScaler(enabled=(dtype == torch.float16))</code></pre></div>
+      <p>
+        <code>resolve_dtype</code> 的回退链你在 M02/M03 见过推理版（CPU 上 bf16→fp32）；训练版的回退方向不同：
+        GPU 不支持 bf16（Ampere 之前的老卡）就退 <b>fp16 + GradScaler</b>，降级必须打一行警告留痕。
+        注意最后那行注释——<b>scaler 无论什么精度都创建</b>，只是 <code>enabled=False</code> 时它变成透传
+        （<code>scale(loss)</code> 原样返回、<code>step()</code> 直通优化器）。于是训练循环里
+        <code>scaler.scale(...).backward()</code> 一套代码三种精度通吃，一个 <code>if dtype ==</code> 都不用写。
+      </p>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：scaler 与精度错配——要么静默丢梯度，要么白付开销</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            两种长相。A：fp16 训练不开 scaler——loss 不 NaN、日志正常，但浅层梯度下溢成 0，
+            模型"在跑却不在学"，几小时后从 loss 曲线不动才发现；B：bf16 训练挂了
+            <code>enabled=True</code> 的 scaler——一切照常，你白付每步两次额外检查/缩放，还可能因
+            假 inf 跳步。两种都不报错。
+          </li>
+          <li class="cause">
+            根子是把"16 位"当成一种精度。fp16 指数 5 位、最小正规数 ~6.1e-5，深网梯度常态性低于它
+            （上面的实测：2e-8 → 0.0）；bf16 指数 8 位与 fp32 同宽，根本没有这个坑，挂 scaler 属于
+            给不需要急救的病人上呼吸机。amp.py 模块 docstring 把这两条列为 anti-patterns §训练 的前两行。
+          </li>
+          <li class="fix">
+            reborn 的解法是<b>恒创建 + enabled 开关</b>（build_scaler 一行），错配在构造期就消灭。
+            顺带的实测发现：tiny 模型上 fp16 反而<b>最慢</b>（7.29 ms/步 vs bf16 3.46）——
+            每步 ~3ms 里 scaler 的簿记（unscale、inf 探测、状态更新）成了重税；
+            到 64M 模型步子变大，簿记摊薄，fp16 才回到与 bf16 相当。
+          </li>
+        </ul>
+      </div>
+      <p>混合精度到底快多少？拿 Trainer 同款机制（resolve_dtype→autocast→scaler）实测两种规模：</p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m13_bench_dtype.py · 同一步训练（前向+反向+优化）跨 dtype 计时（节选）</span><span class="lang">python</span></div><pre class="code"><code>def bench(cfg_kwargs, dtype_name, steps=30, warmup=8, B=4, T=96):
+    model = MiniMindForCausalLM(MiniMindConfig(**cfg_kwargs)).cuda().train()
+    dtype = resolve_dtype(dtype_name)
+    ctx = autocast_context(dtype, "cuda")          # fp32 → 空上下文
+    scaler = build_scaler(dtype)                    # fp32/bf16 → enabled=False 透传
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    x = torch.randint(0, 6400, (B, T), device="cuda")    # (B, T)：假语料，只测计算耗时
+    def one_step():
+        with ctx:
+            loss = model(x, labels=x).loss
+        scaler.scale(loss).backward()
+        scaler.step(opt); scaler.update(); opt.zero_grad(set_to_none=True)
+    for _ in range(warmup): one_step()              # CUDA 就绪 + cudnn benchmark 收敛
+    torch.cuda.synchronize(); t0 = time.time()      # 计时必须卡在同步之后
+    for _ in range(steps): one_step()
+    torch.cuda.synchronize()</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m13_bench_dtype.py</span>
+<span class="out"> model    params dtype  ms/step    tok/s  peak MB</span>
+<span class="out">  tiny     0.53M  fp32     3.72   103272       60</span>
+<span class="out">  tiny     0.53M  bf16     3.46   110887       55</span>
+<span class="out">  tiny     0.53M  fp16     7.29    52704       55</span>
+<span class="out">   64M    63.91M  fp32    32.23    11914    1271</span>
+<span class="out">   64M    63.91M  bf16    26.36    14568    1276</span>
+<span class="out">   64M    63.91M  fp16    28.39    13527    1276</span>
+<span class="p">$ </span><span class="cmd">uv run python -c "…同 64M 模型，B=32 T=256 大 batch 只测 fp32/bf16…"</span>
+<span class="out">64M B=32 T=256 fp32: 119.70 ms/step, 68438 tok/s</span>
+<span class="ok">64M B=32 T=256 bf16: 60.53 ms/step, 135335 tok/s  ← 1.98× 加速</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130]</b>
+      tiny=冒烟配置（0.53M，B=4 T=96，30 步取均值，前 8 步预热）；64M=官方默认结构。
+      小 batch（B=4）下 64M 只快 22%——矩阵太小喂不满 GPU；把 batch 加到 32×256，
+      bf16 相对 fp32 恰好 <b>1.98×</b>。<b>结论：混合精度的收益随"每步计算量"放大</b>——
+      tiny 冒烟里 bf16 与 fp32 几乎无差（3.46 vs 3.72 ms），别用冒烟数字判断精度收益；
+      显存上 tiny 从 60→55 MB、64M 两种 16 位基本持平（激活省一半、权重/优化器状态仍是 fp32 主副本）。</p>
+
+      <h2 id="optim">优化器：decay 分组与 0.95</h2>
+      <p>
+        引擎里最后一个基件是 <b>AdamW</b>：Adam 优化器 + 解耦权重衰减。
+        Adam 为每个参数维护两个滑动平均：一阶矩 <code>m</code>（梯度的动量，方向）与二阶矩 <code>v</code>
+        (梯度的平方均值，尺度)；更新量 ∝ m/√v——尺度自适应，各个参数"步长自动配速"。
+        <a href="codeview/src/minimind_reborn/training/common/optim.py.html">optim.py</a> 全文 25 行，
+        两处值得停：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/common/optim.py.html">src/minimind_reborn/training/common/optim.py</a> · configure_optimizers 全文</span><span class="lang">python</span></div><pre class="code"><code>def configure_optimizers(model, lr, weight_decay, params=None) -&gt; torch.optim.Optimizer:
+    """AdamW + 权重 decay 分组：≥2 维张量 decay，bias 与 1 维参数（norm）不 decay。"""
+    trainable = [p for p in (params if params is not None else model.parameters()) if p.requires_grad]
+    decay = [p for p in trainable if p.dim() &gt;= 2]     # 矩阵（embedding、各投影）
+    no_decay = [p for p in trainable if p.dim() &lt; 2]   # 向量：bias 与 norm 的 scale
+    groups = [
+        {"params": decay, "weight_decay": weight_decay},
+        {"params": no_decay, "weight_decay": 0.0},
+    ]
+    fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
+    extra = {"fused": True} if (fused_available and torch.cuda.is_available()) else {}
+    return torch.optim.AdamW(groups, lr=lr, betas=(0.9, 0.95), **extra)</code></pre></div>
+      <p>
+        <b>weight decay</b>（权重衰减）：每步把参数往 0 拉一小把的正则项，防止权重无限膨胀。
+        但"往 0 拉"对两类参数是<b>伤害</b>：RMSNorm 的 scale 与 bias 是一维向量，它们本身编码的就是
+        "这一层输出的尺度/偏移"——衰减它们等于持续把表示的幅度往 0 压，模型得用别的参数拼命补偿。
+        所以 LLM 惯例按<b>维度</b>一刀切：<code>dim ≥ 2</code> 的矩阵衰减、一维向量不衰减。
+        tiny 模型上真分组看账：decay 组 532,480 个参数、no_decay 组只有 384 个——
+        恰是 8 个 norm 向量（q_norm/k_norm 16 维 + 两个 layernorm 64 维，×2 层）加出口 norm 64 维；
+        整个模型连一个 bias 都没有（M09 说过的去偏置哲学），全靠 dim 规则兜住。
+        <code>test_optimizer_decay_groups</code> 用 Linear+LayerNorm 双层模型锁死分组不变量。
+      </p>
+      <p class="prov"><b>[作者实测 · 2026-10-01]</b> 分组数字来自对 tiny 冒烟模型跑 configure_optimizers 后
+      按 <code>param_groups</code> 的 weight_decay 分别求和：532,480 / 384，与逐参数形状清单一致。</p>
+      <p>
+        <b>betas=(0.9, 0.95)</b>：β₁ 是动量系数（0.9 = 记住近 10 步梯度方向，惯例不变）；
+        β₂ 是二阶矩的衰减率——PyTorch 默认 0.999（窗口 ≈ 1000 步），LLM 训练惯例改
+        <b>0.95（窗口 $1/(1-0.95)=20$ 步）</b>：语言模型早期梯度分布变化剧烈，更短的窗口让尺度估计
+        跟得上突变、对 loss 尖峰更稳健，GPT-3 起几乎全员如此。<b>fused</b> 那两行是工程口味：
+        不比较版本号，而是<b>签名探测</b>——当前 torch 的 AdamW 支持 fused（CUDA 融合内核，一次launch
+        完成整组更新）才开启；能力探测比版本判断更能抵御环境漂移。
+      </p>
+
+      <h2 id="observ">可观测：四件套、MFU 与 ETA</h2>
+      <p>
+        训练一旦跑过几十分钟，"当时是什么环境、什么配置、指标怎么走的"就必须能<b>事后只凭磁盘回答</b>。
+        M01 你见过日志里的环境指纹一行；现在看它落盘后的样子。Trainer 构造时（rank0 独占——rank0 即多卡里的
+        0 号进程，M09 的"rank0 门控"同一语义）在
+        <code>runs/&lt;recipe&gt;/&lt;时间戳&gt;/</code> 写下<b>可追溯四件套</b>：
+      </p>
+      <pre class="ascii"><code>runs/smoke_pretrain/20261001_092437/
+├─ config.json    配置全量快照（合并 recipe + --set 之后的一切，M04 的 snapshot）
+├─ env.json       环境指纹：git commit + dirty、python/torch/cuda/transformers、GPU、seed
+├─ train.log      人读的时间线（每 log_interval 步一行）
+└─ metrics.jsonl  机读的指标流：{"step": 1, "key": "train/loss", "value": 8.778} 逐行追加
+                   ——jsonl 兜底后端永远启用（断网/欠费不失忆），tensorboard 等可并列挂载</code></pre>
+      <p>真跑一次冒烟（禁续训），打开它的 runs 目录：</p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.resume=false</span>
+<span class="out">09:24:39 | INFO | minimind.trainer | 训练启动 stage=pretrain recipe=smoke_pretrain | 0.53M 可训练参数 | dtype=bf16 device=cuda world=1 | 数据=pretrain_t2t_mini</span>
+<span class="out">09:24:39 | INFO | minimind.trainer | Epoch[1/2](2/317242) loss=8.7848 lr=4.70e-04 grad_norm=0.75 tok/s=2286 mfu=0.0% eta=888.0min</span>
+<span class="out">09:24:39 | INFO | minimind.trainer | Epoch[1/2](4/317242) loss=8.7565 lr=2.75e-04 grad_norm=0.68 tok/s=48591 mfu=0.1% eta=464.9min</span>
+<span class="out">09:24:39 | INFO | minimind.trainer | Epoch[1/2](6/317242) loss=8.7542 lr=8.01e-05 grad_norm=0.85 tok/s=48624 mfu=0.1% eta=323.8min</span>
+<span class="out">09:24:39 | INFO | minimind.trainer | 达到 max_steps=6 截断（冒烟/调试预算）</span>
+<span class="out">09:24:39 | INFO | minimind.trainer | 评估：val/loss=8.7690（固定 2 batch）</span>
+<span class="ok">09:24:39 | INFO | minimind.trainer | 训练结束：best_val_loss=8.768996715545654 optimizer_steps=3</span>
+<span class="p">$ </span><span class="cmd">ls runs/smoke_pretrain/20261001_092437/ &amp;&amp; head -3 runs/smoke_pretrain/20261001_092437/metrics.jsonl</span>
+<span class="out">config.json  env.json  metrics.jsonl  train.log</span>
+<span class="out">{"step": 1, "key": "train/loss", "value": 8.778392791748047}</span>
+<span class="out">{"step": 1, "key": "train/lr", "value": 0.0004698557158514987}</span>
+<span class="out">{"step": 1, "key": "train/grad_norm", "value": 0.7543834447860718}</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 2×RTX 4090 · torch 2.14.0+cu130 · seed=42 · 存档 runs/smoke_pretrain/20261001_092437]</b>
+      日志略去了 env 指纹与保存行；lr 序列与 M01 冒烟（4.70e-04→2.75e-04→8.01e-05）逐位一致——
+      调度只依赖步数，确定性可复现。metrics.jsonl 共 19 行 = 3 个 optimizer step × 6 个 train 指标
+      （loss / aux_loss / lr / grad_norm / tokens_per_s / mfu_est）+ 1 行 val/loss，
+      每行一个 (step, key, value) 三元组，画曲线时按 key 分组即可。</p>
+
+      <h3 id="mfu">MFU：为什么 tiny 只有 0.1%</h3>
+      <p>
+        M01 欠的最后一个词。<b>MFU</b>（Model FLOPs Utilization，模型算力利用率）：模型理论需要的计算量，
+        占 GPU 峰值算力的比例。训练一个 N 参数的模型，每个 token 前向约 2N 次浮点运算、反向约 4N，
+        合计 6N——所以：
+      </p>
+        $$ \text{MFU} \;=\; \frac{6\,N\cdot \text{tok/s}}{\text{world} \times \text{peak}} \;=\; \frac{6 \times 532{,}864 \times 48{,}624}{1 \times 165 \times 10^{12}} \;\approx\; 0.09\% $$
+      <p>
+        代入冒烟实测：分子 6×0.53M×48,624 tok/s ≈ 0.155 TFLOPS，分母是 4090 的 bf16 峰值 165 TFLOPS
+        （TFLOPS：每秒万亿次浮点运算；trainer.py:164-167 的口径注释——换卡型要同步改这个数）——
+        <b>0.09%，日志四舍五入成 0.1%</b>。
+        模型每步只做 ~3ms 的算术，
+        而每步的<b>固定开销</b>（Python 循环、几十次 kernel 启动、优化器更新、数据拼装）一个不少——
+        GPU 大部分时间在等指令。对照真实 64M 训练存档：
+        <b>[存档 runs/pretrain_full/20260925_005504 · 2×RTX 4090 DDP · bf16]</b>
+        日志 <code>tok/s=253714 mfu=29.5%</code>，验算 $6\times63.91\text{M}\times253714 / (2\times165\times10^{12}) = 29.5\%$——
+        注意分母的 world=2：tok/s 统计的是两卡合计吞吐。<b>0.1% → 29.5%</b> 就是"模型变大、每步算术变重、
+        固定开销被摊薄"的完整故事；连 Google 的 PaLM（540B）公开报告的 MFU 也只有 46%——
+        这个指标的天花板远低于直觉。
+      </p>
+      <h3 id="eta">ETA 与"度量口径"</h3>
+      <p>
+        <b>ETA</b>（预计剩余时间）：剩余步数 × 每步平均耗时。它被提炼成又一个纯函数
+        （trainer.py:71，9 行）：$\text{ETA}=\dfrac{t_{\text{elapsed}}}{\text{steps}_{\text{done}}}\times\dfrac{\text{steps}_{\text{left}}}{60}$（分钟）。
+        <code>test_eta_formula</code> 锁了三组数：5000 步用了 600 秒 → 剩 3000 步应需 6.0 分钟；
+        0 步已完成 → 0.0（不外推，防除零）。这个函数为什么值得"纯函数化+测试"？因为它刚出过一次
+        真实事故——分子用错了时钟，ETA 恒 0。这就是本课猎场。
+      </p>
+      <p>
+        同属"口径"纪律的还有一个负结果实验：<code>--set data.num_workers=0</code>（数据加载不另开进程，
+        主进程边算边取）与默认 workers=2 各跑 40 步，稳定窗口 tok/s 分别为 25,178–26,615 与
+        22,348–27,045——<b>差异在噪声内</b>。tiny pretrain 的取样+拼批太轻，本就不是 CPU 瓶颈；
+        真正翻车的是 SFT 重编码场景（单条样本秒级，loader_kwargs docstring 记录的 2026-09-29 案 A
+        因此把预取缓冲加深到 4×workers 并常驻 worker）。教训同款：<b>先量口径，再下结论</b>——
+        "多 worker 更快"在 tiny 上是伪命题，在你的负载上量过才知道。
+        <span class="prov"><b>[作者实测 · 2026-10-01 · 冒烟配方 max_steps=40 log_interval=10，各跑一次]</b></span>
+      </p>
+
+      <h2 id="bughunt">🔍 bug 猎场：ETA 恒 0——窗口耗时冒充总耗时</h2>
+      <p>
+        2026-09-24 中午，作者跑完 pretrain_26m 两轮训练，复盘日志时发现：进度条越接近尾声，
+        <code>eta</code> 越是清一色的 0.0——838 行训练日志（含 790 行 Epoch 进度）里
+        <b>270 行 eta=0.0min</b>，而其中有些行打出时<b>离训练结束还有半小时以上</b>。
+      </p>
+      <p><b>症状</b>（存档原文，同列省略 grad_norm 等中段字段）：</p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">grep -c "eta=0.0min" runs/pretrain_26m/20260924_123619/train.log</span>
+<span class="out">270</span>
+<span class="p">$ </span><span class="cmd">grep "Epoch\[" runs/pretrain_26m/20260924_123619/train.log | sed -n '1p;2p;260p;396p'</span>
+<span class="out">…12:36:27… Epoch[1/2](50/19749)   loss=8.1826 … tok/s=179076 eta=39.9min</span>
+<span class="out">…12:36:33… Epoch[1/2](100/19749)  loss=7.4318 … tok/s=190233 eta=18.7min</span>
+<span class="out">…13:01:17… Epoch[1/2](13000/19749) loss=2.2462 … tok/s=190206 eta=0.0min</span>
+<span class="out">…13:14:22… Epoch[2/2](50/19749)   loss=2.0330 … tok/s=186712 eta=38.3min</span></code></pre>
+      <p>
+        看 ETA 的形状就闻得到 bug：<b>锯齿</b>。epoch 1 里 39.9 → 18.7 → 12.5 → 9.3 一路单调缩到 0.0，
+        epoch 2 开局又跳回 38.3 再缩到 0.0——ETA 收敛的轨迹和"实际剩余工作量"毫无关系，
+        只跟"<b>本 epoch 已走步数</b>"同步增长。用日志自身的时间戳算真相：13:00:20.623 → 13:00:26.340
+        共 50 步 5.717 秒，即 0.1143 s/步；打出 eta=0.0min 的那行（13:01:17，已走 13000 步），
+        真实剩余 = 6749 步 × 0.1143s ≈ <b>12.9 分钟</b>（还没算整个 epoch 2 的 38 分钟）——日志说 0.0。
+      </p>
+      <p class="prov"><b>[存档 runs/pretrain_26m/20260924_123619 · 2×RTX 4090 · 26M 模型 · commit 424f64a（12:32 提交，先于 16:27 的修复）]</b>
+      行号 275/421 为 grep 行号；per-step 耗时由相邻两行时间戳相除所得。</p>
+      <p><b>定位</b>：拆修复 commit 看它改了什么、为什么这么改：</p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">git show 9b9a105 --stat</span>
+<span class="out">commit 9b9a10599602393422e91fbe5db153155a356935</span>
+<span class="out">Author: reborn &lt;reborn@local&gt;</span>
+<span class="out">Date:   Thu Sep 24 16:27:51 2026 +0800</span>
+<span class="out">fix(可观测性): metrics train/val 统一 optimizer-step 尺度；文件/console sink 只挂 rank0（留调试开关）；run_dir 广播对齐；ETA 改用 epoch 总耗时（纯函数+回归测试）；DPO 配方 accum 对齐官方</span>
+<span class="out"> src/minimind_reborn/training/common/trainer.py | 29 +++++++++++----</span>
+<span class="out"> tests/test_training/test_observability.py       | 49 ++++++++++++++++++</span>
+<span class="dim"> …（共 14 个文件改动，145 行插入，48 行删除）</span>
+<span class="p">$ </span><span class="cmd">git show 424f64a:src/minimind_reborn/training/common/trainer.py | grep -n "eta_min ="</span>
+<span class="out">224:                eta_min = elapsed / max(offset + 1 - start_step, 1) * (iters - offset - 1) / 60</span></code></pre>
+      <p>
+        病灶一行：旧代码里 <code>elapsed</code> 是 <b>window_start</b> 以来的耗时——
+        而 window_start 每次打日志都会重置（它本来是给 tok/s 当窗口的）。于是分子是<b>最近 50 步的 ~5.7 秒</b>，
+        分母却是<b>累计已走步数</b>（13000）：商 = 0.0004 s/步，比真实 0.1143 s/步小 260 倍。
+        走得越久，分母越大、商越小——ETA 不反映剩余时间，只反映"1/已走步数"的衰减，
+        这正是锯齿形状的来源；epoch 2 分母清零重来，锯齿重开一轮。修复是<b>另起一座时钟</b>：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/common/trainer.py.html">src/minimind_reborn/training/common/trainer.py</a> · 修复后的时钟与纯函数</span><span class="lang">python</span></div><pre class="code"><code>window_start = time.time()  # 吞吐窗口（每次日志重置）
+epoch_start  = time.time()  # ETA 基准（epoch 开局，不重置）——此前误用窗口耗时导致 ETA 恒 0
+...
+eta_min = estimate_eta_minutes(time.time() - epoch_start,   # 分子：开局至今的总耗时
+                               offset + 1 - start_step,     # 分母：与分子同一口径的已完成步数
+                               iters - offset - 1)          # 剩余步数
+
+def estimate_eta_minutes(elapsed_total_s, steps_done, steps_left) -&gt; float:
+    """ETA 纯函数：epoch 开局至今总耗时 / 已完成步数 × 剩余步数（分钟）。"""
+    if steps_done &lt;= 0 or steps_left &lt;= 0:
+        return 0.0        # 无已完成步不外推（防除零）；无剩余步自然为 0
+    return elapsed_total_s / steps_done * steps_left / 60</code></pre></div>
+      <p>
+        <b>回归锁定</b>：同一个 commit 新增 <a href="codeview/tests/test_training/test_observability.py.html">test_observability.py</a>，
+        <code>test_eta_formula</code> 三组断言把公式钉死；<code>test_metrics_steps_monotonic_and_unified</code> 锁同一 commit 修的另一处口径
+        （train/val 曲线统一用 optimizer step，x 轴不再错位——M01 日志里 <code>optimizer_steps=3</code> 那把尺子就是它定的）。
+        <b>通用教训：度量口径</b>——分子分母必须来自<b>同一把尺子</b>。"窗口耗时 ÷ 累计步数"各自单独看都合法
+        （窗口测吞吐、累计算进度），拼在一起就是结构性的错；而且它错得<b>很体面</b>：早期数值碰巧接近真值
+        （窗口恰好覆盖全部已走步时两者相等），越到后期越离谱。凡是"越跑越准/越跑越离谱"的指标，
+        先查口径，再查公式。
+      </p>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · warmup 为什么存在？reborn 默认 warmup_steps 是多少、什么场景必须打开？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>AdamW 开局对每个参数的梯度尺度（二阶矩 v）估计还是零，头几步的更新量天然失衡，大步长容易把参数打飞；warmup 让 lr 从 0 线性爬到 base，等统计量稳定再全速走。reborn 默认 <code>warmup_steps=0</code>（对齐官方"从零训"配方），但 <code>pretrain_longctx.yaml</code> 里设了 200——加载现成权重续训时，参数已是训好的状态，开局就踩全速 lr 会把权重震坏，必须热身。</p>
+            <p class="back">答错回看：<a href="#lr">学习率调度</a> 的公式与采样表、<a href="#optim">优化器</a> 的 AdamW 两矩。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · MFU 公式的分子和分母分别是什么？tiny 冒烟 0.1% 和 64M 实跑 29.5% 的差距从哪来？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>分子 = 6·N·tok/s（N 是可训练参数量，每个 token 前向 2N + 反向 4N 次浮点运算）；分母 = world × 每卡峰值算力（4090 bf16 按 165 TFLOPS 记，多卡要乘卡数）。tiny 的差距来自两头：分子上 0.53M 参数每步只做 ~3ms 算术，而每步的固定开销（Python 循环、kernel 启动、优化器更新）一个不少，GPU 大部分时间在等指令；64M 每步算术变重，开销被摊薄，29.5% 就是"固定开销摊薄后"的正常水位——工业大模型也不过三到五成。</p>
+            <p class="back">答错回看：<a href="#mfu">MFU 小节</a> 的两笔验算。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · betas=(0.9, 0.95) 里的 0.95 改的是什么？为什么 LLM 训练不用 PyTorch 默认的 0.999？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>0.95 是 β₂——AdamW 二阶矩（梯度平方的滑动平均）的衰减率，窗口长度 ≈ 1/(1-β₂)：默认 0.999 对应约 1000 步，0.95 收窄到约 20 步。语言模型训练早期梯度分布变化剧烈、loss 尖峰常见，长窗口的尺度估计更新太慢，短窗口能让步长配速跟得上突变、对尖峰更稳健——GPT-3 起的 LLM 惯例。β₁（动量）保持 0.9 不变。</p>
+            <p class="back">答错回看：<a href="#optim">优化器</a> 小节的 betas 段。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · 冒烟跑了 6 个 micro step、累积步数 2，optimizer_steps 为什么是 3？grad_norm 为什么必须在 unscale_ 之后测？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>梯度累积把每 2 个 micro step 的梯度记账（loss 除以 2 后 backward 累加）合并成 1 次参数更新：6 ÷ 2 = 3 次 optimizer step——模型参数只动过 3 次。unscale_ 之前，fp16 路径下梯度被 GradScaler 整体放大了 65536 倍，"梯度范数"是虚胖的；先还原真实大小，clip_grad_norm_ 的阈值（grad_clip=1.0）语义才成立——这也是"scale→backward→unscale_→clip→step"固定顺序的原因。</p>
+            <p class="back">答错回看：<a href="#micro">micro step 与 optimizer step</a> 的三个"为什么"。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · 把 warmup_steps 从 2 改成 10：前几步的 lr 曲线怎么变？</div>
+        <div class="ex-body">
+          <p>
+            配置 <code>train.warmup_steps</code> 是每个配方都能动的旋钮（M04 的 --set 直达）。
+            固定 total=60、base=5e-4，只动 warmup。先笔算再跑：
+          </p>
+          <div class="ex-predict"></div>
+          <p>写下预测：warmup=2 时 step 0 的 lr 是多少？改成 10 后，step 0 变成多少、
+          什么时候追平 base？warmup 拉长 5 倍，前 6 步里每步的 lr 是变陡了还是变缓了？</p>
+          <div class="codeblock"><div class="code-head"><span>/tmp/m13_warmup.py · 对照打印两种 warmup 的前 6 步</span><span class="lang">python</span></div><pre class="code"><code>from minimind_reborn.training.common.lr import get_lr
+
+print(f"{'step':&gt;4} {'warmup=2':&gt;11} {'warmup=10':&gt;11}")
+for step in range(6):
+    a = get_lr(step, 60, 5e-4, warmup_steps=2)     # (step, total, base, …)
+    b = get_lr(step, 60, 5e-4, warmup_steps=10)
+    print(f"{step:&gt;4} {a:&gt;11.3e} {b:&gt;11.3e}")</code></pre></div>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>作者实测（2026-10-01，同环境）：</p>
+            <pre class="term"><code><span class="out">step    warmup=2   warmup=10</span>
+<span class="out">   0   2.500e-04   5.000e-05</span>
+<span class="out">   1   5.000e-04   1.000e-04</span>
+<span class="out">   2   5.000e-04   1.500e-04</span>
+<span class="out">   3   4.997e-04   2.000e-04</span>
+<span class="out">   4   4.987e-04   2.500e-04</span>
+<span class="out">   5   4.970e-04   3.000e-04</span></code></pre>
+            <p>
+              <b>机制：</b>warmup 段公式是 <code>base×(step+1)/W</code>——step 0 的 lr = base/W：
+              W=2 时一步就到 base 的一半、第二步登顶；W=10 时每步只爬 base/10，
+              前 6 步整体矮了一大截，要到 step 9 才追平 base，之后才交棒给余弦段。
+              <b>warmup 拉长 = 起跑更保守</b>；同时注意 W=2 那列 step 2 已是 5.000e-04（登顶后交给余弦，
+              progress=0 处余弦值恰为 base），step 3 起缓慢下滑——两条曲线在"W 处交接"这一性质不变。
+              回看测验 1 的场景：续训加载现成权重时，你要的正是右侧那列"慢慢踩油门"。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M13 验收：12 个测试 + 一个真实的 runs 目录</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下依次执行。第一条，训练基件三件测试（LR 纯函数与官方语义、decay 分组、checkpoint 六件套、DDP 分母口径、ETA/指标口径）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_training/test_common.py tests/test_training/test_lr_schedule.py tests/test_training/test_observability.py -q</span>
+<span class="out">............                                                             [100%]</span>
+<span class="ok">12 passed in 0.37s</span>
+<span class="dim">（12 = test_common 5 + test_lr_schedule 5 + test_observability 2）</span></code></pre>
+          <p>第二条，亲手点一次火并检查四件套（<code>--set train.resume=false</code> 禁续训，保证从零跑）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.resume=false</span>
+<span class="out">… | minimind.trainer | 训练启动 … | 0.53M 可训练参数 | dtype=bf16 device=cuda world=1 | …</span>
+<span class="out">… | minimind.trainer | Epoch[1/2](6/317242) loss=8.7542 lr=8.01e-05 grad_norm=0.85 tok/s=48624 mfu=0.1% eta=323.8min</span>
+<span class="ok">… | minimind.trainer | 训练结束：best_val_loss=8.768996715545654 optimizer_steps=3</span>
+<span class="p">$ </span><span class="cmd">ls runs/smoke_pretrain/&lt;最新时间戳&gt;/</span>
+<span class="out">config.json  env.json  metrics.jsonl  train.log</span></code></pre>
+          <ul class="pass-criteria">
+            <li><code>12 passed</code>——三个文件 12 个用例全绿；</li>
+            <li>冒烟日志含 <code>训练启动</code>（dtype=device=world= 一行）、三行 Epoch 进度（lr 序列 4.70e-04→2.75e-04→8.01e-05）、
+              <code>optimizer_steps=3</code>（= max_steps 6 ÷ 累积 2）；</li>
+            <li>runs 目录四件套齐全，<code>metrics.jsonl</code> 非空且 <code>head</code> 可见 <code>train/loss</code>、<code>train/lr</code>、<code>train/grad_norm</code> 三类键，
+              <code>env.json</code> 含你的 git commit 与 GPU 型号。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按症状分流）</summary>
+            <p>
+              <b>pytest 有 failed</b> → 读用例名分流：<code>test_lr_*</code> 失败回 <a href="#lr">LR 小节</a>（先查是否动过 lr.py），
+              <code>test_ddp_* / test_old_bug_signature_locked</code> 失败回 <a href="#purefn">纯函数小节</a> 的分母口径，
+              <code>test_eta_formula</code> 失败回 <a href="#bughunt">猎场</a>；
+              <b>训练启动即 KeyError / 未知精度</b> → <code>--set train.dtype</code> 拼错（守门人应更早拦截，
+              见 resolve_dtype 末行的报错文案）；<b>找不到数据集</b> → 回 M11 的 registry/datasets.json 检查语料是否就位；
+              <b>runs 目录只有 train.log</b> → config.json/env.json 由 rank0 独占写入（trainer.py:143），
+              单卡必然有；若用 torchrun 多卡，确认没把 world_size&gt;1 的 rank1 目录当成了唯一目录；
+              <b>续训意外接上了旧进度</b>（第一步就从中间开始）→ checkpoints/ 里有旧档而你忘了
+              <code>--set train.resume=false</code>，日志第一行会写"续训恢复清单"。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        引擎转起来了，每 epoch 末它都在默默调 <code>_save</code>——权重之外还存了优化器状态、进度、
+        RNG（随机数发生器）状态……那个"六件套"里每一件都对应一种"断了又续"的灾难，
+        M14 逐件拆开，并用 kill -9 实验验证它真的接得住。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>训练循环生命周期 <span class="en">train loop lifecycle</span></dt><dd>run → _train_epoch → evaluate → _save 的固定骨架；梯度/AMP/裁剪/续训/评估/保存的顺序与不变量固定在 Trainer，范式只提供 compute_loss 与数据组装，不得绕过。</dd>
+          <dt>micro step / optimizer step</dt><dd>前者 = 一个 batch 的前向+反向（梯度记账），后者 = 优化器真正更新一次参数。隔着梯度累积（loss ÷ 累积步数后 backward 累加）；metrics 曲线的 x 轴统一用 optimizer step。</dd>
+          <dt>学习率调度 <span class="en">LR schedule</span></dt><dd>步长随进度的方案：warmup 线性爬升（开局 Adam 统计量未稳，先小步走）→ 余弦衰减到 base×min_ratio=0.1 的地板（末段仍留步长）。reborn 写成 15 行纯函数 get_lr，无对象状态、可单测、续训无漂移。</dd>
+          <dt>AMP 混合精度 <span class="en">automatic mixed precision</span></dt><dd>autocast 逐算子分派：大吞吐算子跑 16 位、敏感归约留 fp32。bf16 指数位与 fp32 同宽（8 位），天生不需要 loss scale；fp16 指数 5 位、最小正规数 ~6.1e-5，小梯度下溢为 0，必须配 GradScaler。</dd>
+          <dt>GradScaler <span class="en">梯度缩放器</span></dt><dd>把 loss 乘 scale（初始 65536）使梯度落进 fp16 可表示区间，更新前 unscale 还原；发现 inf/nan 则跳过该步并调小 scale。reborn 恒创建、enabled 只认 fp16——训练循环一套代码三种精度通吃。</dd>
+          <dt>decay / no-decay 分组</dt><dd>AdamW 构造时按维度切参数组：dim≥2 的矩阵衰减（weight_decay&gt;0），一维向量（bias、norm 的 scale）不衰减——衰减它们等于持续压缩表示的尺度。LoRA 场景可传入自己的参数集。</dd>
+          <dt>MFU <span class="en">model FLOPs utilization</span></dt><dd>模型算力利用率 = 6·N·tok/s ÷（world × 每卡峰值）。每个 token 前向 2N + 反向 4N 次浮点运算。tiny 冒烟 0.1%（固定开销主导），64M 双卡实跑 29.5%；工业大模型普遍三到五成。</dd>
+          <dt>ETA <span class="en">estimated time of arrival</span></dt><dd>剩余时间 = 开局至今总耗时 ÷ 已完成步数 × 剩余步数（estimate_eta_minutes 纯函数）。教训（度量口径）：分子分母必须同一把尺子——窗口耗时冒充总耗时曾让 838 行日志里 270 行 ETA 恒 0。</dd>
+          <dt>可追溯四件套 <span class="en">run artifacts</span></dt><dd>runs/&lt;recipe&gt;/&lt;时间戳&gt;/ 下的 config.json（配置全量快照）、env.json（git commit/软硬件指纹/seed）、train.log（人读时间线）、metrics.jsonl（(step,key,value) 逐行指标流，本地兜底永不断网失忆）。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+  };
+</script>
+<script async src="assets/vendor/tex-svg.js"></script>
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>eval_multiturn.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=3">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">Reproduce/minimind_reborn/tools/eval_multiturn.py</span>
+  <span class="cv-meta">447 行 · 18KB · minimind_reborn</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>tools/eval_multiturn.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;多轮/连续对话能力检测（评测任务，只测不改）。
+
+四套测试：
+- A 跨轮记忆与指代：首轮注入信息（姓名/数字/偏好），后续轮追问召回，量化召回正确率；
+- B 上下文长度压力：构造 256~2048 token 的合成多轮历史（训练边界 768 内外），量化重复率/跑题率；
+- C 长程多轮稳定性：单 session 连续 12 轮，逐轮记录长度漂移、重复率、角色漂移、延迟；
+- D 长度边界行为：超 32768 token prompt 的越界实际表现（守卫缺口验证）。
+
+模型：ours dpo_768（主测）、ours full_sft_768、official full_sft_768（对照）。
+产出：out/multiturn_eval.md + out/multiturn_samples/*.md
+
+用法：uv run python tools/eval_multiturn.py --device cuda:0
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import argparse
+import re
+import statistics
+import time
+from pathlib import Path
+
+import torch
+
+REPO = Path(__file__).resolve().parent.parent
+OFFICIAL_DIR = REPO / &quot;out&quot; / &quot;official&quot;
+SAMPLES_DIR = REPO / &quot;out&quot; / &quot;multiturn_samples&quot;
+
+SEED = 42
+
+
+def ngram_rep_rate(text: str, n: int = 3) -&gt; float:
+    cleaned = re.sub(r&quot;\s&quot;, &quot;&quot;, text)
+    if len(cleaned) &lt; n + 1:
+        return 0.0
+    grams = [cleaned[i : i + n] for i in range(len(cleaned) - n + 1)]
+    return 1 - len(set(grams)) / len(grams)
+
+
+class MultiTurnSession:
+    &quot;&quot;&quot;与 ChatSession 相同的多轮语义（渲染→截断→生成→eos 尾截→回填历史），并记录逐轮指标。&quot;&quot;&quot;
+
+    def __init__(
+        self,
+        model,
+        tokenizer,
+        *,
+        official: bool = False,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        max_new_tokens: int = 192,
+    ):
+        self.official = official
+        self.model = model
+        self.tokenizer = tokenizer
+        self.history: list[dict[str, str]] = []
+        self.temperature = temperature
+        self.top_p = top_p
+        self.max_new_tokens = max_new_tokens
+        self.turns: list[dict] = []
+
+    def respond(self, user_text: str) -&gt; str:
+        &quot;&quot;&quot;多轮语义与 ChatSession 一致；生成内核按实现分流——
+        我们的模型走 inference/generator（预分配 cache），官方模型走其自带 generate()（对照同口径）。&quot;&quot;&quot;
+        self.history.append({&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: user_text})
+        prompt = self.tokenizer.apply_chat_template(self.history, tokenize=False, add_generation_prompt=True)
+        inputs = self.tokenizer(prompt, return_tensors=&quot;pt&quot;, truncation=True).to(self.model.device)
+        prompt_tokens = inputs[&quot;input_ids&quot;].shape[1]
+        torch.manual_seed(SEED)
+        t0 = time.perf_counter()
+        if self.official:
+            out = self.model.generate(
+                inputs=inputs[&quot;input_ids&quot;],
+                attention_mask=inputs[&quot;attention_mask&quot;],
+                max_new_tokens=self.max_new_tokens,
+                do_sample=True,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                top_k=50,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+            )
+            gen_ids = out[0][inputs[&quot;input_ids&quot;].shape[1] :]
+        else:
+            from minimind_reborn.configuration.schemas import GenerateConfig
+            from minimind_reborn.inference.generator import generate
+
+            out = generate(
+                self.model,
+                inputs[&quot;input_ids&quot;],
+                GenerateConfig(temperature=self.temperature, top_p=self.top_p, max_new_tokens=self.max_new_tokens),
+                eos_token_id=self.tokenizer.eos_token_id,
+                pad_token_id=self.tokenizer.pad_token_id,
+                attention_mask=inputs[&quot;attention_mask&quot;],
+            )
+            gen_ids = out[&quot;generated_ids&quot;][0]
+        elapsed = time.perf_counter() - t0
+        text = self.tokenizer.decode(gen_ids.tolist(), skip_special_tokens=True)
+        eos = self.tokenizer.eos_token
+        if eos and eos in text:
+            text = text.split(eos)[0]
+        self.history.append({&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: text})
+        self.turns.append(
+            {
+                &quot;prompt_tokens&quot;: prompt_tokens,
+                &quot;gen_tokens&quot;: int(gen_ids.shape[0]),
+                &quot;latency_s&quot;: round(elapsed, 2),
+                &quot;rep_rate&quot;: round(ngram_rep_rate(text), 3),
+                &quot;length&quot;: len(text.strip()),
+                &quot;text&quot;: text,
+            }
+        )
+        return text
+
+
+class EvalModel:
+    def __init__(self, name: str, weight: Path, official: bool, device: str, rope_scaling: bool = False):
+        self.name = name
+        self.official = official
+        self.device = device
+        from transformers import AutoTokenizer
+
+        from minimind_reborn import envs
+
+        self.tokenizer = AutoTokenizer.from_pretrained(envs.tokenizer_path())
+        if official:
+            import sys
+
+            ref = REPO.parent.parent / &quot;reference&quot; / &quot;minimind&quot;
+            if str(ref) not in sys.path:
+                sys.path.insert(0, str(ref))
+            from model.model_minimind import MiniMindConfig as OffCfg
+            from model.model_minimind import MiniMindForCausalLM as OffLM
+
+            self.model = OffLM(OffCfg(hidden_size=768, num_hidden_layers=8)).half().eval().to(device)
+            self.model.load_state_dict(torch.load(weight, map_location=&quot;cpu&quot;, weights_only=True), strict=True)
+        else:
+            from minimind_reborn.models.config import MiniMindConfig
+            from minimind_reborn.models.model import MiniMindForCausalLM
+            from minimind_reborn.models.weights import load_inference_weights
+
+            self.model = MiniMindForCausalLM(
+                MiniMindConfig(inference_rope_scaling=rope_scaling)
+            ).half().eval().to(device)
+            load_inference_weights(self.model, weight, strict=True)
+
+    def new_session(self) -&gt; MultiTurnSession:
+        return MultiTurnSession(self.model, self.tokenizer, official=self.official)
+
+
+# ===== Suite A：跨轮记忆与指代 =====
+# (轮次剧本, 召回关键词列表)——首轮注入，末轮追问
+A_CASES = [
+    {
+        &quot;script&quot;: [
+            &quot;你好！我叫李小明，今年28岁，是一名程序员，最喜欢的编程语言是 Rust。&quot;,
+            &quot;我平时喜欢爬山，养了一只叫花花的猫。&quot;,
+            &quot;请根据前面我告诉你的信息，介绍一下我自己。&quot;,
+        ],
+        &quot;recall_keywords&quot;: [&quot;李小明&quot;, &quot;28&quot;, &quot;程序员&quot;, &quot;Rust&quot;, &quot;爬山&quot;, &quot;花花&quot;],
+        &quot;recall_turn&quot;: 3,
+    },
+    {
+        &quot;script&quot;: [
+            &quot;我们公司团建订了 17 份盒饭，每份 35 元。&quot;,
+            &quot;另外还租了一辆大巴，花了 900 元。&quot;,
+            &quot;请问这次团建总共花了多少钱？（需要的话请把两笔费用相加）&quot;,
+        ],
+        &quot;recall_keywords&quot;: [&quot;17&quot;, &quot;35&quot;, &quot;900&quot;],
+        &quot;recall_turn&quot;: 3,
+    },
+    {
+        &quot;script&quot;: [
+            &quot;记住这个暗号：蓝天白云。&quot;,
+            &quot;暗号是什么？&quot;,
+        ],
+        &quot;recall_keywords&quot;: [&quot;蓝天白云&quot;],
+        &quot;recall_turn&quot;: 2,
+    },
+    {
+        &quot;script&quot;: [
+            &quot;我最喜欢的一本书是《三体》，作者是刘慈欣。&quot;,
+            &quot;今天天气真不错。&quot;,
+            &quot;我最喜欢的那本书叫什么名字？作者是谁？&quot;,
+        ],
+        &quot;recall_keywords&quot;: [&quot;三体&quot;, &quot;刘慈欣&quot;],
+        &quot;recall_turn&quot;: 3,
+    },
+]
+
+
+def suite_a(em: EvalModel) -&gt; dict:
+    results = {&quot;per_case&quot;: [], &quot;recall_hits&quot;: 0, &quot;recall_total&quot;: 0}
+    sample_lines = [f&quot;## Suite A 跨轮记忆 — {em.name}&quot;, &quot;&quot;]
+    for ci, case in enumerate(A_CASES):
+        session = em.new_session()
+        answers = []
+        for i, utter in enumerate(case[&quot;script&quot;]):
+            ans = session.respond(utter)
+            answers.append(ans)
+            if i + 1 == case[&quot;recall_turn&quot;]:
+                recall_text = ans
+        hits = [kw for kw in case[&quot;recall_keywords&quot;] if kw in recall_text]
+        results[&quot;recall_hits&quot;] += len(hits)
+        results[&quot;recall_total&quot;] += len(case[&quot;recall_keywords&quot;])
+        results[&quot;per_case&quot;].append(
+            {&quot;case&quot;: ci, &quot;hits&quot;: hits, &quot;missed&quot;: [k for k in case[&quot;recall_keywords&quot;] if k not in hits]}
+        )
+        sample_lines += [
+            f&quot;### Case {ci}（召回 {len(hits)}/{len(case[&#x27;recall_keywords&#x27;])}：命中 {hits or &#x27;无&#x27;}）&quot;,
+            &quot;```text&quot;,
+        ]
+        for i, (u, a) in enumerate(zip(case[&quot;script&quot;], answers, strict=False)):
+            sample_lines += [f&quot;[用户 {i + 1}] {u}&quot;, f&quot;[模型 {i + 1}] {a[:220]}&quot;, &quot;&quot;]
+        sample_lines += [&quot;```&quot;, &quot;&quot;]
+    results[&quot;recall_rate&quot;] = round(results[&quot;recall_hits&quot;] / max(results[&quot;recall_total&quot;], 1), 3)
+    (SAMPLES_DIR / f&quot;suiteA_{em.name.replace(&#x27; &#x27;, &#x27;_&#x27;)}.md&quot;).write_text(&quot;\n&quot;.join(sample_lines), encoding=&quot;utf-8&quot;)
+    return results
+
+
+# ===== Suite B：上下文长度压力 =====
+FILLER_FACTS = [
+    &quot;第{n}个知识点：水的沸点在一标准大气压下是100摄氏度。&quot;,
+    &quot;第{n}个知识点：光在真空中的速度约为每秒30万公里。&quot;,
+    &quot;第{n}个知识点：地球绕太阳公转一周约需365天。&quot;,
+    &quot;第{n}个知识点：铁的化学符号是Fe。&quot;,
+    &quot;第{n}个知识点：世界上最高的山峰是珠穆朗玛峰。&quot;,
+    &quot;第{n}个知识点：月球绕地球一圈约27天。&quot;,
+]
+FIXED_QUESTION = &quot;请用一句话总结上面对话里出现过的知识点数量。&quot;
+
+
+def build_filler_history(target_tokens: int, tokenizer) -&gt; list[dict[str, str]]:
+    &quot;&quot;&quot;构造接近 target_tokens 的合成多轮历史（user/assistant 交替的伪知识点问答）。&quot;&quot;&quot;
+    history: list[dict[str, str]] = [
+        {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;我们来玩一个知识积累游戏，我会陆续告诉你一些知识点。&quot;}
+    ]
+    history.append({&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: &quot;好的，请开始，我会记住你说的内容。&quot;})
+    n = 0
+    while True:
+        n += 1
+        history.append({&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: FILLER_FACTS[(n - 1) % len(FILLER_FACTS)].format(n=n)})
+        rendered = tokenizer.apply_chat_template(history, tokenize=False, add_generation_prompt=True)
+        if len(tokenizer(rendered).input_ids) &gt;= target_tokens:
+            history.pop()  # 超了就丢掉最后一个 user，保持模板可生成
+            break
+        history.append({&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: f&quot;已记录第{n}个知识点。&quot;})
+    return history
+
+
+def suite_b(em: EvalModel) -&gt; dict:
+    results = {&quot;levels&quot;: []}
+    sample_lines = [f&quot;## Suite B 上下文长度压力 — {em.name}&quot;, &quot;&quot;]
+    for target in (256, 512, 768, 1024, 1536, 2048):
+        session = em.new_session()
+        session.history = build_filler_history(target, em.tokenizer)
+        ans = session.respond(FIXED_QUESTION)
+        turn = session.turns[-1]
+        rep = ngram_rep_rate(ans)
+        # 跑题判定：回答与&quot;知识点数量&quot;无关且未复述任何知识点编号
+        on_topic = bool(re.search(r&quot;\d+\s*个|知识点&quot;, ans))
+        results[&quot;levels&quot;].append(
+            {
+                &quot;target_tokens&quot;: target,
+                &quot;actual_prompt_tokens&quot;: turn[&quot;prompt_tokens&quot;],
+                &quot;gen_tokens&quot;: turn[&quot;gen_tokens&quot;],
+                &quot;rep_rate&quot;: rep,
+                &quot;length&quot;: turn[&quot;length&quot;],
+                &quot;on_topic&quot;: on_topic,
+            }
+        )
+        sample_lines += [
+            f&quot;### target≈{target} tok（实际 {turn[&#x27;prompt_tokens&#x27;]}）| 重复率 {rep:.3f}&quot;
+            f&quot; | {&#x27;在题&#x27; if on_topic else &#x27;跑题&#x27;}&quot;,
+            &quot;```text&quot;,
+            ans[:200],
+            &quot;```&quot;,
+            &quot;&quot;,
+        ]
+    (SAMPLES_DIR / f&quot;suiteB_{em.name.replace(&#x27; &#x27;, &#x27;_&#x27;)}.md&quot;).write_text(&quot;\n&quot;.join(sample_lines), encoding=&quot;utf-8&quot;)
+    return results
+
+
+# ===== Suite C：长程多轮稳定性 =====
+C_QUESTIONS = [
+    &quot;用一句话介绍什么是机器学习。&quot;,
+    &quot;那深度学习和它是什么关系？&quot;,
+    &quot;举一个生活中的应用例子。&quot;,
+    &quot;这个例子用到了什么技术？&quot;,
+    &quot;刚开始学这个领域应该看什么？&quot;,
+    &quot;需要数学基础吗？大概要哪些？&quot;,
+    &quot;线性代数里最核心的概念是什么？&quot;,
+    &quot;矩阵乘法有什么直观理解方式？&quot;,
+    &quot;回到第一个问题，再总结一次。&quot;,
+    &quot;你刚才一共回答了我几个问题？&quot;,
+    &quot;帮我把这些内容列一个学习路线。&quot;,
+    &quot;最后用一句话鼓励一下初学者。&quot;,
+]
+
+
+def suite_c(em: EvalModel) -&gt; dict:
+    session = em.new_session()
+    sample_lines = [f&quot;## Suite C 长程稳定性（12 轮）— {em.name}&quot;, &quot;&quot;]
+    for i, q in enumerate(C_QUESTIONS, 1):
+        ans = session.respond(q)
+        t = session.turns[-1]
+        sample_lines += [
+            f&quot;### 轮 {i}（prompt {t[&#x27;prompt_tokens&#x27;]} tok | 生成 {t[&#x27;gen_tokens&#x27;]} | 重复率 {t[&#x27;rep_rate&#x27;]:.3f}）&quot;,
+            f&quot;**Q:** {q}&quot;,
+            f&quot;**A:** {ans[:260]}&quot;,
+            &quot;&quot;,
+        ]
+    results = {
+        &quot;turns&quot;: session.turns,
+        # 角色漂移粗判：末段出现引导性 user 口吻且无句号收尾
+        &quot;role_drift&quot;: any(&quot;user&quot; in t[&quot;text&quot;][-60:] and &quot;。&quot; not in t[&quot;text&quot;][-60:] for t in session.turns),
+        &quot;avg_rep_last3&quot;: round(statistics.mean(t[&quot;rep_rate&quot;] for t in session.turns[-3:]), 3),
+        &quot;avg_rep_first3&quot;: round(statistics.mean(t[&quot;rep_rate&quot;] for t in session.turns[:3]), 3),
+    }
+    (SAMPLES_DIR / f&quot;suiteC_{em.name.replace(&#x27; &#x27;, &#x27;_&#x27;)}.md&quot;).write_text(&quot;\n&quot;.join(sample_lines), encoding=&quot;utf-8&quot;)
+    return results
+
+
+# ===== Suite D：长度边界行为 =====
+def suite_d(em: EvalModel) -&gt; dict:
+    &quot;&quot;&quot;超 32768 token 的 prompt：验证 RoPE 表越界的实际表现（守卫缺口）。&quot;&quot;&quot;
+    result = {&quot;behavior&quot;: &quot;n/a&quot;, &quot;error_head&quot;: &quot;&quot;}
+    session = em.new_session()
+    session.history.append({&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;我们来测试超长上下文。&quot;})
+    session.history.append({&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: &quot;好的。&quot;})
+    filler = build_filler_history(40000, em.tokenizer)
+    session.history = filler
+    try:
+        session.respond(&quot;总结一下。&quot;)
+        result[&quot;behavior&quot;] = &quot;no-error (unexpected)&quot;
+    except RuntimeError as e:
+        result[&quot;behavior&quot;] = &quot;RuntimeError (shape mismatch expected)&quot;
+        result[&quot;error_head&quot;] = str(e)[:160]
+    except Exception as e:  # noqa: BLE001
+        result[&quot;behavior&quot;] = f&quot;OtherError: {type(e).__name__}&quot;
+        result[&quot;error_head&quot;] = str(e)[:160]
+    return result
+
+
+def main() -&gt; None:
+    parser = argparse.ArgumentParser(description=&quot;多轮/连续对话能力检测&quot;)
+    parser.add_argument(&quot;--device&quot;, default=&quot;cuda:0&quot;)
+    parser.add_argument(&quot;--out&quot;, default=str(REPO / &quot;out&quot; / &quot;multiturn_eval.md&quot;))
+    parser.add_argument(&quot;--suites&quot;, default=&quot;ABCD&quot;, help=&quot;要跑的套件（默认 ABCD）&quot;)
+    parser.add_argument(
+        &quot;--weights&quot;,
+        default=&quot;ours_dpo,ours_full_sft,official_full_sft&quot;,
+        help=&quot;逗号分隔，可选 ours_dpo / ours_full_sft / official_full_sft&quot;,
+    )
+    parser.add_argument(
+        &quot;--rope-scaling&quot;, action=&quot;store_true&quot;, help=&quot;我方权重开启 YaRN 推理外推（orig_max=380，factor=6）&quot;
+    )
+    args = parser.parse_args()
+    SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+
+    all_specs = {
+        &quot;ours_dpo&quot;: (&quot;ours_dpo&quot;, REPO / &quot;out&quot; / &quot;dpo_768.pth&quot;, False),
+        &quot;ours_full_sft&quot;: (&quot;ours_full_sft&quot;, REPO / &quot;out&quot; / &quot;full_sft_768.pth&quot;, False),
+        &quot;official_full_sft&quot;: (&quot;official_full_sft&quot;, OFFICIAL_DIR / &quot;full_sft_768.pth&quot;, True),
+        # era1 = 档一重训前的基线权重（旧管线训练，归档于 out/archive/era1/）
+        &quot;ours_dpo_era1&quot;: (&quot;ours_dpo_era1&quot;, REPO / &quot;out&quot; / &quot;archive&quot; / &quot;era1&quot; / &quot;dpo_768.pth&quot;, False),
+        &quot;ours_full_sft_era1&quot;: (
+            &quot;ours_full_sft_era1&quot;,
+            REPO / &quot;out&quot; / &quot;archive&quot; / &quot;era1&quot; / &quot;full_sft_768.pth&quot;,
+            False,
+        ),
+    }
+    selected = [w.strip() for w in args.weights.split(&quot;,&quot;) if w.strip()]
+    unknown = [w for w in selected if w not in all_specs]
+    if unknown:
+        raise SystemExit(f&quot;未知权重名：{unknown}；可选：{list(all_specs)}&quot;)
+    weight_specs = [all_specs[w] for w in selected]
+
+    report: list[str] = [&quot;# 多轮/连续对话能力检测&quot;, &quot;&quot;]
+    if args.rope_scaling:
+        report += [
+            &quot;&gt; **YaRN 推理外推已开启**：`inference_rope_scaling=True`，&quot;
+            &quot;插值 orig_max=380（=实际训练窗）、factor=6（外推目标 2280 tok）。&quot;,
+            &quot;&quot;,
+        ]
+
+    for name, weight, official in weight_specs:
+        print(f&quot;===== {name} =====&quot;)
+        em = EvalModel(name, weight, official, args.device, rope_scaling=args.rope_scaling)
+        report += [f&quot;## {name}&quot;, &quot;&quot;]
+
+        if &quot;A&quot; in args.suites:
+            r = suite_a(em)
+            report += [
+                f&quot;**Suite A 跨轮记忆召回率：{r[&#x27;recall_rate&#x27;]:.1%}**（命中 {r[&#x27;recall_hits&#x27;]}/{r[&#x27;recall_total&#x27;]}）&quot;,
+                &quot;&quot;,
+            ]
+            print(f&quot;  A 召回率 {r[&#x27;recall_rate&#x27;]:.1%}&quot;)
+
+        if &quot;B&quot; in args.suites:
+            r = suite_b(em)
+            report += [
+                &quot;**Suite B 上下文长度压力**&quot;,
+                &quot;&quot;,
+                &quot;| 目标长度 | 实际 prompt tok | 生成 tok | 重复率 | 在题 |&quot;,
+                &quot;|---|---|---|---|---|&quot;,
+            ]
+            for lv in r[&quot;levels&quot;]:
+                report.append(
+                    f&quot;| ≈{lv[&#x27;target_tokens&#x27;]} | {lv[&#x27;actual_prompt_tokens&#x27;]} | {lv[&#x27;gen_tokens&#x27;]} |&quot;
+                    f&quot; {lv[&#x27;rep_rate&#x27;]:.3f} | {&#x27;✅&#x27; if lv[&#x27;on_topic&#x27;] else &#x27;❌&#x27;} |&quot;
+                )
+            report += [&quot;&quot;]
+            print(&quot;  B 完成&quot;)
+
+        if &quot;C&quot; in args.suites:
+            r = suite_c(em)
+            report += [
+                f&quot;**Suite C 长程稳定性（12 轮）**：前 3 轮重复率 {r[&#x27;avg_rep_first3&#x27;]} → &quot;
+                f&quot;末 3 轮 {r[&#x27;avg_rep_last3&#x27;]}；角色漂移 {&#x27;是 ⚠&#x27; if r[&#x27;role_drift&#x27;] else &#x27;否&#x27;}&quot;,
+                &quot;&quot;,
+            ]
+            print(f&quot;  C 前3/末3 重复率 {r[&#x27;avg_rep_first3&#x27;]}/{r[&#x27;avg_rep_last3&#x27;]}&quot;)
+
+        if &quot;D&quot; in args.suites and name == &quot;ours_dpo&quot;:  # 边界行为只需测一个模型
+            r = suite_d(em)
+            report += [
+                f&quot;**Suite D 边界行为（&gt;32768 tok prompt）**：{r[&#x27;behavior&#x27;]}&quot;,
+                &quot;&quot;,
+                f&quot;&gt; 错误摘要：`{r[&#x27;error_head&#x27;]}`&quot;,
+                &quot;&quot;,
+            ]
+            print(f&quot;  D {r[&#x27;behavior&#x27;]}&quot;)
+
+        del em
+        torch.cuda.empty_cache()
+
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open(&quot;a&quot;, encoding=&quot;utf-8&quot;) as f:
+        f.write(&quot;\n&quot;.join(report) + &quot;\n&quot;)
+    print(f&quot;\n已追加到 {out_path}&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=3"></script>
+</body>
+</html>

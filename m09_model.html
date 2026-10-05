@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M09 · 组装 ForCausalLM：参数账本与官方权重互通 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m09">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第二篇 模型：造</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M09</span><span>第二篇 · 模型：造</span><span class="badge-ms">🏁A</span></div>
+        <h1>组装 ForCausalLM：参数账本与官方权重互通</h1>
+        <p class="lede">
+          M08 装完最后一个零件 FFN，零件架满了：RMSNorm、RoPE、KV cache、Attention、FFN。本课<b>总装</b>——
+          把它们拧成 MiniMindForCausalLM，然后做全程最重要的对接之一：你手上的模型，<b>逐键载入官方训练好的权重</b>。
+          63.91M 参数算清账、对上账，🏁 里程碑 A 达成：模型建成。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M08</b>（M05 的"非持久 buffer"伏笔本课回收）</span>
+          <span class="chip">时长：<b>约 85 分钟</b></span>
+          <span class="chip">新概念：<b>weight tying · 移位交叉熵</b></span>
+          <span class="chip">对照：<code>models/model.py</code> · <code>models/weights.py</code> · <code>tests/test_models/test_model.py</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>画出 Block 的 pre-norm 残差流图，解释"先 norm 再进子层"为什么让 8 层叠加后依然好训；</li>
+        <li>逐部件手算 63.91M 参数账本，用逐键分组脚本与官方权重 strict 载入双重核对；</li>
+        <li>说出 weight tying 省下的是哪 4.92M、为什么词汇预测头与词嵌入天然可以共享一块张量；</li>
+        <li>默写移位交叉熵 <code>logits[..., :-1] ↔ labels[..., 1:]</code>，解释 ignore_index=-100 与初始 loss ≈ ln(6400)；</li>
+        <li>区分权重加载的 strict / finetune 双语义，复述"静默吞键是最危险的『成功』"各防什么事故。</li>
+      </ul>
+
+      <h2 id="assembly">总装：从零件到整机</h2>
+      <p>
+        五课零件在整机里的位置——M03 ⑤站画过图纸，现在每块砖都换成了你读过、跑过的类名：
+      </p>
+      <pre class="ascii"><code>MiniMindForCausalLM（model.py:127）—— 本课组装的整机
+│
+├─ model: MiniMindModel（骨干，model.py:52）
+│   ├─ embed_tokens   词 → 向量（M03 ②站的查找表）
+│   ├─ layers × 8     MiniMindBlock（本课）
+│   │   ├─ input_layernorm         【M05】RMSNorm
+│   │   ├─ self_attn               【M07】GQA + QK-Norm + RoPE + KV cache【M06】
+│   │   ├─ post_attention_layernorm【M05】RMSNorm
+│   │   └─ mlp                     【M08】SwiGLU（或 MoE）
+│   ├─ norm          出口第 17 个 RMSNorm【M05】
+│   └─ freqs_cos/sin RoPE 预计算表（非持久 buffer）【M05】
+└─ lm_head          768 → 6400 的词汇预测头（与 embed_tokens 共享权重，本课）</code></pre>
+      <p>
+        整机只有 174 行（<a href="codeview/src/minimind_reborn/models/model.py.html">models/model.py</a>），
+        三个类各管一段：<code>MiniMindBlock</code> 管一层的变化，<code>MiniMindModel</code> 管骨干（把 8 层串起来、
+        持有 RoPE 表），<code>MiniMindForCausalLM</code> 管头与损失（把 768 维隐状态变成 6400 个词的打分）。
+        <b>骨干 vs 头</b>为什么拆开？因为头是"任务"：换成一个分类头就是句向量模型，骨干原封不动。
+      </p>
+
+      <h3 id="block">Block：pre-norm 残差的最终形态</h3>
+      <p>
+        M03 ⑤站见过图纸、M05 精读过其中的 norm，现在看全貌——整个 Block 的 <code>forward</code> 只有两行加法：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/model.py.html">src/minimind_reborn/models/model.py</a> · MiniMindBlock.forward 全文</span><span class="lang">python</span></div><pre class="code"><code>hidden_states = hidden_states + self.self_attn(      # x + attn(ln1(x))
+    self.input_layernorm(hidden_states),              # 先归一化，再进注意力
+    position_embeddings,                              # (cos, sin)：RoPE 表切片，【M05】
+    cache=cache, layer_idx=self.layer_id,             # KV cache 逐层写入，【M06】
+    cache_start=cache_start,
+    attention_mask=attention_mask,
+)
+hidden_states = hidden_states + self.mlp(            # x1 + mlp(ln2(x1))
+    self.post_attention_layernorm(hidden_states)
+)
+return hidden_states                                  # (B, T, C)：一路加到底的残差流</code></pre></div>
+      <p>
+        两次加法的左边都是<b>未经加工的 x 本身</b>——这条从输入直通输出的通道叫<b>残差流</b>（residual stream）。
+        把 8 层展开看，残差流是一条主干道，每个子层只是往主干道上"追加"自己的贡献：
+      </p>
+      <pre class="ascii"><code>主干道（残差流）—— 任何一层看到的 x = 输入 + 此前所有子层贡献之和
+
+x ──┬──────────────────────────────┐
+    └─► ln1 ─► Attention ──────► (+)    x₁ = x + attn(ln1(x))
+x₁ ─┬─────────────────────────────┐
+    └─► ln2 ─► FFN(SwiGLU) ────► (+)    x₂ = x₁ + mlp(ln2(x₁))     × 8 层
+                                         └─ 每个子层输出加回主干道，norm 只作用于支路</code></pre>
+      <div class="callout note">
+        <div class="co-title">📐 为什么先 norm（pre-norm）而不是后 norm（post-norm）</div>
+        <p>
+          初代 Transformer（post-norm）把 norm 放在加法<b>之后</b>：<code>x = norm(x + attn(x))</code>——
+          主干道每过一层就被重新缩放一次，8 层叠起来，靠近输入的梯度被反复改写，深了就训不稳（这正是原始论文需要
+          学习率预热（warmup）的原因之一）。pre-norm 把 norm 挪进支路：<b>主干道是恒等映射</b>，梯度沿加法原样回流
+          （$\partial(x + f(x))/\partial x = I + f'$ 里的那个 $I$），层数加深不再放大数值动荡。
+          GPT-2 起至今 LLaMA/Qwen 系全线 pre-norm。代价是表示有效宽度略受影响——工程上换来训练稳定性，值。
+        </p>
+      </div>
+
+      <h3 id="head">ForCausalLM：头与两个新概念</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/model.py.html">src/minimind_reborn/models/model.py</a> · __init__ 骨架</span><span class="lang">python</span></div><pre class="code"><code>class MiniMindForCausalLM(PreTrainedModel):
+    config_class = MiniMindConfig
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}  # 告诉 HF：这两个键共享
+
+    def __init__(self, config: MiniMindConfig | None = None):
+        config = config or MiniMindConfig()
+        super().__init__(config)                       # 继承 HF：from_pretrained/config 管理免费获得
+        self.model = MiniMindModel(config)             # 骨干
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)  # 768 → 6400
+        if config.tie_word_embeddings:
+            self.model.embed_tokens.weight = self.lm_head.weight      # ← 一行完成 weight tying
+        self.post_init()</code></pre></div>
+      <p>
+        先补两个词。<b>logits</b>（对数几率）：模型对词表每个候选词输出的未归一化打分——M02 调温度时你摸过它；
+        <code>lm_head</code>（language modeling head，词汇预测头）是产出 logits 的线性层：768 维隐状态 × 权重矩阵 →
+        6400 个打分，<b>无 bias</b>（与全模型线性层一致——RMSNorm 去偏置的同一哲学）。
+      </p>
+
+      <p><b>Weight tying（权重绑定）</b>是本课第一个新概念，只花了一行代码：</p>
+      <div class="callout tip">
+        <div class="co-title">💡 直觉：一张表，正着查、反着用</div>
+        <p>
+          <code>embed_tokens.weight</code> 的形状是 <code>(6400, 768)</code>——第 i 行就是"词 i 长什么样"的向量；
+          <code>lm_head.weight</code> 的形状也是 <code>(6400, 768)</code>——隐状态与第 j 行做内积，就是在问
+          "这个隐状态跟词 j 像不像"。<b>一个把词变向量，一个拿向量比词，参考的却是同一张"词—向量"对照表</b>——
+          既然语义相同，何必存两份？绑定后两块内存是同一个张量（<code>is</code> 判定为真），省下
+          6400 × 768 = <b>4,915,200（4.92M）</b>参数——对 64M 的模型是 7.7% 的家当。
+        </p>
+      </div>
+      <p>
+        绑定带来三个工程细节，都值得记：① <code>named_parameters()</code> 对共享参数<b>去重</b>——
+        <code>lm_head.weight</code> 根本不出现在参数清单里（实测 90 项），<code>parameters()</code> 求和自动不重复计账；
+        ② <code>state_dict()</code> 却<b>两个键都保留</b>（实测 91 项）——保存/加载按模块路径走，两键指向同一块内存；
+        ③ 类属性 <code>_tied_weights_keys</code> 是给 transformers 生态的声明："保存为 HF 格式时这两个键别存两份"。
+        官方 checkpoint 同样带 <code>lm_head.weight</code> 键——所以 strict 载入能逐键对上。
+      </p>
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：小模型 tie，大模型 untie</div>
+        <p>
+          官方 minimind 与 reborn 默认 <code>tie_word_embeddings=True</code>；工业界 GPT-2 与 Gemma 系全线 tying，
+          Qwen2/Qwen2.5 只在小尺寸档（0.5B/1.5B）tying、7B 起解绑，LLaMA 系与 Mistral-7B 则一贯解绑。
+          分界线就是省量占比：大模型词表大（15 万+），embedding 动辄上亿参数，但总参数几百亿——
+          绑定省不到 2%（LLaMA-2 7B 约 1.8%），而"输入查找表"和"输出打分器"分开学出的表征确实更强；
+          小模型参数寸土寸金，绑定的正则效应（同一张表逼着学一致表征）反而更划算。
+          <code>tie_word_embeddings</code> 字段（config.py:36）就是这条工程权衡的开关。
+        </p>
+      </div>
+
+      <h3 id="shift">移位交叉熵：用第 t 位预测第 t+1 位</h3>
+      <p>
+        语言模型的训练目标一句话：<b>看前文，猜下一个词</b>。代码在 forward 里只有六行，
+        但"移位"（shift）这个动作是本课第二个新概念：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/model.py.html">src/minimind_reborn/models/model.py</a> · forward 的损失段</span><span class="lang">python</span></div><pre class="code"><code>logits = self.lm_head(hidden_states[:, slice_indices, :])   # (B, T, 6400)：每个位置一套打分
+loss = None
+if labels is not None:
+    # 移位：位置 i 的 logits 预测位置 i+1 的 token；-100 忽略（padding 与非回答区间）
+    shift_logits = logits[..., :-1, :].contiguous()          # 去掉最后一位 (B, T-1, 6400)
+    shift_labels = labels[..., 1:].contiguous()              # 去掉第一位 (B, T-1)
+    loss = F.cross_entropy(
+        shift_logits.view(-1, shift_logits.size(-1)),        # 摊平 (B·(T-1), 6400)
+        shift_labels.view(-1),                               # 摊平 (B·(T-1),)
+        ignore_index=-100,                                   # 标签 -100 的位置不进损失
+    )</code></pre></div>
+      <p>
+        拿一句话走一遍（T=5；<code>&lt;s&gt;</code> 是 BOS 序列起始符，M02 对话模板里的开场 token）。
+        模型对<b>每个</b>位置都输出一套 6400 维打分——位置 0 看到的只有 <code>&lt;s&gt;</code>，
+        它的打分该把"北"顶上去；位置 3 看到"&lt;s&gt; 北 京 城"，它的打分该把"的"顶上去：
+      </p>
+      <pre class="ascii"><code>位置 t:      0      1      2      3      4
+input_ids:  &lt;s&gt;    北     京     城     的
+labels:     &lt;s&gt;    北     京     城     的      ← 训练时 labels 就是 input_ids 本身
+
+logits[t] 谁该得高分？ —— 位置 t 的答案是 labels[t+1]（下一个词）：
+             0 号打分 ↔ labels[1] = "北"
+             1 号打分 ↔ labels[2] = "京"
+             2 号打分 ↔ labels[3] = "城"
+             3 号打分 ↔ labels[4] = "的"
+             4 号打分 ↔ labels[5] = ？（越界，丢弃）
+
+移位 = logits[..., :-1] 对齐 labels[..., 1:]：各留 T-1 个有效配对位</code></pre>
+      <p>
+        两个零碎但要紧的点。<b>为什么不直接 logits 对 labels？</b>那样位置 0 的打分会拿 labels[0]="&lt;s&gt;"
+        当目标——模型学到的是"复读当前词"而不是"预测下一词"，训练看起来也收敛，生成的模型只会照抄输入，
+        错位一个下标，全盘皆错。<b>.contiguous() 是什么？</b>切片后的张量在内存里不连续，
+        <code>view</code>（按形状重新解读内存，不搬数据）要求连续存储，<code>contiguous()</code> 物理搬一次；
+        用 <code>reshape</code> 可以省掉这两个词，但显式 contiguous 让"这里发生过一次拷贝"可见。
+      </p>
+      <p>
+        交叉熵（M01 定义：衡量"模型给正确答案的概率"有多低）在均匀乱猜时等于 $\log V$——
+        这是 M01 测验 1 埋下的钩子，本课亲手回收：
+      </p>
+        $$ \mathcal{L} = -\frac{1}{|M|}\sum_{t \in M}\log \frac{\exp(z_{t,\,y_{t+1}})}{\sum_{j=1}^{V}\exp(z_{t,\,j})} \qquad \text{初始化时 } z \approx 0 \Rightarrow \mathcal{L}_0 \approx \log V = \log 6400 \approx 8.7641 $$
+      <p>
+        M01 测验 1 承诺过"M09 组装模型后用它验证组装没装错"——当场兑现。组装一台 tiny 版
+        （词表仍是默认 6400），喂随机 token 看 loss 落在哪：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m09_tiny_loss.py · 初始 loss 体检</span><span class="lang">python</span></div><pre class="code"><code>import math
+import torch
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+
+torch.manual_seed(42)
+cfg = MiniMindConfig(hidden_size=64, num_hidden_layers=2,
+                     num_attention_heads=4, num_key_value_heads=2)   # 词表仍是默认 6400
+tiny = MiniMindForCausalLM(cfg).eval()
+x = torch.randint(0, cfg.vocab_size, (3, 16))     # (B, T)：随机 token 当输入
+with torch.no_grad():
+    out = tiny(x, labels=x)                       # labels=input_ids：预测下一个 token
+print("logits:", tuple(out.logits.shape), "| loss = %.4f" % out.loss.item())
+print("ln(6400) = %.4f" % math.log(6400))</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m09_tiny_loss.py</span>
+<span class="out">logits: (3, 16, 6400) | loss = 8.8141</span>
+<span class="out">ln(6400) = 8.7641</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b>
+      8.8141 与理论值 8.7641 差 0.05——随机初始化让 logits 带着微小的随机起伏，并非完全均匀
+      （M01 日志的 8.7871 同理）。若你的初始 loss 离 8.76 有 0.5 以上的距离，
+      先怀疑词表大小被改过或损失算错位置——这台"体温计"对错位极其敏感。</p>
+      <p>
+        <b>ignore_index=-100</b> 是数据层的约定俗成：一个 batch 里短句要补齐（padding，M02 ③站见过）到同一长度，
+        补出来的位置不携带"下一个词"的语义，数据管道把它们的 label 置成 -100（datasets.py:338 一行：
+        <code>labels[input_ids == pad_token_id] = -100</code>），交叉熵跳过这些位置——M01 冒烟日志里那个
+        loss=8.7871 的 batch 同样含 pad 位。这句约定的另一端（SFT 里"只对回答区间算损失"的 loss_mask）
+        M12 详讲；本课只需记住：<b>-100 = "这一格不算账"</b>。
+      </p>
+      <p>
+        forward 签名里还有个 <code>logits_to_keep: int = 0</code>：大于 0 时只对最后 N 个位置过 lm_head——
+        生成时一步只需要最后一个位置的打分，全序列 × 6400 的矩阵乘法可以省掉大半。它是给 transformers 生态
+        （HF 的 generate 流程会传这个参数）留的兼容开关；reborn 自己的生成内核（M03 ⑥站）走全量 logits
+        再切 <code>[:, -1, :]</code>（generator.py:78），两条路都通。
+        MoE 的 <code>aux_loss</code>（M08 的负载均衡辅助损失）也在这里收口：骨干把各层 <code>mlp.aux_loss</code>
+        求和带回（model.py:120-123），dense 模型恒为 0——<code>test_forward_shapes_and_loss</code> 断言的正是这一条。
+      </p>
+
+      <h2 id="ledger">参数账本：63.91M 逐键对账</h2>
+      <p>
+        63.91M 这个数字你在 M01 的训练日志里见过（"63.91M 可训练参数"）。现在把账算开——
+        每个部件的形状、数量、份数全部来自前五课读过的源码，不查文档，手算：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>部件（state_dict 键模式）</th><th class="u-w130">形状</th><th class="u-w130">单份数量</th><th class="u-w44">×份</th><th class="u-w130">小计</th></tr></thead>
+          <tbody>
+            <tr><td><code>embed_tokens.weight</code></td><td>(6400, 768)</td><td>4,915,200</td><td>1</td><td>4,915,200</td></tr>
+            <tr><td><code>layers.N.self_attn.q_proj</code></td><td>(768, 768)</td><td>589,824</td><td>8</td><td>4,718,592</td></tr>
+            <tr><td><code>layers.N.self_attn.k_proj</code></td><td>(384, 768)</td><td>294,912</td><td>8</td><td>2,359,296</td></tr>
+            <tr><td><code>layers.N.self_attn.v_proj</code></td><td>(384, 768)</td><td>294,912</td><td>8</td><td>2,359,296</td></tr>
+            <tr><td><code>layers.N.self_attn.o_proj</code></td><td>(768, 768)</td><td>589,824</td><td>8</td><td>4,718,592</td></tr>
+            <tr><td><code>layers.N.self_attn.q_norm/k_norm</code></td><td>(96,)</td><td>96×2</td><td>8</td><td>1,536</td></tr>
+            <tr><td><code>layers.N.input_layernorm</code></td><td>(768,)</td><td>768</td><td>8</td><td>6,144</td></tr>
+            <tr><td><code>layers.N.post_attention_layernorm</code></td><td>(768,)</td><td>768</td><td>8</td><td>6,144</td></tr>
+            <tr><td><code>layers.N.mlp.gate_proj</code></td><td>(2432, 768)</td><td>1,867,776</td><td>8</td><td>14,942,208</td></tr>
+            <tr><td><code>layers.N.mlp.up_proj</code></td><td>(2432, 768)</td><td>1,867,776</td><td>8</td><td>14,942,208</td></tr>
+            <tr><td><code>layers.N.mlp.down_proj</code></td><td>(768, 2432)</td><td>1,867,776</td><td>8</td><td>14,942,208</td></tr>
+            <tr><td><code>norm.weight</code>（出口）</td><td>(768,)</td><td>768</td><td>1</td><td>768</td></tr>
+            <tr><td><code>lm_head.weight</code></td><td>与 embed 同源</td><td>—</td><td>—</td><td><b>0</b>（tying 省下 4,915,200）</td></tr>
+            <tr><td><b>合计</b></td><td></td><td></td><td></td><td><b>63,912,192 = 63.91M</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        账本里三处"为什么"：<b>k/v_proj 是 384 行</b>——GQA 让 4 个 KV 头（M07）各出 96 维，768 的一半，
+        注意力四矩阵合计每层 1,769,472；<b>FFN 三矩阵各 768×2432</b>——SwiGLU 比经典两层 FFN 多一个门控矩阵
+        （M08），中间维 2432 是 M04 手算过的 <code>ceil(768·π/64)·64</code>；每层小计
+        1,769,472 + 192 + 1,536 + 5,603,328 = <b>7,374,528</b>，× 8 层 = 58,996,224，加 embed 与出口 norm
+        得 63,912,192。结构上大头是 FFN：44,826,624（70.1%），注意力只占 22.2%——
+        "Transformer 的参数住在 FFN 里"是记住这账本的口诀。手算会错，让模型自己核对：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m09_ledger.py · 逐键分组参数账本</span><span class="lang">python</span></div><pre class="code"><code>import re
+from collections import OrderedDict
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+
+model = MiniMindForCausalLM(MiniMindConfig())   # 64M 默认结构：768 宽 × 8 层
+groups: "OrderedDict[str, list]" = OrderedDict()
+for name, p in model.named_parameters():
+    key = name.removeprefix("model.")                 # model.layers.0.… → layers.0.…
+    key = re.sub(r"layers\.\d+", "layers.N", key)     # 8 层逐层归并到同一行
+    groups.setdefault(key, [0, 0])
+    groups[key][0] += p.numel()                       # 该行总参数
+    groups[key][1] += 1                               # 出现的 key 数
+
+total = sum(v[0] for v in groups.values())
+for k, (n, c) in groups.items():
+    tag = "" if c == 1 else f"  ← ×{c} 层"
+    print(f"{k:44s}{n:>12,}{tag}")
+print(f"{'合计':44s}{total:>12,}   = {total/1e6:.2f}M")
+print("lm_head.weight 单独计账了吗：", "lm_head.weight" in groups)</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m09_ledger.py</span>
+<span class="out">embed_tokens.weight                            4,915,200</span>
+<span class="out">layers.N.self_attn.q_proj.weight               4,718,592  ← ×8 层</span>
+<span class="out">layers.N.self_attn.k_proj.weight               2,359,296  ← ×8 层</span>
+<span class="out">layers.N.self_attn.v_proj.weight               2,359,296  ← ×8 层</span>
+<span class="out">layers.N.self_attn.o_proj.weight               4,718,592  ← ×8 层</span>
+<span class="out">layers.N.self_attn.q_norm.weight                     768  ← ×8 层</span>
+<span class="out">layers.N.self_attn.k_norm.weight                     768  ← ×8 层</span>
+<span class="out">layers.N.input_layernorm.weight                    6,144  ← ×8 层</span>
+<span class="out">layers.N.post_attention_layernorm.weight           6,144  ← ×8 层</span>
+<span class="out">layers.N.mlp.gate_proj.weight                 14,942,208  ← ×8 层</span>
+<span class="out">layers.N.mlp.down_proj.weight                 14,942,208  ← ×8 层</span>
+<span class="out">layers.N.mlp.up_proj.weight                   14,942,208  ← ×8 层</span>
+<span class="out">norm.weight                                          768</span>
+<span class="out">合计                                            63,912,192   = 63.91M</span>
+<span class="out">lm_head.weight 单独计账了吗： False</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130 · transformers 5.17.0]</b>
+      表格每行与脚本输出一一对应；63,912,192 与 M01 日志的"63.91M 可训练参数"（<code>runs/pretrain_full/20260925_005504/train.log</code>，
+      <b>[存档 runs/pretrain_full/20260925_005504 · 2×RTX 4090 · bf16]</b>）三方对上。末行 False 即 tied 权重被
+      <code>named_parameters()</code> 去重——账本天然不算两份。</p>
+
+      <h2 id="weights">权重三语义：save / strict / finetune</h2>
+      <p>
+        模型有了、账算清了，下一个问题是<b>权重怎么落地、怎么回来</b>。
+        <a href="codeview/src/minimind_reborn/models/weights.py.html">models/weights.py</a>
+        全文 89 行，模块 docstring 立了四条不变量，其中三条定义了三个语义不同的入口：
+      </p>
+      <h3 id="save">save_inference_weights：fp16 CPU 原子写</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/weights.py.html">src/minimind_reborn/models/weights.py</a> · save_inference_weights</span><span class="lang">python</span></div><pre class="code"><code>def save_inference_weights(model: nn.Module, path: str | Path, dtype: torch.dtype = torch.float16) -> Path:
+    """保存推理权重（fp16 CPU，原子写）。调用方负责 rank0 门控。"""
+    raw = unwrap_model(model)     # 剥掉 DDP / torch.compile 壳（分布式/编译加速的包装都不留进文件）
+    state_dict = {k: v.detach().to(dtype=dtype, device="cpu") for k, v in raw.state_dict().items()}
+    return atomic_save(state_dict, path)</code></pre></div>
+      <p>
+        三个动词各有含义。<b>.to(fp16, cpu)</b>：训练可能跑在 bf16 + 多卡上，但落盘统一 fp16（M05 讲过的半精度，
+        尾数 10 位，比 bf16 精一倍、动态范围小——推理权重取其精确）；统一 CPU 是让文件<b>与机器无关</b>
+        （GPU 序列化文件到无卡机器上直接炸——docstring 不变量第一条）。<b>原子写</b>（atomic write）：先写
+        <code>path.tmp</code> 再一步改名——写到一半被 kill -9（强杀进程）不会留下半个坏文件顶替好文件
+        （M14 用 kill -9 实验专门验证）。<b>rank0 门控</b>：多卡训练只有 0 号进程写文件，其余进程不碰——
+        "调用方负责"即这层判断在训练器里（M15）。
+      </p>
+      <h3 id="strict">load_inference_weights：strict 的两种死法</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/weights.py.html">src/minimind_reborn/models/weights.py</a> · load_inference_weights</span><span class="lang">python</span></div><pre class="code"><code>state_dict = torch.load(path, map_location="cpu", weights_only=True)  # 先到 CPU；只认权重对象
+missing, unexpected = model.load_state_dict(state_dict, strict=False)  # 先非严格拿清单
+if strict and (missing or unexpected):                                 # 严格模式：清单必须干净
+    raise RuntimeError(
+        f"权重加载失败（严格模式）：{len(missing)} 个缺失 key / {len(unexpected)} 个多余 key。"
+        f"模型结构可能与权重不匹配；微调场景请用 load_finetune_weights（非严格 + 逐 key warning）"
+    )</code></pre></div>
+      <p>
+        <b>strict（严格加载）</b>的语义一句话：<b>模型的键集合与文件的键集合必须完全相等</b>——模型多一个 key
+        （文件没给它权重，它保持随机初始化）或文件多一个 key（模型没这个部件）都算失败。注意一个细节：
+        <code>load_state_dict(strict=False)</code> 只放过缺失/多余，<b>放不过形状不匹配</b>——把 768 的官方权重
+        灌进 512 模型时，炸的是 PyTorch 自己的 size mismatch 报错，连 reborn 的报错都轮不到。两种死法真跑各来一次：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+from minimind_reborn.models.weights import load_inference_weights
+m = MiniMindForCausalLM(MiniMindConfig(hidden_size=512))     # 宽度对不上的自建模型
+load_inference_weights(m, 'out/official/pretrain_768.pth', strict=True)"</span>
+<span class="err">RuntimeError: Error(s) in loading state_dict for MiniMindForCausalLM:</span>
+<span class="err">        size mismatch for model.embed_tokens.weight: copying a param with shape torch.Size([6400, 768]) from checkpoint, the shape in current model is torch.Size([6400, 512]).</span>
+<span class="dim">        …（91 个 key 逐条列出，全部 size mismatch；炸点在 weights.py:53 的 load_state_dict）…</span></code></pre>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+import torch
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+from minimind_reborn.models.weights import save_inference_weights, load_inference_weights
+cfg = MiniMindConfig(hidden_size=32, num_hidden_layers=2, num_attention_heads=2,
+                     num_key_value_heads=1, vocab_size=64, max_position_embeddings=128)
+m = MiniMindForCausalLM(cfg)
+save_inference_weights(m, '/tmp/m09_m.pth')                  # 先存一份完整权重
+sd = torch.load('/tmp/m09_m.pth', weights_only=True)
+del sd['model.embed_tokens.weight']                          # 再挖掉一个 key 制造缺失
+torch.save(sd, '/tmp/m09_hole.pth')
+try:
+    load_inference_weights(MiniMindForCausalLM(cfg), '/tmp/m09_hole.pth', strict=True)
+except RuntimeError as e:
+    print('strict →', e)"</span>
+<span class="out">strict → 权重加载失败（严格模式）：1 个缺失 key / 0 个多余 key。模型结构可能与权重不匹配；微调场景请用 load_finetune_weights（非严格 + 逐 key warning）</span></code></pre>
+      <h3 id="finetune">load_finetune_weights：非严格，但不许装哑</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/weights.py.html">src/minimind_reborn/models/weights.py</a> · load_finetune_weights + 警告</span><span class="lang">python</span></div><pre class="code"><code>def load_finetune_weights(model: nn.Module, path: str | Path) -> None:
+    """微调加载：非严格 + 缺失/形状不匹配逐 key warning（training §4 反'静默吞键'）。"""
+    state_dict = torch.load(path, map_location="cpu", weights_only=True)
+    model_state = model.state_dict()
+    shape_mismatch = [k for k, v in state_dict.items() if k in model_state and model_state[k].shape != v.shape]
+    filtered = {k: v for k, v in state_dict.items() if k not in shape_mismatch}  # 形状不对的先剔除
+    missing, unexpected = model.load_state_dict(filtered, strict=False)          # 再非严格载入
+    _warn_key_diff(missing, unexpected, shape_mismatch)
+
+def _warn_key_diff(missing, unexpected, shape_mismatch):
+    if missing:        logger.warning("权重加载缺失 %d 个 key（保持初始化值）：%s", len(missing), missing[:8])
+    if unexpected:     logger.warning("权重加载多余 %d 个 key（已忽略）：%s", len(unexpected), unexpected[:8])
+    if shape_mismatch: logger.warning("权重加载形状不匹配 %d 个 key（已忽略）：%s", len(shape_mismatch), shape_mismatch[:8])</code></pre></div>
+      <p>
+        <b>finetune（微调）语义</b>：从旧权重出发训新任务，结构允许不同——新加的模块保持初始化、
+        没用上的旧键忽略、形状对不上的剔除，<b>但每一种差异都要逐 key 喊出来</b>。上面挖了洞的文件走这条路：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+from minimind_reborn.models.weights import load_finetune_weights
+import logging; logging.basicConfig(level=logging.WARNING)
+cfg = MiniMindConfig(hidden_size=32, num_hidden_layers=2, num_attention_heads=2,
+                     num_key_value_heads=1, vocab_size=64, max_position_embeddings=128)
+load_finetune_weights(MiniMindForCausalLM(cfg), '/tmp/m09_hole.pth')
+print('finetune 语义：不炸，带着警告继续')"</span>
+<span class="out">WARNING:minimind.weights:权重加载缺失 1 个 key（保持初始化值）：['model.embed_tokens.weight']</span>
+<span class="out">finetune 语义：不炸，带着警告继续</span></code></pre>
+      <p>
+        weights.py 模块 docstring 的原话（第 7-8 行）值得抄在本子上：<i>"finetune 语义非严格加载，
+        但缺失/形状不匹配的 key 逐条 warning——<b>静默吞键是最危险的『成功』</b>。"</i>
+        危险在哪？缺失的 embed 保持随机初始化，加载"成功"、训练照跑、loss 也降——只是永远学不好，
+        你会在几小时后的曲线前面怀疑人生。同一个错误，strict 把它变成启动前一秒的报错
+        （M04 的 fail-fast 在权重层的镜像），finetune 把它变成必须直视的警告。<code>test_finetune_load_warns_missing_keys</code>
+        用 caplog（pytest 的日志捕获器）断言"缺失"二字必须出现在日志里——连"必须喊"本身都有测试锁着。
+      </p>
+      <p>
+        最后一件小事：<code>resolve_weight_path</code> 把短名翻译成文件——命名约定
+        <code>{权重名}_{hidden_size}[_moe].pth</code>：<code>resolve_weight_path('pretrain', 'out', 768, False)</code>
+        → <code>out/pretrain_768.pth</code>（MoE 再加后缀；已是文件则原样返回）。
+        M04 变式 1 的"hidden 进文件名"在这里被消费：宽度不同的权重互不干扰，靠命名就能找到彼此。
+      </p>
+
+      <h2 id="bughunt">🔍 bug 猎场：RoPE buffer 在 meta 初始化中丢失</h2>
+      <p>
+        M05 结尾埋的雷今天挖：<b>非持久 buffer</b>（<code>register_buffer(..., persistent=False)</code>——
+        跟着模型走设备、不参与训练、不进 checkpoint 的派生数据）在正常构造下毫无问题——
+        <code>__init__</code> 里预计算、forward 里切片。问题出在<b>模型不是"正常构造"出来的</b>那些路上。
+      </p>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：transformers ≥5 的 meta 初始化，会把 RoPE 表变成空壳</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            <b>meta 设备</b>（M05 见过：只登记形状、不分配内存的虚拟设备）是 transformers 5.x 初始化模型的新姿势：
+            先在 meta 上把 8 层骨架搭起来（零内存开销），再把 checkpoint 里的参数逐个灌进去。
+            灌参数时<b>参数有人管、持久 buffer 有人管（从 checkpoint 恢复），唯独 persistent=False 的 buffer 没人管</b>——
+            它不在 checkpoint 里，物化路径也不会替你重算。症状：形状还在，值是全零（或未初始化内存）；
+            模型能跑、不报错，位置编码却已蒸发。
+          </li>
+          <li class="cause">
+            责任真空：非持久 buffer 的契约是"派生数据、加载时重算即可"，但"加载时重算"这一步
+            <b>没有任何机制保证发生</b>——<code>load_state_dict</code> 只覆盖参数与持久 buffer。作者实测复现责任真空
+            （脚本见下）：孪生模型建在 meta 上物化、灌入好模型的全部参数，唯独 RoPE 表回不来——
+            四次运行 logits 最大偏差 0.28 / NaN / 0.14 / 0.22，<b>坏法每次不一样（内存里是什么垃圾就用什么），坏本身每次都发生</b>。
+          </li>
+          <li class="fix">
+            reborn 的 workaround 在 model.py:75-90：每次 forward 先花一次 <code>torch.all(self.freqs_cos == 0)</code>
+            探测（全零判据——官方踩坑时物化路径留下的正是全零），命中就重算重注册。注释原文：
+            <i>"这是官方踩坑后的 workaround（原版同款判断），单测 test_models 锁定该行为。"</i>
+          </li>
+        </ul>
+      </div>
+      <p>责任真空的最小复现（meta → 物化 → 灌参数，三步还原 transformers 的初始化路线）：</p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m09_meta_repro.py · 非持久 buffer 的责任真空</span><span class="lang">python</span></div><pre class="code"><code>import torch
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+
+torch.manual_seed(0)
+cfg = MiniMindConfig(hidden_size=32, num_hidden_layers=2, num_attention_heads=2,
+                     num_key_value_heads=1, vocab_size=64, max_position_embeddings=128)
+good = MiniMindForCausalLM(cfg).eval()              # 正常初始化的孪生模型
+with torch.device("meta"):                          # transformers>=5 建模型的姿势：只登记形状
+    m = MiniMindForCausalLM(cfg)
+m = m.to_empty(device="cpu")                        # 物化：分配内存但不填值
+m.load_state_dict(good.state_dict())                # 参数与持久 buffer 复活；非持久 buffer 无人负责
+x = torch.randint(0, 64, (2, 7))
+with torch.no_grad():
+    diff = (m(x).logits - good(x).logits).abs().max().item()
+print("freqs_cos 与好模型一致?", torch.equal(m.model.freqs_cos, good.model.freqs_cos))
+print("logits 最大偏差:", round(diff, 4))</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m09_meta_repro.py</span>
+<span class="out">freqs_cos 与好模型一致? False</span>
+<span class="out">logits 最大偏差: nan</span>
+<span class="p">$ </span><span class="cmd">uv run python /tmp/m09_meta_repro.py</span>
+<span class="out">freqs_cos 与好模型一致? False</span>
+<span class="out">logits 最大偏差: 0.1355</span></code></pre>
+      <p>
+        防线本身只有十几行——判据、重算、重注册：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/model.py.html">src/minimind_reborn/models/model.py</a> · _rebuild_rope_if_lost</span><span class="lang">python</span></div><pre class="code"><code>def _rebuild_rope_if_lost(self, device: torch.device, dtype: torch.dtype) -&gt; None:
+    """transformers&gt;=5.x meta-device 初始化会丢非持久 buffer（全 0 判据）——重建一次。"""
+    if bool(torch.all(self.freqs_cos == 0)):                    # 全零 = 表丢了
+        freqs_cos, freqs_sin = precompute_freqs_cis(            # 按 config 重算
+            dim=self.config.head_dim,
+            end=self.config.max_position_embeddings,
+            rope_base=self.config.rope_theta,
+            rope_scaling=self.config.rope_scaling,
+        )
+        self.register_buffer(                                    # 重新注册（覆盖旧 buffer）
+            "freqs_cos", freqs_cos.to(device=device, dtype=dtype), persistent=False
+        )
+        self.register_buffer("freqs_sin", freqs_sin.to(device=device, dtype=dtype), persistent=False)</code></pre></div>
+      <p>
+        它在每次 forward 开头被调用（model.py:104）。回归锁定是
+        <code>test_rope_buffer_rebuild_after_meta_init</code>：把 buffer 手动置零模拟 meta 初始化的后果，
+        断言 forward 之后"表非全零且 logits 有限"——症状是模拟的，锁的行为是真实的。
+        诚实边界：判据认"全零"不认"垃圾内存"（上面 to_empty 的垃圾路径不触发重建；生产路径不走 to_empty，
+        官方观察到的症状是全零）。<b>通用教训</b>：跨边界数据的恢复责任必须有<b>明确归属</b>——
+        归属不清时，谁最了解这块数据（模型自己）谁兜底；而"能跑但结果悄悄不对"永远比报错危险，
+        后者至少逼你停下来。
+      </p>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130 · transformers 5.17.0]</b>
+      复现脚本连续 4 次运行偏差分别为 0.2846 / NaN / 0.1355 / 0.2240（未初始化内存非确定）；注释引文逐字来自
+      model.py:76-79。<b>[事实核对]</b> M05 的伏笔原话："transformers ≥5.x 用 meta 设备初始化模型时会丢非持久
+      buffer，model.py:75-90 为此留了重建兜底——M09 的猎场就从这里开挖。"两课伏笔在此汇合。</p>
+
+      <h2 id="milestone-a">🏁 里程碑 A</h2>
+      <div class="milestone">
+        <div class="ms-head"><span class="flag">🏁</span>
+          <div>
+            <div class="ms-title">里程碑 A · 模型建成</div>
+            <div class="ms-sub">第二篇收官：你组装的 63.91M 参数，与官方训练权重逐键等价</div>
+          </div>
+        </div>
+        <div class="ms-body">
+          <p>四道绿灯，全部可判定。逐项打勾：</p>
+          <ul class="checklist">
+            <li><b>① 结构测试全绿</b>：<code>uv run pytest tests/test_models/ -q</code> 输出 <code>19 passed</code>——
+              前向形状与损失、tied 断言、MoE aux、SDPA/手动等价、RoPE 重建、KV cache 纯属性、fp16 往返、finetune 警告，
+              M05–M09 四课的回归锚点一次全亮；</li>
+            <li><b>② 官方权重 strict 互通</b>：自建默认配置模型，以 <code>strict=True</code> 载入
+              <code>out/official/pretrain_768.pth</code>——无缺失 key、无多余 key，参数量 63.91M（脚本与输出见
+              <a href="#accept">验收块</a>，这是"你的模型与官方逐键等价"最硬的证据）；</li>
+            <li><b>③ 参数账本对上</b>：手算表格合计 63,912,192 = 63.91M，与逐键分组脚本、M01 训练日志三方一致；</li>
+            <li><b>④ 初始 loss 体检</b>：tiny 模型前向产出 <code>(B, T, 6400)</code> 的 logits，随机初始化下
+              loss ≈ ln(6400) = 8.7641（实测 8.8141）——M01 测验 1 的预测在你自己的模型上兑现，
+              "组装没装错"有了第二重证据。</li>
+          </ul>
+          <h3 id="retro">复盘三问（写在笔记里，比绿灯本身更重要）</h3>
+          <ul>
+            <li><b>学到什么</b>：一句话说清 pre-norm 为什么先 norm、tying 为什么能共享、移位为什么要错一位——
+              三者各自 30 秒，说不清的那条回对应小节再读一遍；</li>
+            <li><b>还差什么</b>：模型现在只有"形状"与"官方借来的灵魂"——它还不会自己说话（生成栈在 M20）、
+              不会自己学习（训练器在 M13），吃的 input_ids 也还不知道从哪来（M10 起）；</li>
+            <li><b>卡点在哪</b>：四道绿灯有任意一道没亮，先查 <a href="#accept">验收块</a> 的排查清单；
+              strict 载入失败几乎一定是结构默认值被动过（transformers 版本、hidden_size），
+              <code>load_state_dict</code> 的报错会点名第一个对不上的 key。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · 移位为什么要 logits[..., :-1] 对 labels[..., 1:]？不移位会怎样？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>位置 t 的 logits 是"看完前 t+1 个词后对下一个词的打分"，它的正确目标是 labels[t+1]——所以打分去掉最后一位（它要预测的 t+1 不存在）、标签去掉第一位（没人预测 BOS），各留 T-1 个配对。不移位则位置 t 拿 labels[t] 当目标——模型学成"复读当前词"，训练照样收敛，生成的模型只会照抄输入；错位一个下标，全盘皆错。</p>
+            <p class="back">答错回看：<a href="#shift">移位交叉熵</a> 的 T=5 逐位图解。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · weight tying 省了多少参数？为什么这两个矩阵天然可以共享？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>省 6400 × 768 = 4,915,200（4.92M，占 63.91M 的 7.7%）。直觉：embed 是"词 → 向量"的查找表（第 i 行 = 词 i 的向量），lm_head 是"隐状态 × 每个词的向量 → 打分"——两者参考的是同一张"词—向量"对照表，一个正着查、一个反着用，语义相同即可共享同一块 (6400, 768) 张量（绑定后 <code>is</code> 判定为真）。</p>
+            <p class="back">答错回看：<a href="#head">ForCausalLM 精读</a> 的直觉卡与三个工程细节。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · 同一个缺 key 的权重文件，strict 和 finetune 两种加载分别发生什么？"静默吞键是最危险的成功"防的是谁？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>strict 直接 <code>RuntimeError: 权重加载失败（严格模式）：1 个缺失 key / 0 个多余 key</code>，启动前一秒死掉；finetune 不炸，缺失的 key 保持随机初始化继续训练，但必须逐 key 打 warning（"缺失 1 个 key（保持初始化值）"）。"静默吞键"防的是第三种状态——加载既"成功"又无声，随机初始化的部件混在训练里，loss 也降只是降不好，几小时后才从曲线倒查。reborn 用测试（caplog 断言警告必现）锁死"不许装哑"。</p>
+            <p class="back">答错回看：<a href="#strict">strict 的两种死法</a> 与 <a href="#finetune">非严格但不许装哑</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · pre-norm 为什么把 RMSNorm 放在支路而不是主干道？这换来什么、付出什么？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>主干道保持恒等映射（x 原样参与加法），梯度经 $\partial(x+f(x))/\partial x = I + f'$ 中的 $I$ 直通浅层，8 层叠加不再逐层改写梯度尺度——深模型好训（post-norm 需要学习率预热来压同一问题）。付出：残差流的幅度会随层数缓慢增长（没有 norm 压它），好在出口还有第 17 个 RMSNorm 收尾，且现代实现普遍接受这一点。</p>
+            <p class="back">答错回看：<a href="#block">Block 精读</a> 的残差流图与推导卡。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · 拆掉 tying：参数账本会变成多少？</div>
+        <div class="ex-body">
+          <p>
+            <code>MiniMindConfig(tie_word_embeddings=False)</code> 就能拆掉绑定。先做笔算再跑代码：
+            63.91M 的账本里 lm_head 行贡献 0——拆掉后它要自己养一块 (6400, 768)。
+          </p>
+          <div class="ex-predict"></div>
+          <p>写下预测：64M 模型新总量是多少（精确到 0.01M）？tiny 模型（M01 冒烟的 0.53M 那款：hidden=64、2 层、词表 6400）拆掉 tying 后又是多少——占原量的比例为何比 64M 模型夸张得多？</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+base = dict(hidden_size=64, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2)
+for tag, cfg in [('tiny tied  ', MiniMindConfig(**base)),
+                 ('tiny untied', MiniMindConfig(**base, tie_word_embeddings=False)),
+                 ('64M untied', MiniMindConfig(tie_word_embeddings=False))]:
+    n = sum(p.numel() for p in MiniMindForCausalLM(cfg).parameters())
+    print(f'{tag}: {n/1e6:.4f}M')"</span></code></pre>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>作者实测（同环境）：</p>
+            <pre class="term"><code><span class="out">tiny tied  : 0.5329M</span>
+<span class="out">tiny untied: 0.9425M</span>
+<span class="out">64M untied: 68.8274M</span></code></pre>
+            <p>
+              <b>机制：</b>省量恒为词表 × 宽度：tiny 是 6400×64 = 0.41M（占 0.53M 的 77%！），64M 是
+              6400×768 = 4.92M（占 7.7%）。同一个开关，tiny 模型参数几乎翻倍、64M 模型只涨 7.7%——
+              <b>词表越大、模型越小，tying 越是刚需</b>。反过来看 0.5329M：这正好就是 M01 冒烟日志里
+              "0.53M 可训练参数"的精确值——那个数字此刻完成了从"日志里的字符串"到"你算得出、拆得动的东西"的旅程。
+              另一个细节：untied 的 68,827,392 恰等于 tied 模型 <code>state_dict</code> 逐值求和
+              （91 键含两个同源键，天然双计 4,915,200）——两种口径，一个真相。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M09 验收（= 里程碑 A 核心两条）</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下依次执行。第一条，模型全测试：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_models/ -q</span>
+<span class="out">...................                                                      [100%]</span>
+<span class="ok">19 passed, 1 warning in 0.09s</span>
+<span class="dim">（warning 来自 test_moe_aux_loss_positive：带梯度张量转 float，M08 见过，无害）</span></code></pre>
+          <p>第二条，官方权重 strict 互通（脚本存为 /tmp/m09_strict_load.py，正文仅 6 行）：</p>
+          <div class="codeblock"><div class="code-head"><span>/tmp/m09_strict_load.py · 官方权重 strict 载入</span><span class="lang">python</span></div><pre class="code"><code>from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+from minimind_reborn.models.weights import load_inference_weights
+
+model = MiniMindForCausalLM(MiniMindConfig())            # 自建 64M：全部默认值
+load_inference_weights(model, "out/official/pretrain_768.pth", strict=True)
+print("官方 pretrain_768.pth strict=True 载入成功：无缺失 key、无多余 key")
+print("参数量：%.2fM" % (sum(p.numel() for p in model.parameters()) / 1e6))</code></pre></div>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m09_strict_load.py</span>
+<span class="out">官方 pretrain_768.pth strict=True 载入成功：无缺失 key、无多余 key</span>
+<span class="ok">参数量：63.91M</span></code></pre>
+          <ul class="pass-criteria">
+            <li><code>19 passed</code>（8 个 test_model + 5 个 test_kv_cache + 6 个 test_rope_scaling）；</li>
+            <li>strict 载入脚本输出两行成功信息、无任何 RuntimeError——91 个键逐键咬合（官方文件实测同为 91 键 fp16，首键 <code>model.embed_tokens.weight</code>）；</li>
+            <li>账本脚本合计 <code>63,912,192 = 63.91M</code>，变式练习完成预测→观察闭环。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按症状分流）</summary>
+            <p>
+              <b>strict 报 size mismatch</b> → 一定有结构默认值被动过：确认脚本里是裸的 <code>MiniMindConfig()</code>、
+              没改过 hidden_size；报错点名第一个对不上的 key，按 key 前缀定位是哪个模块；
+              <b>报"1 个缺失 key"类清单错误</b> → 文件路径指错（比如指向了自己挖过洞的 /tmp/m09_hole.pth）；
+              <b>pytest 有 failed</b> → 读用例名回对应课：<code>test_rope_buffer_rebuild_after_meta_init</code> 失败回
+              <a href="#bughunt">猎场</a>，<code>test_tied_embeddings</code> 失败查 config 的
+              <code>tie_word_embeddings</code>；<b>FileNotFoundError: out/official/pretrain_768.pth</b> →
+              权重未下载，回到 M02 的获取步骤。<code>NaN</code> 出现在自己改过模型代码后 → 先跑
+              <a href="#bughunt">猎场复现脚本</a> 确认 RoPE 表路径没被你碰坏。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        🏁 模型建成了。但你立刻会撞上下一个问题：这台机器吃的是 <code>input_ids</code>——一串整数 id，
+        谁把汉字变成 id？"我"是几号、"&lt;s&gt;"是几号、6400 这个词表是怎么来的？第三篇从造表的人说起：
+        M10，tokenizer 与 chat 模板。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>weight tying <span class="en">权重绑定</span></dt><dd>词嵌入矩阵与词汇预测头共享同一块 (vocab, hidden) 张量：一个正着查（词→向量）、一个反着用（向量×词打分）。64M 模型省 4.92M（7.7%）；<code>named_parameters()</code> 去重、<code>state_dict()</code> 保留双键。</dd>
+          <dt>移位交叉熵 <span class="en">shifted cross-entropy</span></dt><dd>语言模型损失：位置 t 的 logits 对 labels[t+1] 求交叉熵——<code>logits[..., :-1]</code> 对 <code>labels[..., 1:]</code>，各留 T-1 个配对。不移位则学成"复读当前词"。</dd>
+          <dt>ignore_index</dt><dd>交叉熵的免算标记（约定 -100）：padding 位与非监督区间的 label 置 -100，损失跳过。数据侧在 datasets.py 落笔（M12 的 loss_mask 详讲）；"这一格不算账"。</dd>
+          <dt>残差流 <span class="en">residual stream</span></dt><dd>Block 间直通的主干道：每个子层只往上面追加贡献（x += f(norm(x))），主干道是恒等映射，梯度直通浅层——pre-norm 训练稳定性的来源（M03 图纸的正式名字）。</dd>
+          <dt>strict 加载 <span class="en">严格加载</span></dt><dd>模型键集与文件键集必须完全相等，多一个少一个都 RuntimeError；形状不匹配则由 PyTorch 的 size mismatch 更早拦下。自建模型与官方权重互通的最硬证据。</dd>
+          <dt>finetune 语义 <span class="en">非严格加载</span></dt><dd>允许结构差异（缺失保持初始化、多余忽略、形状不匹配剔除），但逐 key warning——"静默吞键是最危险的『成功』"（weights.py docstring 原话）；警告必现有 caplog 测试锁定。</dd>
+          <dt>原子写 <span class="en">atomic save</span></dt><dd>先写临时文件再一次改名，进程中途被杀不会留下半个坏文件顶替好文件；save_inference_weights 的落盘纪律（M14 用 kill -9 实验验证）。</dd>
+          <dt>meta 设备 <span class="en">meta device</span></dt><dd>只登记形状不分配内存的虚拟设备；transformers ≥5 用它搭骨架再灌参数——参数与持久 buffer 有人恢复，非持久 buffer（RoPE 表）责任真空，reborn 以"全零判据 + 重算重注册"兜底。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+  };
+</script>
+<script async src="assets/vendor/tex-svg.js"></script>
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

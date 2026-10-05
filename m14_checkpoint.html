@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M14 · checkpoint 六件套与续训 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m14">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第四篇 训练</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M14</span><span>第四篇 · 训练</span></div>
+        <h1>checkpoint 六件套与续训</h1>
+        <p class="lede">
+          M13 把训练循环点着了，结尾留了一个问题：训练到一半机器挂了怎么办？
+          M01 你已经"不小心"见过答案——第二次 <code>make smoke</code> 时那段
+          <b>续训恢复清单</b>日志。本课拆开那份清单背后的 <b>checkpoint 六件套</b>，
+          再亲手 kill -9 一次训练，验证它真的接得住。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M13</b>（引擎已在转；M09 的权重三语义本课从训练侧再看）</span>
+          <span class="chip">时长：<b>约 70 分钟</b></span>
+          <span class="chip">新概念：<b>训练状态（checkpoint 语义）</b></span>
+          <span class="chip">对照：<code>training/common/checkpoint.py</code> · <code>utils/io.py</code> · <code>docs/pretrain_readiness.md</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>逐件说出六件套各防哪种灾难——为什么"只存权重"续训时是"重新开始装作接着练"；</li>
+        <li>解释 RNG 四态（torch / cuda / python / numpy）各管哪路随机性，存了换来什么；</li>
+        <li>说出原子写防的事故（写到一半被杀不产生半个 checkpoint），分清 fp16 推理权重与 fp32 六件套两种文件的职责；</li>
+        <li>从训练侧区分 resume / init_from / finetune_from 三语义，解释换卡数时 step 为什么会重标定；</li>
+        <li>亲手完成 kill -9 中断实验（或读存档做同样分析），用 loss 轨迹判定"续训接得住"。</li>
+      </ul>
+
+      <h2 id="payload">训练状态：六件套逐件清点</h2>
+      <p>
+        M13 结尾说过，Trainer 每 epoch 末（以及每 <code>save_interval_steps</code> 步）都在默默调
+        <code>_save</code>。它写两个文件：<code>out/pretrain_64.pth</code>（M09 见过的 fp16 推理权重）和
+        <code>checkpoints/pretrain_64_resume.pth</code>——本课的主角。
+        <b>checkpoint</b>（检查点/存档）这个词 M01 就出现过，本课给它精确含义：
+        它存的不是"模型"，是<b>训练状态</b>（training state）——把训练进程在某一刻的
+        <b>全部可变状态</b>打包，使得另一个进程能在之后恢复出"同一时刻"接着练。
+        模型权重只是其中一件。
+        <a href="codeview/src/minimind_reborn/training/common/checkpoint.py.html">training/common/checkpoint.py</a>
+        全文 96 行，payload 的组装只有一个字典：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/common/checkpoint.py.html">src/minimind_reborn/training/common/checkpoint.py</a> · save_checkpoint 的 payload</span><span class="lang">python</span></div><pre class="code"><code>raw = unwrap_model(model)          # 剥掉 DDP/compile 壳（M09 同款；分布式的包装不进文件）
+payload = {
+    "model": raw.state_dict(),    # 件 1：全部参数（fp32 主权重——AMP 只在算子层降精度，
+                                  #        参数本体始终 fp32，M13 讲过"主副本"）
+    "optimizer": optimizer.state_dict(),   # 件 2：AdamW 每参数的动量 m 与二阶矩 v（M13）
+    "scaler": scaler.state_dict() if scaler is not None else None,   # 件 3：fp16 的 scale 水位
+    "epoch": epoch,               # 件 4a：进度——本轮序号（存 0 基；日志显示 1 基）
+    "step": step,                 # 件 4b：进度——本轮内已走 micro step 数（M13 的两种"步"）
+    "world_size": get_world_size(),        # 存档时的进程数（载入时重标定用，见下节）
+    "config": config_snapshot,    # 件 5：配置全量快照（M04 的 snapshot，事故取证用）
+    "best_val_loss": best_val_loss,        # 件 6：最优验证损失（M13 的 best 语义从这里活着跨进程）
+    "rng": _rng_state(),          # 第七件（附加）：四路随机数状态，位精确续训的钥匙
+}
+return atomic_save(payload, path)          # 原子写（下节）</code></pre></div>
+      <p>
+        先坦白一个数数问题："六件套"是口称，仓库里两处官方清单口径不同——
+        checkpoint.py 的模块 docstring 列了七项（含 RNG），
+        <a href="codeview/tests/test_training/test_common.py.html">test_common.py</a>
+        的用例名注释把 RNG 计入六件而漏列 scaler。本课按上面代码块的实际分组来：
+        六件套 = ①~⑥，RNG 是雷打不动的第七件（附加），payload 落盘实测 9 个顶层键。
+        <b>名字不重要，重要的是每一件都有明确职责</b>。
+        逐件问"为什么"。关键思想是：<b>训练进程的可变状态不止权重一处</b>。
+        只存权重（件 1）续训，其余全部归零—— AdamW 的动量与二阶矩从零重建
+        （M13 讲过它们是按步累积的滑动平均，重建等于告诉优化器"你失忆了"），
+        lr 调度进度、best 指标、数据顺序全部从头再来。这样的续训不是"接着练"，
+        是<b>"重新开始装作接着练"</b>：loss 不会崩，但会先抖一段——灾难在几万步的真实训练里才显形。
+        每件缺了会怎样，一张表说清：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">件</th><th>内容</th><th>缺了续训会发生什么</th></tr></thead>
+          <tbody>
+            <tr><td><b>① model</b></td><td>state_dict 全部参数（fp32）</td><td>权重回随机初始化，全部白练——最不可能忘的一件</td></tr>
+            <tr><td><b>② optimizer</b></td><td>每参数的 m / v、分组超参</td><td>动量失忆：头几十步更新量失衡（M13 warmup 存在的同一原因），loss 先抖后稳</td></tr>
+            <tr><td><b>③ scaler</b></td><td>fp16 的 scale 水位与跳步计数</td><td>scale 从 65536 重新探测；bf16（enabled=False）时此件为空字典，无感</td></tr>
+            <tr><td><b>④ 进度 epoch+step</b></td><td>走到哪个 epoch 的第几 micro step</td><td>从 epoch 0 step 0 重跑：lr 调度重走 warmup、数据顺序重头、已练步数重复计费</td></tr>
+            <tr><td><b>⑤ config 快照</b></td><td>当时的全量配置（M04 snapshot）</td><td>事故后无法回答"存档时是什么配方"——猎场二的事故本可用它拦下</td></tr>
+            <tr><td><b>⑥ best_val_loss</b></td><td>历史最优验证损失</td><td>best 归 None：下一个 val 无论多差都刷新"最优"，<code>_best</code> 权重被烂权重覆盖</td></tr>
+            <tr><td><b>附加 rng</b></td><td>torch/cuda/python/numpy 四路随机数状态</td><td>一切吃全局随机流的操作跳到另一条轨迹：SFT 的随机系统提示注入（python）、dropout&gt;0 的掩码、RL 采样（torch）；batch 打乱顺序本身不吃全局流——M13 见过它由显式 Generator 按 seed+epoch 重放</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        解剖一个真的存档看内容（本课 kill -9 实验同款 tiny 模型，M01 冒烟的 0.53M 结构）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m14_inspect.py</span>
+<span class="out">payload 顶层键（9 个）： ['best_val_loss', 'config', 'epoch', 'model', 'optimizer', 'rng', 'scaler', 'step', 'world_size']</span>
+<span class="out">model   件： 25 个张量键，如 ['model.embed_tokens.weight', 'model.layers.0.self_attn.q_proj.weight']</span>
+<span class="out">optim   件： ['param_groups', 'state'] | state 覆盖 24 个参数 | param_groups 2 组（decay/no_decay，M13）</span>
+<span class="out">scaler  件： {}</span>
+<span class="out">epoch/step 件： 0 / 60 （micro step 口径）| world_size 件： 1</span>
+<span class="out">六件套全套：6.44 MB</span>
+<span class="out">只留 model 件：2.14 MB</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 2×RTX 4090 · torch 2.14.0+cu130 · smoke_pretrain tiny]</b>
+      六件套 6.44 MB 中优化器件占大头：0.53M 参数 × 2 个矩 × 4 字节 fp32 ≈ 4.3 MB，加上模型件 2.14 MB 正好对上。
+      scaler 件是空字典——本次 bf16 训练 scaler <code>enabled=False</code>（M13），无状态可存但键仍在，恢复代码不用分情况。
+      同口径下 64M 模型的 resume 存档约 731 MB（参数 4 字节 + 两矩 8 字节），
+      见 <b>[存档 docs/pretrain_readiness.md · 2026-09-24]</b>第 4 节"每 8.5 分钟覆盖写一次"的写放大账。</p>
+
+      <h3 id="rng">RNG 四态：把"随机"也存下来</h3>
+      <p>
+        <b>RNG</b>（random number generator，随机数发生器）M01 的环境指纹里见过它（<code>seed: 42</code>），
+        M13 结尾也预告过。设种子只保证"从零开始时序列一致"；训练进行到第 30 步时，
+        各路 RNG 已被消耗了 30 步的量——续训进程若不接住这些状态，后续随机数就从"另一个平行宇宙"来。
+        checkpoint.py 用 8 行收齐四路：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/common/checkpoint.py.html">src/minimind_reborn/training/common/checkpoint.py</a> · _rng_state 全文</span><span class="lang">python</span></div><pre class="code"><code>def _rng_state() -&gt; dict[str, Any]:
+    return {
+        "torch": torch.get_rng_state(),            # torch CPU 全局流：dropout&gt;0 的掩码、生成/采样
+        "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+                                                  # 每块 GPU 一份（实测 list[2]：本机两卡都存）
+        "python": random.getstate(),               # python random：SFT 数据集的随机注入走这条
+        "numpy": np.random.get_state(),            # numpy：部分第三方库的默认随机源
+    }</code></pre></div>
+      <p>
+        谁在消耗这些流？本仓库里最具体的一例：SFT 数据集按比例随机注入系统提示、
+        随机丢弃思考段（datasets.py 用 <code>random.random()</code>）——同一个样本在续训前后
+        可能一个带系统提示一个不带。四路各自独立、互不感知，少存一路，那一路就静默分叉。
+        注意一个诚实的边界：pretrain 的 <b>batch 打乱顺序不吃全局流</b>——M13 见过
+        <code>_build_loader</code> 用显式 <code>Generator</code> 按 <code>seed+epoch</code> 重放，
+        这正是 SkipBatchSampler 能对齐的前提；全局 RNG 管的是"顺序之外的随机性"。
+        恢复侧 <code>_restore_rng</code> 还有一个防御细节：CUDA 状态恢复失败（比如存档时 2 卡、
+        恢复时 1 卡）不炸，打警告"继续但不再位精确"。<b>位精确</b>（bit-exact）：
+        恢复后每一步的随机数与原进程在同一时刻产生的<b>逐位相同</b>——这是"接着练"的最强形式。
+        载入时你会看到它的日志证据：<code>RNG 状态已恢复（位精确续训）</code>。
+      </p>
+
+      <h3 id="m01-recover">回收 M01 伏笔：那份"续训恢复清单"</h3>
+      <p>
+        M01 冒烟时，第二次 <code>make smoke</code> 的 SFT 段开头打过一行你当时跳过的日志：
+      </p>
+      <pre class="term"><code><span class="dim">（M01 冒烟日志原文，smoke_sft 段第一行）</span>
+<span class="out">15:06:24 | INFO | minimind.trainer | 续训恢复清单：epoch=0 step=60 best_val=7.871570110321045 optimizer=['state','param_groups'] scaler=ok（恢复清单让加载错误第一步现形）</span></code></pre>
+      <p>
+        现在每个字段都能读：SFT 之前有人跑过一次 SFT 冒烟，留下 <code>full_sft_64_resume.pth</code>；
+        本次启动检测到它，恢复了 epoch 0 已走 60 步的进度、带 best 的历史最优、
+        <code>optimizer=['state','param_groups']</code> 是优化器件两个键的字面清单、scaler 正常。
+        括号里那句注释是设计宣言：<b>恢复必须打出清单，让"加载错了什么"在第一步现形</b>，
+        而不是几小时后从 loss 曲线倒查。本课 kill -9 实验会再见到它。
+      </p>
+
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：手删六件套里的一件——恢复清单当场报 KeyError</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            "磁盘紧张，我把 resume 文件拆开删了优化器件再拼回去"（或用第三方工具转换旧存档）。
+            下次启动，日志打出 <code>续训恢复清单：epoch=0 step=30 …</code> 之后紧跟一个裸异常
+            <code>KeyError: 'optimizer'</code>——不是恢复清单那行打的，是它下一条语句打的。
+          </li>
+          <li class="cause">
+            <code>load_checkpoint</code> 只做读取与换算、不校验键完整性；键缺失要等
+            <code>trainer._load_initial_weights</code> 逐件取用时才炸：
+            <code>self.optimizer.load_state_dict(data["optimizer"])</code> 在字典里找不到
+            <code>"optimizer"</code> 键。真触发一次（复刻 trainer.py 的三行取用）：
+          </li>
+        </ul>
+        <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m14_del_optim.py</span>
+<span class="out">原件九键： ['best_val_loss', 'config', 'epoch', 'model', 'optimizer', 'rng', 'scaler', 'step', 'world_size']</span>
+<span class="out">KeyError: 'optimizer'</span></code></pre>
+        <ul class="pit-stages">
+          <li class="fix">
+            别手拆存档；真要清理，整个文件删（下次从零启动，行为干净）。
+            报错位置本身就是定位信息：KeyError 出现在哪一行，就是缺哪件——
+            "恢复清单让加载错误第一步现形"的承诺，一半靠清单，一半靠这几行裸取用。
+          </li>
+        </ul>
+        <p class="prov"><b>[作者实测 · 2026-10-01]</b>脚本把本课实验的六件套挖掉 optimizer 件存回，
+        复刻 trainer.py:442-444 的取用序列：模型件 <code>strict=True</code> 正常恢复，下一行即 <code>KeyError</code>。</p>
+      </div>
+
+      <h2 id="atomic">原子写：.tmp + os.replace</h2>
+      <p>
+        六件套 6.44 MB（64M 模型 731 MB）的文件，写一半要几十毫秒到几秒。
+        如果直接写目标路径，写到一半进程被杀——磁盘上留下<b>半个文件</b>：
+        头部说"我是六件套"，尾部数据是旧的或空的。下次续训加载它，
+        轻则报错，重则把损坏数据当真。<b>原子写</b>（atomic write，M09 词汇表见过一句话定义）
+        让"换新文件"这个动作不可分割。reborn 的实现只有 12 行：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/utils/io.py.html">src/minimind_reborn/utils/io.py</a> · atomic_save 全文</span><span class="lang">python</span></div><pre class="code"><code>def atomic_save(obj: Any, path: str | Path) -&gt; Path:
+    """torch.save 的原子版本：先写 .tmp 再 os.replace（同目录保证原子性）。"""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")   # pretrain_64_resume.pth → ….pth.tmp
+    import torch
+    torch.save(obj, tmp)                           # 慢操作全部发生在临时文件上
+    os.replace(tmp, path)                          # 快操作：一步改名，目标路径"瞬间"换新
+    return path</code></pre></div>
+      <p>
+        两个"为什么"。<b>为什么 os.replace 是原子的？</b>它对应操作系统内核的 rename 调用，
+        只改目录项里的一条记录（"这个名字指向哪个文件"），不动数据块——内核保证这一步
+        要么完成要么没发生，不存在"改了一半的名字"。<b>为什么 .tmp 必须同目录？</b>
+        rename 的原子性只在<b>同一文件系统</b>内成立；跨文件系统（如 /tmp 与数据盘）会退化成
+        "复制+删除"两步，原子性破产。所以临时文件用 <code>path.with_suffix(...)</code> 生成，
+        天生与目标同目录。被杀时最坏情况是留下一个孤儿 .tmp（无害，可清理），
+        <b>目标路径要么是完整的旧档、要么是完整的新档</b>。
+      </p>
+      <p>
+        一次 <code>_save</code> 实际写两个文件，职责不同，别混：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th></th><th class="u-w200">out/pretrain_64.pth</th><th>checkpoints/pretrain_64_resume.pth</th></tr></thead>
+          <tbody>
+            <tr><td><b>身份</b></td><td>推理权重（M09 save_inference_weights）</td><td>训练状态六件套（本课）</td></tr>
+            <tr><td><b>精度</b></td><td>fp16、CPU——与机器无关，推理取其精确</td><td>fp32 主权重——resume 位精确，半精度会累积误差</td></tr>
+            <tr><td><b>内容</b></td><td>仅 state_dict</td><td>+优化器/scaler/进度/config/best/RNG</td></tr>
+            <tr><td><b>消费者</b></td><td>推理引擎、M02 chat、M20 生成栈</td><td>只有下一次训练的 resume</td></tr>
+            <tr><td><b>写法</b></td><td>atomic_save（同一底层）</td><td>atomic_save（同一底层）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        两个文件一个面向"用"，一个面向"续"，尺寸差三倍（2.14 vs 6.44 MB）。
+        M09 说"原子写 M14 用 kill -9 实验专门验证"——现在就做。
+      </p>
+
+      <h2 id="semantics">三语义：resume / init_from / finetune_from</h2>
+      <p>
+        M09 从<b>权重层</b>讲了 strict 与 finetune 两种加载；本课从<b>训练侧</b>看它们如何被三个入口消费。
+        Trainer 构造的最后一步 <code>_load_initial_weights</code>（trainer.py:422）按固定顺序探测三个配置：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/common/trainer.py.html">src/minimind_reborn/training/common/trainer.py</a> · _load_initial_weights（裁剪）</span><span class="lang">python</span></div><pre class="code"><code>if t.finetune_from:                        # 语义一：微调起点——结构允许不同
+    load_finetune_weights(self.raw_model, path)     # 非严格 + 逐 key warning（M09）
+    logger.info("微调加载（非严格，缺失 key 已逐条 warning）：%s", path)
+if t.init_from:                            # 语义二：严格起点——结构必须完全一致
+    load_inference_weights(self.raw_model, path, strict=True)   # M01 冒烟 DPO 段
+    logger.info("严格加载起点权重：%s", path)                  #   "严格加载起点权重"就是它
+# 铁律 8：续训做成默认行为——checkpoint 在场即恢复
+ckpt = checkpoint_path(self.ckpt_dir, self.save_weight, ...)
+if t.resume and ckpt.exists():             # 语义三：resume——不需要起点配置，在场即恢复
+    data = load_checkpoint(ckpt, world_size=dist.get_world_size())
+    self.raw_model.load_state_dict(data["model"], strict=True)   # 模型件也走严格！
+    self.optimizer.load_state_dict(data["optimizer"])
+    self.scaler.load_state_dict(data["scaler"])
+    self.start_epoch, self.start_step = data["epoch"], data.get("step", 0)
+    self.best_val_loss = data.get("best_val_loss")
+    logger.info("续训恢复清单：epoch=%d step=%d …", self.start_epoch, self.start_step, ...)</code></pre></div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130"></th><th class="u-w130">finetune_from</th><th class="u-w130">init_from</th><th>resume（默认开）</th></tr></thead>
+          <tbody>
+            <tr><td><b>意图</b></td><td>旧权重训新任务</td><td>固定起点（如 DPO 从 pretrain 起步）</td><td>同一训练的下半场</td></tr>
+            <tr><td><b>结构要求</b></td><td>允许不同（缺/多/形状差都容忍）</td><td>完全一致，否则 RuntimeError</td><td>完全一致（模型件 strict=True）</td></tr>
+            <tr><td><b>恢复范围</b></td><td>仅权重</td><td>仅权重</td><td>六件套 + RNG 全量</td></tr>
+            <tr><td><b>不匹配时</b></td><td>不炸，逐 key warning（不许装哑，M09）</td><td>启动前一秒炸</td><td>第一步现形（清单 + KeyError）</td></tr>
+            <tr><td><b>典型事故</b></td><td>静默吞键（M09 猎场）</td><td>结构默认值被动过</td><td>猎场二：换了数据集它还照续</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        注意 resume 的模型件用的是 <code>strict=True</code>：续训的对象必须与存档<b>逐键同一结构</b>——
+        这是它与 finetune 的本质区别（finetune 允许长出新增模块）。
+        另一个训练侧特有的细节在 <code>load_checkpoint</code> 里：换卡数重标定。
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/common/checkpoint.py.html">src/minimind_reborn/training/common/checkpoint.py</a> · load_checkpoint 的换算段</span><span class="lang">python</span></div><pre class="code"><code>data = torch.load(path, map_location="cpu", weights_only=False)
+saved_ws = data.get("world_size", 1)          # 存档时的进程数（world：M15 详讲，本课=卡数）
+current_ws = world_size if world_size is not None else get_world_size()
+if saved_ws != current_ws:                    # 2 卡存的档换 1 卡续（或反过来）：
+    data["step"] = data["step"] * saved_ws // current_ws   #   按吞吐折算等效进度
+    logger.info("GPU 数量变化（%d→%d），step 已换算为 %d", saved_ws, current_ws, data["step"])
+if "rng" in data:
+    _restore_rng(data["rng"])                 # RNG 在读档时就地恢复（不等人调用）
+    logger.info("RNG 状态已恢复（位精确续训）")</code></pre></div>
+      <p>
+        2 卡各跑一半样本，1 卡要全跑——同样 100 步的"工作总量"差一倍，step 必须换算才不虚报进度。
+        <code>test_checkpoint_six_pack_roundtrip</code> 把这个语义钉死：存档 step=7、world=1，
+        以 world=2 读回断言 <code>step == 3</code>（7×1//2）。LR 调度随之自然对齐——
+        因为 M13 讲过它是只吃步数的纯函数。
+      </p>
+
+      <h2 id="kill9">kill -9 实验：亲手杀一次训练</h2>
+      <p>
+        🎮 本节需要能跑 smoke 的环境（GPU 更顺，CPU 也行，tiny 模型 60 步只要几秒）；
+        无 GPU 时走本节末尾的存档分析路线——同样的推理链，读别人留下的数字。
+        实验设计三段：<b>A 基线</b>（60 步一口气跑完）、<b>B 中断</b>（从零重跑，
+        在 step 30 存档落盘后 kill -9 进程组）、<b>B2 续训</b>（直接再启动，resume 默认开）。
+        最后对比 A 与 B2 的 loss 轨迹。
+      </p>
+      <p>第一步，基线 A（<code>train.resume=false</code> 禁续训保证从零）：</p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.max_steps=60 --set train.save_interval_steps=10 --set train.log_interval=2 --set train.resume=false</span>
+<span class="out">09:45:30 | INFO | minimind.trainer | 训练启动 … | 0.53M 可训练参数 | dtype=bf16 device=cuda world=1 | …</span>
+<span class="out">09:45:30 | INFO | minimind.trainer | Epoch[1/2](10/317242) loss=8.7411 lr=4.75e-04 …</span>
+<span class="out">09:45:30 | INFO | minimind.trainer | 已保存：pretrain_64.pth（epoch=1 step=10 best_val=None）</span>
+<span class="dim">（每 10 步一个存档点：step=10/20/30/40/50，loss 8.7411 → 8.6299 → 8.5667 → 8.5234 → 8.5046）</span>
+<span class="out">09:45:31 | INFO | minimind.trainer | Epoch[1/2](60/317242) loss=8.4850 lr=5.03e-05 …</span>
+<span class="ok">09:45:31 | INFO | minimind.trainer | 训练结束：best_val_loss=8.586801052093506 optimizer_steps=30</span></code></pre>
+      <p>
+        第二步，中断 B：同样的命令再启动一份，用一个 12 行的 shell 脚本盯住新建的
+        <code>runs/smoke_pretrain/&lt;时间戳&gt;/train.log</code>，看到 step 34 的日志（此刻 step 30 的
+        checkpoint 已落盘、40 的还没来）就对<b>整个进程组</b> <code>kill -9</code>——
+        杀进程组而不是单个 PID，否则 uv 包装死了、python 子进程还活着把余下步骤跑完
+        （作者第一次就这么翻的车，进程组杀法：<code>kill -9 -&lt;PGID&gt;</code>）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">setsid uv run python tools/train.py …（同 A，resume=false）&amp;  # setsid：独立进程组</span>
+<span class="p">$ </span><span class="cmd">while ! grep -q "(34/" $NEW_RUN_DIR/train.log; do sleep 0.02; done</span>
+<span class="p">$ </span><span class="cmd">kill -9 -$(ps -o pgid= -p $TRAIN_PID | tr -d ' ')    # 对进程组发 SIGKILL</span>
+<span class="out">（B 的 train.log 止于三行，没有"训练结束"——进程死在 step 34 与 40 之间）</span>
+<span class="out">09:46:55 | INFO | minimind.trainer | 已保存：pretrain_64.pth（epoch=1 step=30 best_val=None）</span>
+<span class="out">09:46:55 | INFO | minimind.trainer | Epoch[1/2](32/317242) loss=8.5677 lr=2.63e-04 grad_norm=0.73 …</span>
+<span class="out">09:46:55 | INFO | minimind.trainer | Epoch[1/2](34/317242) loss=8.5637 lr=2.40e-04 grad_norm=0.67 …</span>
+<span class="p">$ </span><span class="cmd">find checkpoints out -name "*.tmp" | wc -l</span>
+<span class="ok">0</span>
+<span class="dim">（kill -9 落在两次存档之间：原子写留下的最坏遗产是孤儿 .tmp，实测一个都没有；目标文件是完整的 step-30 档）</span></code></pre>
+      <p>
+        第三步，续训 B2：不再传 <code>resume=false</code>，直接启动——resume 默认开，检测到
+        <code>pretrain_64_resume.pth</code> 在场即恢复：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.max_steps=60 --set train.save_interval_steps=10 --set train.log_interval=2</span>
+<span class="out">09:47:11 | INFO | minimind.checkpoint | RNG 状态已恢复（位精确续训）</span>
+<span class="out">09:47:11 | INFO | minimind.trainer | 续训恢复清单：epoch=0 step=30 best_val=None optimizer=['state', 'param_groups'] scaler=ok（恢复清单让加载错误第一步现形）</span>
+<span class="out">09:47:11 | INFO | minimind.trainer | 训练启动 … | 0.53M 可训练参数 | dtype=bf16 device=cuda world=1 | …</span>
+<span class="out">09:47:11 | INFO | minimind.trainer | Epoch 1：跳过前 30 个 micro step 续训</span>
+<span class="out">09:47:11 | INFO | minimind.trainer | Epoch[1/2](32/317242) loss=8.5677 lr=2.63e-04 grad_norm=0.73 …</span>
+<span class="out">09:47:11 | INFO | minimind.trainer | Epoch[1/2](34/317242) loss=8.5637 lr=2.40e-04 grad_norm=0.67 …</span>
+<span class="dim">（40：8.5394  50：8.5279  60：8.5096 —— 与被杀进程在 32/34 的 loss 逐位相同）</span>
+<span class="ok">09:47:12 | INFO | minimind.trainer | 训练结束：best_val_loss=8.633881568908691 optimizer_steps=15</span></code></pre>
+      <p>三段轨迹并排，判"接得住"：</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w44">step</th><th class="u-w120">A 基线 loss</th><th class="u-w120">B 被杀 loss</th><th class="u-w120">B2 续训 loss</th><th class="u-w130">A↔B2 相对偏差</th><th class="u-w130">lr（A 与 B2）</th></tr></thead>
+          <tbody>
+            <tr><td>30</td><td>8.5667</td><td>8.5943</td><td><i>（恢复点）</i></td><td>—</td><td>2.87e-04</td></tr>
+            <tr><td>32</td><td>8.5434</td><td>8.5677</td><td><b>8.5677</b></td><td>0.28%</td><td>2.63e-04</td></tr>
+            <tr><td>34</td><td>8.5484</td><td>8.5637</td><td><b>8.5637</b></td><td>0.18%</td><td>2.40e-04</td></tr>
+            <tr><td>40</td><td>8.5234</td><td class="dim">死于此区间</td><td>8.5394</td><td>0.19%</td><td>1.73e-04</td></tr>
+            <tr><td>50</td><td>8.5046</td><td></td><td>8.5279</td><td>0.27%</td><td>8.63e-05</td></tr>
+            <tr><td>60</td><td>8.4850</td><td></td><td>8.5096</td><td><b>0.29%</b></td><td>5.03e-05</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · smoke_pretrain tiny · seed=42 ·
+      存档 runs/smoke_pretrain/20261001_094528（A）/ 094653（B）/ 094708（B2）]</b>
+      三条判定证据：① B2 在 step 32/34 的 loss 与被杀进程<b>逐位相同</b>（8.5677 / 8.5637）——
+      同权重 + 同批次顺序，前向计算确定，续训精确接住了断点；② B2 与 A 的最大相对偏差 <b>0.29%</b>，
+      远小于 2% 判定线，且 lr 两列逐步一致（纯函数只吃步数）；
+      ③ 两条暗线：B 与 A 两次<b>从零</b>同种子跑在 step 30 就差了 0.32%（8.5943 vs 8.5667）——
+      GPU 上 embedding 反向原子操作的天然非确定性，所以"0.29% 的续训偏差"其实与
+      "两次从零跑之间的固有差异"同一量级，续训没有引入额外误差；
+      B2 的 <code>optimizer_steps=15</code> 只计本进程走的 30 个 micro step（÷ 累积 2），
+      而总进度由 checkpoint 的 step 记账，两把尺子各管各的。</p>
+      <p>
+        🎮 无 GPU 路线：读 <b>[存档 docs/pretrain_readiness.md · 2026-09-24 · 2×RTX 4090 · 64M dense]</b>
+        第 1 节——同样的三段设计放大到 64M 模型、200 步、kill 点 @110、ckpt@100：
+        续训恢复清单 epoch=0 step=100；step 110/150/200 的 loss 基线 7.4274/7.3323/7.2656
+        vs 续训 7.3935/7.2880/7.2276，最大相对偏差 <b>0.67%</b>（判定线 2%），LR 全程逐步一致。
+        数字不同（64M 已训 200 步 loss 从 7.4 起步，vs tiny 从 8.7），推理链与本课实验逐句对应——
+        这份存档正是那次实验的原始报告，也是下一个猎场的案发现场。
+      </p>
+
+      <h2 id="hunt1">🔍 bug 猎场一：续训记账漂移——len 的两副面孔</h2>
+      <p>
+        上面那份 0.67% 的漂亮报告，是 2026-09-24 kill -9 实验的<b>产出</b>；同一个实验还产出了一个 bug。
+        报告原文记得很克制："实测发现并修复 1 个续训记账 bug"——断点落在 epoch 中间时，
+        续训进程把这个 epoch 的<b>总步数</b>算小了：全局步数分母、LR 总步数、尾批
+        <code>is_last</code> 判定三处全部漂移，尾批的部分累积甚至会被当完整优化步消耗掉。
+      </p>
+      <p><b>定位</b>：拆当天的修复 commit：</p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">git show fd9fdc8 --stat</span>
+<span class="out">commit fd9fdc88cc8794406cb14572328866b6dfb646d9</span>
+<span class="out">Author: reborn &lt;reborn@local&gt;</span>
+<span class="out">Date:   Thu Sep 24 21:23:35 2026 +0800</span>
+<span class="out">fix(training): 续训 iters 记账 bug（全局步数/LR 分母/尾批 is_last 漂移）+ DDP no_sync（累积期免 allreduce，双卡 scaling 67.6%→88.5%）；产出全量训练前置实测报告 out/pretrain_readiness.md</span>
+<span class="out"> src/minimind_reborn/training/common/trainer.py | 31 +++++++++++++++++---------</span>
+<span class="out"> configs/dpo_64m.yaml                           |  2 +-</span>
+<span class="out"> configs/pretrain_64m.yaml                      |  2 +-</span>
+<span class="out"> configs/sft_64m.yaml                           |  2 +-</span>
+<span class="dim">（同一 commit 还捎带了 M15 主角的 no_sync 修复——两个 bug 一次实验里一起现形）</span>
+<span class="p">$ </span><span class="cmd">git show fd9fdc8^:src/minimind_reborn/training/common/trainer.py | grep -n "global_micro\|is_last" | head -3</span>
+<span class="out">208:            global_micro = epoch * iters + offset</span>
+<span class="out">215:                global_micro, total_micro, t.learning_rate, warmup_steps=t.warmup_steps, min_ratio=t.lr_min_ratio</span>
+<span class="out">221:            is_last = offset == iters - 1</span></code></pre>
+      <p>
+        病根是 <b>iters 的两副面孔</b>。M13 的 SkipBatchSampler 为了"跳过前 k 个 batch"，
+        它的 <code>__len__</code> 返回<b>扣减后</b>的本次实际迭代数（<code>total - skip</code>，
+        trainer.py:65）——这是<b>循环终点</b>的正确语义。但旧代码把同一个数又当成了
+        <b>epoch 全长</b>：续训从 step 30 恢复时 iters=全长−30，于是
+        <code>global_micro = epoch * iters + offset</code> 的分母每 epoch 短一截、
+        LR 余弦的 <code>total_micro</code> 跟着缩水、尾批判定 <code>is_last = offset == iters - 1</code>
+        提前触发——部分累积的梯度在错误的"最后一步"被当成完整优化步消耗掉。
+        单元测试测不到它（<code>iters</code> 只有在"断点在 epoch 中间"时才有两副面孔），
+        全量实测才现形。修复是<b>另立一把只量全长的尺子</b>：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/common/trainer.py.html">src/minimind_reborn/training/common/trainer.py</a> · 修复后的双轨记账</span><span class="lang">python</span></div><pre class="code"><code># 完整 epoch 步数（不扣 skip）：全局步数记账/LR 调度的分母必须用它。
+# iters 是"本次实际迭代数"（续训时 = 完整步数 - start_step），只用于循环结束判定。
+full_iters = per_rank_full_iters(len(self.train_ds), t.batch_size, dist.get_world_size())
+...
+global_micro = epoch * full_iters + offset        # 记账：全长尺
+...
+is_last = offset == start_step + iters - 1        # 循环终点：实际迭代尺（注意 +start_step）</code></pre></div>
+      <p>
+        <b>回归锁定</b>：修复语义后来又叠了一层——<code>per_rank_full_iters</code>（trainer.py:82）
+        把 DDP（多卡数据并行，M15 详讲）下每卡只分 1/world 样本的口径也折进分母，
+        这是 M13 猎场外讲的"2026-09-29 perf_analysis 案 B"（双卡余弦到不了地板）；
+        本课实验里 step 换算（<code>step × saved_ws // current_ws</code>）是它在 checkpoint 侧的镜像。
+        <b>通用教训：一个量两副面孔，迟早有人拿错</b>——"len(loader)"在同步迭代时是全长、
+        在跳批续训时是余量，谁消费它谁就要声明自己要的是哪一副；修复的方式不是给 len 加参数，
+        而是让两个语义<b>各自得名</b>（full_iters / iters），名字即文档。
+      </p>
+      <p class="prov"><b>[存档 docs/pretrain_readiness.md · 2026-09-24]</b> 猎场素材：
+      0.67% 偏差数据表、bug 描述原文（"SkipBatchSampler 会把 len(loader) 扣减跳过批数，
+      导致续训后全局步数分母 / LR 总步数 / 尾批 is_last 判定全部漂移"）、修复 commit fd9fdc8。</p>
+
+      <h2 id="hunt2">🔍 bug 猎场二：换了数据集，残留的 resume 静默劫持续训</h2>
+      <p>
+        本课开头说 resume-by-default（M01 词汇：检测到 checkpoint 就默认接续）是"长跑中断保险"；
+        保险的另一面是：<b>它不问你想不想续</b>。2026-09-25 全量训练启动时，作者从 mini 数据集
+        切到 full 数据集，发现训练"正常恢复"了——恢复的是<b> mini 时代的旧账</b>。
+      </p>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：resume 劫持——checkpoint 只认名字，不认身份</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            换了 <code>data.dataset</code>（mini → full）启动训练，日志打出
+            <code>续训恢复清单：epoch=1 step=60 …</code>——没有报错、没有警告，
+            训练从旧进度"接着"跑。但那 60 步是在<b>另一份语料</b>上走的：
+            本次训练等效于"mini 的残余进度 + full 的一小段"，数据预算与 LR 预算全部错位，
+            事后从任何单条日志都看不出异常。reborn 的真实事故：等效于 mini 2 轮 + full 半轮。
+          </li>
+          <li class="cause">
+            checkpoint 文件名只由 <b>权重名 + 宽度</b> 索引（<code>{weight}_{hidden}[_moe]_resume.pth</code>，
+            checkpoint.py 的 checkpoint_path）——不含数据集、不含配方身份。
+            resume 的探测条件是 <code>t.resume and ckpt.exists()</code>：文件在场即恢复，
+            <b>没有第二重身份核对</b>。最讽刺的是：六件套里的 config 快照（件 ⑤）本来就存了
+            <code>data.dataset</code>，但载入侧没人拿它比对——证据在包里，没人拆包看。
+          </li>
+          <li class="fix">
+            当时的处置：把三个 mini 时代的 resume 归档进 <code>checkpoints/mini_era/</code>（仓库里现在还在），
+            从零重启，损失约 1.5 分钟。沉淀成检查单：<b>换数据集/配方启动前，<code>ls checkpoints/</code>
+            确认无同名残留 resume，或显式归档</b>；改进方向（已列入待办）：载入时比对存档内
+            config 快照与当前配置，数据集身份不一致就 warning 并要求显式确认——
+            让件 ⑤ 从"存了没人看"变成"自动对暗号"。
+          </li>
+        </ul>
+      </div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">git show 500513b --stat</span>
+<span class="out">commit 500513bef909566c52ff46a2f5e3e8b5603fab95</span>
+<span class="out">Author: reborn &lt;reborn@local&gt;</span>
+<span class="out">Date:   Fri Sep 25 00:56:19 2026 +0800</span>
+<span class="out">docs: readiness 补充实训发现——换数据集时残留 resume 劫持续训的副作用、归档处置与检查单</span>
+<span class="out"> docs/pretrain_readiness.md | 12 ++++++++++</span>
+<span class="p">$ </span><span class="cmd">ls checkpoints/mini_era/  # 事故现场的证据至今保留</span>
+<span class="out">dpo_768_resume.pth  full_sft_768_resume.pth  pretrain_768_resume.pth</span></code></pre>
+      <p>
+        注意这个 commit 没改一行代码——修的是<b>流程</b>（检查单）而非机制（自动比对），
+        机制补全挂在待办。<b>通用教训：隐式状态（"文件在场即恢复"）每多一分方便，
+        就多一分被意外触发的面</b>。检查单的本质是把"我以为我从零开始"翻译成一条可执行的
+        验证命令；只要状态是隐式探测的，启动前的那一眼 <code>ls</code> 就不可省略。
+      </p>
+      <p class="prov"><b>[存档 docs/pretrain_readiness.md §6 · 2026-09-25 · commit 500513b]</b>
+      事故描述、处置过程与检查单原文均来自该节；mini_era 归档目录为仓库现存实物。</p>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · 为什么 RNG 状态也要存？四路各管什么，不存最直接的后果是什么？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>四路随机源互相独立：torch（CPU 全局）、cuda（每卡一份）、python random、numpy。本仓库里最具体的消费者是 SFT 数据集的随机系统提示注入（<code>random.random()</code>）；更广地说，dropout&gt;0 的掩码、RL 采样都吃这些流。不存的话，续训进程的 RNG 从头起步：同一步消耗的随机数与原进程不同——同一个 SFT 样本可能一个带系统提示一个不带，"位精确"破产。（batch 打乱顺序倒不吃全局流：它由显式 Generator 按 seed+epoch 重放，SkipBatchSampler 对齐靠的正是它。）存 RNG 换来的是"接着练"的最强形式：恢复后每一步的随机数与原进程逐位相同。</p>
+            <p class="back">答错回看：<a href="#rng">RNG 四态</a> 与 <a href="#payload">六件套表格</a> 的附加 rng 行。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · 同一个结构对不上的权重文件，init_from（严格）和 finetune_from 分别发生什么？resume 的模型件用的是哪种？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>init_from 走 <code>load_inference_weights(strict=True)</code>：启动前一秒 RuntimeError（"N 个缺失 key / M 个多余 key"），fail-fast；finetune_from 走非严格加载：不炸、缺失 key 保持初始化继续训练，但必须逐 key 打 warning——"静默吞键是最危险的『成功』"（M09 原话）。resume 的模型件是 <code>load_state_dict(strict=True)</code>——严格路线：续训对象必须与存档逐键同构，因为它的承诺是"同一训练的下半场"，长出新模块就属于另一种语义（finetune）。</p>
+            <p class="back">答错回看：<a href="#semantics">三语义</a> 的对照表。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · 原子写防的是什么事故？为什么 os.replace 是原子的、.tmp 为什么要与目标同目录？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>防"写盘进行到一半进程被杀"：直接写目标路径会留下半个文件（头部合法、数据残缺），下次续训加载坏档。原子写把慢操作全部发生在 .tmp 上，最后用 os.replace 一步改名——它对应内核的 rename，只改目录项一条记录，要么完成要么没发生。.tmp 必须同目录（同文件系统）：rename 的原子性只在同一文件系统内成立，跨文件系统会退化成"复制+删除"两步。被杀的最坏遗产是一个孤儿 .tmp（本课实验实测一个都没有）。</p>
+            <p class="back">答错回看：<a href="#atomic">原子写</a> 的两个"为什么"。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · 2 卡存的档（step=7）换 1 卡续，step 会换算成多少？为什么必须换算？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>7 × 2 // 1 = 14——反方向（1 卡存、2 卡读）才是测试锁的那个方向：7 × 1 // 2 = 3（test_checkpoint_six_pack_roundtrip 断言 step == 3）。必须换算是因为"步数"的口径是每进程的：2 卡各跑一半样本，同样 7 步的工作总量只有单卡的一半；不换算，进度虚报/少报，LR 余弦（只吃步数的纯函数）随之在错误的进度上取值。</p>
+            <p class="back">答错回看：<a href="#semantics">三语义</a> 的换算段与 <code>test_checkpoint_six_pack_roundtrip</code>。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · kill 之后把数据集换掉再 resume，会发生什么？</div>
+        <div class="ex-body">
+          <p>
+            沿用本课实验：B 已被 kill -9，<code>checkpoints/pretrain_64_resume.pth</code> 里躺着
+            step=30 的六件套。现在不删它，启动一个 <b>换了数据集</b> 的训练（例如
+            <code>--set data.dataset=sft_t2t_mini</code>，或任何另一份语料），resume 保持默认开。
+            先合上书推理一遍。
+          </p>
+          <div class="ex-predict"></div>
+          <p>写下预测：会报错吗？恢复清单还打吗——打的进度是多少？SkipBatchSampler
+          跳过的 30 个 batch 来自哪个数据集的打乱序列？这份训练等效于什么？</p>
+          <details>
+            <summary>观察结果与解释（先预测再看）</summary>
+            <p>
+              不报错，一切"正常"：<code>续训恢复清单：epoch=0 step=30 …</code> 照打，
+              <code>Epoch 1：跳过前 30 个 micro step 续训</code> 照跳。但跳的 30 批是对<b>新数据集</b>
+              长度与顺序做的打乱——旧账记的是旧语料上的进度，却由新语料来偿还；
+              训练等效于"旧数据集练了 30 步 + 新数据集从它自己的第 31 批开始"，
+              LR 预算与数据预算两头错位。这正是猎场二（500513b）的机制最小复现：
+              resume 探测只看"同名文件在场"，不核对数据集身份——config 快照件里明明存着答案，
+              只是没人比对。作者没有为变式真跑这一次（避免污染共享仓库的 checkpoint 现场），
+              推理依据全部来自 <b>[存档 docs/pretrain_readiness.md §6 · 2026-09-25]</b> 的实跑事故
+              与 <code>_load_initial_weights</code> 的探测条件源码；你若有独立环境，值得亲手跑一遍看那份"正常的日志"。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M14 验收：六件套测试全绿 + kill -9 实验闭环</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下依次执行。第一条，训练基件测试（LR 纯函数、decay 分组、六件套往返与 step 换算、extra_states）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_training/test_common.py -q</span>
+<span class="out">.....                                                                    [100%]</span>
+<span class="ok">5 passed in 0.06s</span></code></pre>
+          <p>第二条（🎮 有跑训环境时），kill -9 实验三步闭环；无 GPU 走第三条：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.max_steps=60 --set train.save_interval_steps=10 --set train.log_interval=2 --set train.resume=false</span>
+<span class="ok">… | 训练结束：best_val_loss=8.586801052093506 optimizer_steps=30</span>
+<span class="p">$ </span><span class="cmd">setsid uv run python tools/train.py …（同命令）&amp;  # 盯 train.log 见 (34/ 后 kill -9 进程组</span>
+<span class="p">$ </span><span class="cmd">find checkpoints out -name "*.tmp" | wc -l</span>
+<span class="ok">0</span>
+<span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.max_steps=60 --set train.save_interval_steps=10 --set train.log_interval=2</span>
+<span class="ok">… | 续训恢复清单：epoch=0 step=30 … scaler=ok（恢复清单让加载错误第一步现形）</span></code></pre>
+          <p>第三条（无 GPU 存档路线）：打开 <code>docs/pretrain_readiness.md</code> 第 1 节，指出 0.67% 出自哪三行对比、kill 点与 ckpt 点各在哪一步。</p>
+          <ul class="pass-criteria">
+            <li><code>5 passed</code>——test_common.py 五个用例全绿；</li>
+            <li>实验路线：续训日志含三行证据——<code>RNG 状态已恢复</code>、<code>续训恢复清单：epoch=0 step=30</code>（step 必须 ≥10：kill 前至少落过一个存档点）、
+              <code>Epoch 1：跳过前 30 个 micro step 续训</code>；被杀进程的日志<b>没有</b>"训练结束"行；
+              A 与 B2 的 loss 最大相对偏差 &lt; 2%（作者实测 0.29%，判定线沿用存档口径）；</li>
+            <li>存档路线：能说出基线/续训在 step 110/150/200 的三对 loss（7.4274/7.3323/7.2656 vs 7.3935/7.2880/7.2276）与 0.67% 的出处。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按症状分流）</summary>
+            <p>
+              <b>pytest 有 failed</b> → <code>test_checkpoint_six_pack_roundtrip</code> 失败先查是否动过
+              checkpoint.py 的 payload 或换算公式（<code>step × saved_ws // current_ws</code>）；
+              <b>续训没接上</b>（直接从 step 0 开始）→ <code>checkpoints/</code> 里没有同名 resume：
+              kill 发生在第一个存档点之前，把 <code>save_interval_steps</code> 调小或晚一点再杀；
+              <b>续训接得太狠</b>（想从零却被旧档劫持）→ 你撞上了猎场二本尊，<code>--set train.resume=false</code>
+              或归档旧档；<b>kill 后进程还活着跑完了</b> → 杀的是 uv 包装 PID 而非进程组，
+              用 <code>setsid</code> + <code>kill -9 -&lt;PGID&gt;</code>（作者第一次同款翻车）；
+              <b>B2 与 A 偏差 &gt; 2%</b> → 先确认两次都用 <code>resume=false</code> 从零、seed 相同；
+              仍偏大再查是否中途改过 batch_size（full_iters 口径变化会平移 lr）。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        训练状态从此有了完整的"存与续"：断点、身份、原子性都握在手里。
+        但本课的实验全部 world=1——M13 的 no_sync、checkpoint 的 world_size 换算都暗示着
+        多卡世界的存在。下一课点亮它：M15，DDP 与 no_sync，看双卡怎么把 67.6% 的
+        通信损耗压回 88.5% 的加速比。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>训练状态 <span class="en">training state / checkpoint 语义</span></dt><dd>训练进程在某一刻的全部可变状态：模型权重 + 优化器矩 + scaler 水位 + 进度（epoch/step）+ 配置快照 + best 指标，再加 RNG 四态与 world_size。checkpoint 存的不是"模型"而是它——缺一件，续训就从那一件开始"重新开始装作接着练"。</dd>
+          <dt>六件套 <span class="en">six-pack payload</span></dt><dd>save_checkpoint 的 payload：model（fp32 主权重）/ optimizer / scaler / 进度（epoch+step 两键）/ config 快照 / best_val_loss；附加 rng 与 world_size，实测顶层 9 键。tiny 6.44 MB（优化器件占 4.3 MB），64M 约 731 MB。</dd>
+          <dt>RNG 状态 <span class="en">RNG state</span></dt><dd>四路随机数发生器的当前状态：torch（CPU 全局）、cuda（每卡一份）、python random、numpy——四路独立，少一路那一路静默分叉。存档与恢复换来"位精确续训"：恢复后每步随机数与原进程逐位相同。</dd>
+          <dt>位精确续训 <span class="en">bit-exact resume</span></dt><dd>恢复进程产生的随机数序列与被中断进程在同一时刻逐位相同——"接着练"的最强形式；CUDA 设备数变化时降级为警告继续（不再位精确）。</dd>
+          <dt>原子写 <span class="en">atomic save</span></dt><dd>先写同目录 .tmp 再 os.replace（内核 rename，只改目录项、要么完成要么没发生）。防"写到一半被杀留下半个 checkpoint"；最坏遗产是孤儿 .tmp（kill -9 实测一个都没有）。</dd>
+          <dt>resume-by-default <span class="en">在场即恢复</span></dt><dd>续训做成默认行为：checkpoint 文件在场即恢复，无需配置。长跑中断保险（kill -9 实验 0.29%/0.67% 偏差通过）；另一面是猎场二：换数据集后旧档静默劫持续训——启动前 <code>ls checkpoints/</code> 不可省。</dd>
+          <dt>三语义（训练侧）<span class="en">resume / init_from / finetune_from</span></dt><dd>resume：默认开，六件套全量恢复，模型件 strict=True；init_from：严格权重起点（DPO 从 pretrain 起步），不匹配即炸；finetune_from：非严格 + 逐 key warning（M09 的"不许装哑"）。恢复清单日志让加载错误第一步现形。</dd>
+          <dt>world_size 重标定 <span class="en">step rescaling</span></dt><dd>换卡数续训时按 <code>step × saved_ws // current_ws</code> 折算进度：步数口径是每进程的，2 卡各跑一半样本，7 步的工作总量只抵单卡 3~4 步（测试断言 7→3）。LR 纯函数随之自然对齐。</dd>
+          <dt>双轨记账 <span class="en">full_iters / iters</span></dt><dd>fd9fdc8 修复的纪律：full_iters（epoch 全长，不扣 skip）专供全局步数与 LR 分母；iters（本次实际迭代数 = 全长 − start_step）专供循环终点与 is_last（按 start_step + iters − 1 判定）。一个量两副面孔，让它们各自得名。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

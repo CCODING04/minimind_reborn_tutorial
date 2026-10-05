@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M16 · pretrain / SFT 实战：点火，走完两棒 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m16">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第四篇 训练</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M16</span><span>第四篇 · 训练</span><span class="badge-ms">🏁B</span></div>
+        <h1>pretrain / SFT 实战：点火，走完两棒</h1>
+        <p class="lede">
+          M15 把分布式也备齐了：引擎（M13）、存档（M14）、多卡（M15）全部就绪，一直没真正点过火。
+          本课<b>真训模型</b>：先读懂范式侧有多薄，再用 tiny 配方亲手跑 pretrain→SFT 两棒，
+          然后读 64M 存档的完整曲线——🏁 里程碑 B：你有了自己的基座。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M15</b>（引擎与分布式全部就绪，本课点火）</span>
+          <span class="chip">时长：<b>约 90 分钟</b></span>
+          <span class="chip">新概念：<b>预训练动力学（loss 曲线读法）· SFT 行为跃迁</b></span>
+          <span class="chip">对照：<code>training/pretrain/workflow.py</code> · <code>training/sft/workflow.py</code> · <code>configs/{pretrain,sft}_64m.yaml</code> · <code>runs/</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>逐行数完 pretrain 母版的 37 行与 SFT 母版的 49 行，指出范式对引擎的全部定制只有 compute_loss 闭包与数据集；</li>
+        <li>用 smoke 配方加大步数真跑 200 步 tiny pretrain 与 SFT，解释 loss 只从 8.7 降到 7.9 背后的"阅读量"算术；</li>
+        <li>从 <code>runs/pretrain_full</code> 存档摘出关键点复原曲线，分清"学词频→学结构→缓慢下降"三段，说出 train/val 分叉的含义；</li>
+        <li>用 pretrain / full_sft 两份 64M 权重复现 M02 的行为跃迁表，并从训练侧（loss mask + init_from）解释它为何必然发生；</li>
+        <li>完成 🏁 里程碑 B：自己训出的 tiny 基座被自己的推理链路加载并生成。</li>
+      </ul>
+
+      <h2 id="workflow">母版精读：范式到底有多薄</h2>
+      <p>
+        M13 立过一条规矩（trainer.py 模块 docstring 原话）：<i>"范式子包只提供 compute_loss(batch, model)
+        -&gt; (loss, log_metrics) 与数据组装。梯度/AMP/裁剪/续训/评估/保存的顺序与不变量固定在此处，任何范式不得绕过。"</i>
+        当时不验证——现在到了验证的时候。<b>数行数</b>是最诚实的办法：
+        <code>wc -l</code> 亲测，pretrain 母版 <b>37 行</b>、SFT 母版 <b>49 行</b>（含空行与 docstring）。
+        37 行全文如下，一段一段看：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/pretrain/workflow.py.html">src/minimind_reborn/training/pretrain/workflow.py</a> · 全文 37 行</span><span class="lang">python</span></div><pre class="code"><code>"""预训练 workflow：差异只有数据集与损失——其余全部来自 Trainer 基件。"""
+
+from __future__ import annotations
+
+from minimind_reborn.configuration.schemas import RunConfig
+from minimind_reborn.loggers import setup_logging
+from minimind_reborn.training.common.setup import build_lm_dataset, build_model, load_tokenizer
+from minimind_reborn.training.common.trainer import Trainer
+
+
+def run(cfg: RunConfig, *, device: str | None = None, local_rank: int = 0) -> Trainer:
+    setup_logging(cfg.run_dir)
+    tokenizer = load_tokenizer()
+    model = build_model(cfg, tokenizer)
+    train_ds, eval_ds = build_lm_dataset(cfg, tokenizer, kind="pretrain")
+
+    def compute_loss(batch, m):
+        out = m(batch["input_ids"], labels=batch["labels"])
+        loss = out.loss + out.aux_loss  # aux 仅 MoE 非零；dense 恒 0，加法等价官方
+        return loss, {
+            "train/loss": out.loss.item(),
+            "train/aux_loss": float(out.aux_loss),
+        }
+
+    trainer = Trainer(
+        cfg,
+        model,
+        tokenizer,
+        train_ds,
+        eval_ds,
+        compute_loss=compute_loss,
+        save_weight="pretrain",
+        device=device,
+        local_rank=local_rank,
+    )
+    trainer.run()
+    return trainer</code></pre></div>
+      <p>
+        去掉 docstring 与 import，正文只有三件事。<b>① 组装四件</b>（12–15 行）：
+        <code>load_tokenizer()</code> 拿 M10 造的分词器；<code>build_model(cfg, tokenizer)</code> 建
+        M09 的整机（内部先过词表断言——模型 6400 与 tokenizer 对不上直接 ValueError 拒绝训练）；
+        <code>build_lm_dataset(..., kind="pretrain")</code> 走 M11 的注册表拿 M12 的
+        <code>PretrainDataset</code>。<b>② compute_loss 闭包</b>（17–23 行，共 7 行）——范式对引擎的全部接口，
+        其中真正的"损失计算"只有一行：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>workflow.py · compute_loss 逐行</span><span class="lang">python</span></div><pre class="code"><code>out = m(batch["input_ids"], labels=batch["labels"])   # M09 的移位交叉熵在模型 forward 里就算好了
+loss = out.loss + out.aux_loss                       # CE + MoE 辅助损失（M08）；dense 时 aux 恒 0
+return loss, {"train/loss": out.loss.item(), ...}     # 引擎接口：(损失张量, 日志字典)</code></pre></div>
+      <p>
+        注意损失不是这里"算"的——模型 forward 收到 <code>labels</code> 就顺手算好移位交叉熵（M09），
+        闭包只做一次加法（把 MoE 的负载均衡辅助损失加上，dense 模型加 0）。
+        <b>③ 交棒</b>（25–37 行）：把四件与闭包塞进 <code>Trainer</code>，声明 <code>save_weight="pretrain"</code>
+        （决定产物名，一会儿讲），然后 <code>trainer.run()</code>——从这一行起，循环、lr、AMP、裁剪、
+        评估、保存全是 M13/M14 引擎的事，母版再没出现过一行训练逻辑。
+      </p>
+
+      <h3 id="iso">同构之美：SFT 母版只改三处</h3>
+      <p>
+        SFT 母版 49 行，与 pretrain 的差异用 <code>diff</code> 的眼光看只有三处——其余（包括 compute_loss）
+        <b>一字不差</b>：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/sft/workflow.py.html">src/minimind_reborn/training/sft/workflow.py</a> · 与 pretrain 的三处差异</span><span class="lang">python</span></div><pre class="code"><code>train_ds, eval_ds = build_lm_dataset(cfg, tokenizer, kind="sft")   # 差异①：数据集换 SFT 家族
+...
+sft_base = getattr(train_ds, "_base", None) or train_ds   # 数据卡从底层数据集取（视图无 data_card）
+...
+trainer = Trainer(cfg, model, tokenizer, train_ds, eval_ds,
+                  compute_loss=compute_loss,
+                  save_weight="full_sft",                 # 差异②：产物名换 full_sft
+                  ...)
+trainer.run()
+if local_rank == 0 and hasattr(sft_base, "data_card"):    # 差异③：收尾多 10 行——
+    card = sft_base.data_card()                           #   M12 的数据卡（去重/C3 重映射统计）
+    ... # 落盘 run_dir/data_card.json（rank0 写，避免双 rank 竞争）</code></pre></div>
+      <p>
+        <b>差异①</b>是本质：<code>kind="sft"</code> 换成 <code>SFTDataset</code>——同一句话被渲染成
+        chat 模板（M10），且 labels 里非回答区间被 M12 的 loss mask 置成 -100（"这一格不算账"）。
+        <b>差异②③</b>是工程收尾：产物改名 + 数据卡落盘。同一个 compute_loss、同一台引擎——
+        这就是"八范式共用一台引擎"的实义：
+      </p>
+      <pre class="ascii"><code>八种范式的 workflow 全都长这样（截至 M16 你见过两个，M17 起逐个点亮）
+
+  pretrain ─┐  sft ─┐  dpo ─┐  distill ─┐  lora ─┐  grpo ─┐  ppo ─┐  agent ─┐
+            │       │       │           │        │        │       │         │
+            └──┬────┴──┬────┴─────┬─────┴───┬────┴───┬────┴───┬───┴────┬────┘
+               ▼       ▼          ▼         ▼        ▼        ▼        ▼
+         各自的 compute_loss(batch, model) → (loss, log_metrics)   ← 范式的全部接口
+               │
+               ▼
+      ┌─ Trainer.run()（M13）──────────────────────────────┐
+      │ lr 调度 · AMP · 梯度累积 · 裁剪 · 续训 · 评估 · 保存 │  ← 一行都不许范式碰
+      └────────────────────────────────────────────────────┘</code></pre>
+
+      <h3 id="chain">init_from：两棒的交接棒</h3>
+      <p>
+        两棒怎么接？看 64M 的两份配方（tiny 冒烟版结构相同，尺寸更小）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/configs/sft_64m.yaml.html">configs/sft_64m.yaml</a> · 全文</span><span class="lang">yaml</span></div><pre class="code"><code># 64M 全参数 SFT（基于 pretrain 权重）
+stage: sft
+data:
+  dataset: sft_t2t_mini            # 差异①在配方侧的入口：语料换 sft
+  max_seq_len: 768
+  eval_ratio: 0.005
+  num_workers: 8
+train:
+  epochs: 2
+  batch_size: 16
+  gradient_accumulation_steps: 1
+  learning_rate: 1.0e-5    # SFT 用小 lr 防灾难性遗忘（官方推荐）
+  dtype: bf16
+  init_from: pretrain      # 严格加载 pretrain 产物  ← 交接棒就这一个键
+  save_interval_steps: 500
+  log_interval: 50</code></pre></div>
+      <p>
+        <code>init_from: pretrain</code> 走的是 M14 讲过的<b>初始化三语义</b>里的"严格起点"：
+        Trainer 构造时（trainer.py:432）把它交给 <code>resolve_weight_path("pretrain", out, 768, False)</code>，
+        按命名约定 <code>{权重名}_{hidden_size}.pth</code> 解析成 <code>out/pretrain_768.pth</code>，
+        再 <code>load_inference_weights(..., strict=True)</code>——键集合必须完全相等，否则启动前一秒就炸。
+        两处小字值得念出声：<b>lr 从 5e-4 降到 1e-5</b>（50 倍）——SFT 是在已训好的权重上"精修"，
+        大步长会把 pretrain 学到的东西震掉（灾难性遗忘：旧技能被新任务的梯度冲刷掉）；
+        <b>tiny 冒烟配方里 <code>init_from: null</code></b>——从零训，等下我们会看到从零 SFT 的 loss 长什么样。
+      </p>
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：两段式是全行业的默认形状</div>
+        <p>
+          pretrain（海量无标注文本，学语言本身）→ SFT（少量指令-回答对，学"当助手"）这个顺序不是
+          minimind 的发明：GPT-3 论文把两段分别叫 pretraining 与 fine-tuning，InstructGPT 把后者细化为
+          SFT + RLHF。分工的经济学在于：pretrain 吃 <b>几十亿到万亿 token</b>、算力以 GPU 月计，
+          只能少数机构做；SFT 吃 <b>几万到几百万条</b>对话、几小时到几天，人人做得起——
+          所以"基座 + 对齐"的市场才会分成两层。你今天用 0.53M 参数走完同一形状的两棒。
+        </p>
+      </div>
+
+      <h2 id="tiny">tiny 实战：200 步，从 8.7 出发</h2>
+      <p>
+        引擎读完了，点火。冒烟配方 <code>configs/smoke/smoke_pretrain.yaml</code> 默认只跑 6 步
+        （M01 的样子），本课把步数放大到 200——tiny 模型（0.53M 参数）上这是<b>分钟级</b>的事：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.max_steps=200 --set train.resume=false --set train.log_interval=20 --set train.save_interval_steps=100</span>
+<span class="out">09:47:54 | INFO | minimind.trainer | 训练启动 stage=pretrain recipe=smoke_pretrain | 0.53M 可训练参数 | dtype=bf16 device=cuda world=1 | 数据=pretrain_t2t_mini</span>
+<span class="out">09:47:54 | INFO | minimind.trainer | Epoch[1/2](20/317242) loss=8.7298 lr=4.90e-04 grad_norm=0.86 tok/s=16574 mfu=0.0% eta=122.5min</span>
+<span class="out">09:47:54 | INFO | minimind.trainer | Epoch[1/2](60/317242) loss=8.3959 lr=4.10e-04 grad_norm=0.64 tok/s=44335 mfu=0.1% eta=72.0min</span>
+<span class="out">09:47:55 | INFO | minimind.trainer | Epoch[1/2](100/317242) loss=8.1445 lr=2.79e-04 grad_norm=0.67 tok/s=43627 mfu=0.1% eta=60.9min</span>
+<span class="out">09:47:55 | INFO | minimind.trainer | 已保存：pretrain_64.pth（epoch=1 step=100 best_val=None）</span>
+<span class="out">09:47:55 | INFO | minimind.trainer | Epoch[1/2](140/317242) loss=8.0187 lr=1.46e-04 grad_norm=0.67 tok/s=38666 mfu=0.1% eta=59.4min</span>
+<span class="out">09:47:56 | INFO | minimind.trainer | Epoch[1/2](200/317242) loss=7.8833 lr=5.00e-05 grad_norm=0.64 tok/s=29174 mfu=0.1% eta=61.0min</span>
+<span class="out">09:47:56 | INFO | minimind.trainer | 达到 max_steps=200 截断（冒烟/调试预算）</span>
+<span class="out">09:47:56 | INFO | minimind.trainer | 评估：val/loss=8.3165（固定 2 batch）</span>
+<span class="ok">09:47:56 | INFO | minimind.trainer | 训练结束：best_val_loss=8.31648874282837 optimizer_steps=100</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · seed=42 · 存档 runs/smoke_pretrain/20261001_094752]</b>
+      全程 5.6 秒（CPU 上约几分钟，同样可跑）。200 个 micro step ÷ 累积 2 = 100 个 optimizer step，
+      参数只动过 100 次；lr 序列 4.90e-04 → 5.00e-05 是余弦被压进 200 步走完（M13）。日志行里的 loss
+      是<b>窗口均值</b>——两次打日志之间所有 micro step 损失的平均（trainer.py:284），不是瞬时值。</p>
+      <p>
+        把 loss 序列排开，配上起点参照：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">micro step</th><th class="u-w130">train loss（窗口均值）</th><th class="u-w130">困惑度 e^loss</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>0（未训练）</td><td>≈ 8.76 = ln(6400)</td><td>6400</td><td>M09 初始 loss 体检的理论值</td></tr>
+            <tr><td>20</td><td>8.7298</td><td>≈ 6185</td><td>第一个窗口：几乎还没动</td></tr>
+            <tr><td>60</td><td>8.3959</td><td>≈ 4429</td><td></td></tr>
+            <tr><td>100</td><td>8.1445</td><td>≈ 3444</td><td>中途存档 pretrain_64.pth</td></tr>
+            <tr><td>140</td><td>8.0187</td><td>≈ 3037</td><td></td></tr>
+            <tr><td>200</td><td><b>7.8833</b></td><td>≈ 2653</td><td>val/loss = 8.3165（PPL ≈ 4091）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测 · 同上 · 困惑度由 e^loss 换算]</b>
+      困惑度（perplexity，PPL）：把每个位置"平均在多少个候选词里犹豫"折算成的等效词数：
+      $ \mathrm{PPL} = e^{\mathcal{L}} $，乱猜时 $e^{\log 6400}=6400$；
+      e^7.88 ≈ 2653 即"仍在大海捞针，但针的位置已经摸到一点"。</p>
+      <p>
+        <b>诚实的第一课：只降了 0.85。</b>从 8.76 到 7.88，这点进步是什么？算一笔"阅读量"：
+        200 个 micro step × 4 句 × 96 token = <b>76,800 个 token</b>，按 M10 的换算（1 token ≈ 1.5 字）
+        约 11 万汉字——<b>一本薄书</b>。用一本书学一门语言，能学到的只有<b>词频</b>：
+        哪个字常见（"的""了""是"）、哪些字符组合根本不是汉语。
+        这 0.85 nat（nat：以自然对数计的损失单位，降 1 nat = 困惑度除以 e ≈ 2.72）恰好就是"从均匀乱猜修正到高频词优先"的信息量。
+      </p>
+      <div class="callout tip">
+        <div class="co-title">💡 直觉：loss 的下限是语料本身的不可预测性</div>
+        <p>
+          训练 loss 不可能降到 0：语料本身有随机性——下一个词有时连人也猜不准（人名、数字、转折）。
+          这个不可预测性的度量叫<b>熵</b>（entropy，交叉熵的下界，M01 见过交叉熵）。模型能做的是
+          无限逼近"给定完美上下文时语料的条件熵"，64M 全程降到 1.66（PPL ≈ 5.3）已接近这套迷你语料的地板；
+          工业大模型在万亿语料上通常落在 1.x～2.x。读曲线时先问自己：<b>地板在哪</b>，再判断模型离地板多远。
+        </p>
+      </div>
+
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：载入 tiny 权重做验证，build() 报 q_norm size mismatch</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            训练完想生成验证，顺手写 <code>MiniMindLLM.build("pretrain", hidden_size=64, num_hidden_layers=2)</code>——
+            炸：size mismatch for model.layers.0.self_attn.q_norm.weight，checkpoint 是 (16,)、
+            你建的模型是 (8,)。作者实测今天原样踩中。
+          </li>
+          <li class="cause">
+            M02 埋过的坑：<code>build()</code> 只暴露 hidden/层数两个形状参数，头数用 768 系默认
+            （8 头/4 KV 头）；而 tiny 配方是 4 头/2 KV 头——头数决定 head_dim（64÷8=8 vs 64÷4=16），
+            q_norm/k_norm 的形状跟着 head_dim 走，于是对不上。
+          </li>
+          <li class="fix">
+            <b>别手填头数，喂结构快照</b>：<code>build(weight, config_path="runs/&lt;recipe&gt;/&lt;时间戳&gt;/config.json")</code>
+            ——每个 run 目录的 config.json（M13 四件套之一）存着训练时的全量模型结构，build 会按快照建模型
+            （跨源一致性：结构以训练时为准，而不是以你记忆为准）。M02 的裸构造器路线也能走通，快照路线一步到位。
+          </li>
+        </ul>
+      </div>
+
+      <p>
+        生成对比（同一句「春天来了，」，seed=7、temperature=0.8、bos+文本直拼——pretrain 权重唯一会玩的游戏，M02）：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">权重</th><th>续写输出（截断）</th></tr></thead>
+          <tbody>
+            <tr><td>未训练</td><td>「…账成本 snhang便匹als便44最终 creative)性质 conversation more Q add charme line sing零压力经历 in50电影…」——<b>多语种乱码</b>，48 token 跑满</td></tr>
+            <tr><td>200 步</td><td>「.在为：了篇」——<b>高频字 + 立刻喊停</b>（7 token 后产出 EOS——end of sequence，结束符：模型给出它即停止生成，M03 的 im_end）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 同环境 · 脚本见验收块]</b>
+      变化真实但很小：从"任何字符都可能"收敛到"只会吐高频字"——它学到的第一件事是词频，
+      第二件事是"短前缀之后常常该结束了"。这正是 0.85 nat 的行为学翻译。要看见通顺，得看 64M 的存档。</p>
+
+      <h3 id="tiny-sft">第二棒同样跑：smoke_sft 200 步（从零版）</h3>
+      <p>
+        冒烟 SFT 配方默认 <code>init_from: null</code>——从零训。同样加大到 200 步
+        （注意：tiny 上这一棒不再是秒级，见输出里的 tok/s）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_sft.yaml --set train.max_steps=200 --set train.resume=false --set train.log_interval=20 --set train.save_interval_steps=100</span>
+<span class="out">09:48:29 | INFO | minimind.trainer | 训练启动 stage=sft recipe=smoke_sft | 0.53M 可训练参数 | dtype=bf16 device=cuda world=1 | 数据=sft_t2t_mini</span>
+<span class="out">09:49:25 | INFO | minimind.trainer | Epoch[1/2](20/277865) loss=8.6088 lr=4.90e-04 grad_norm=0.89 tok/s=364 mfu=0.0% eta=13036.9min</span>
+<span class="out">09:53:34 | INFO | minimind.trainer | Epoch[1/2](100/277865) loss=7.5669 lr=2.79e-04 grad_norm=0.89 tok/s=354 mfu=0.0% eta=14094.1min</span>
+<span class="out">09:58:11 | INFO | minimind.trainer | Epoch[1/2](200/277865) loss=7.2651 lr=5.00e-05 grad_norm=1.01 tok/s=206 mfu=0.0% eta=13457.9min</span>
+<span class="out">09:58:16 | INFO | minimind.trainer | 评估：val/loss=7.5377（固定 2 batch）</span>
+<span class="out">09:58:16 | INFO | minimind.sft | 数据卡已写入 runs/smoke_sft/20261001_094826/data_card.json：去重 63910 条，C3 重映射 0 次</span>
+<span class="ok">09:58:16 | INFO | minimind.trainer | 训练结束：best_val_loss=7.537727117538452 optimizer_steps=200</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · seed=42 · 存档 runs/smoke_sft/20261001_094826]</b>
+      全程 9 分 51 秒——比 pretrain 慢 100 倍（tok/s 364 vs 44,335）：SFTDataset 逐条现场渲染 chat 模板再
+      重新分词（M13 的 loader 案 A），数据侧成了瓶颈。loss 8.61 → 7.27（val 7.54），形状与 pretrain 同款凹形。</p>
+      <p>
+        两个顺带的观察。<b>① 起点 8.61 比 8.76 略低</b>：SFT 语料里模板词（<code>&lt;|user|&gt;</code>、
+        <code>&lt;|assistant|&gt;</code>，每条样本都带，M10）重复率极高，前 20 步就把它们的词频学了个大概。
+        <b>② 最后一行不是 trainer 打的</b>——<code>minimind.sft | 数据卡已写入…</code> 是 SFT 母版差异③
+        （收尾 10 行）的输出，去重/重映射统计落盘（M12 的 D5 数据卡）。引擎的日志与范式的日志在同一个
+        train.log 里接力，正如两个模块在同一台机器上接力。
+      </p>
+
+      <h2 id="archive">读档：64M 的完整曲线长什么样</h2>
+      <p>
+        tiny 是秒级玩具，64M 全程要 7 小时（双卡）。好在 M13 的四件套让每次训练都留下完整档案——
+        读真实日志是正式学习路径（M01 就这么说）。<b>[存档 runs/pretrain_full/20260925_005504 · 2×RTX 4090 DDP · bf16 · seed=42]</b>：
+        63.91M 参数、2 epoch、等效 batch 512（32 句 × 累积 8 × 双卡）、lr 5e-4。
+        从 train.log 每 50 步一行的 5,418 行日志里摘关键点：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">grep "Epoch\[" runs/pretrain_full/20260925_005504/train.log | sed -n '1p;10p;40p;160p;640p;2560p'</span>
+<span class="out">…Epoch[1/2](50/263857)     loss=8.1309 lr=5.00e-04 … mfu=27.5%</span>
+<span class="out">…Epoch[1/2](500/263857)    loss=6.1273 …</span>
+<span class="out">…Epoch[1/2](2000/263857)   loss=3.5757 …</span>
+<span class="out">…Epoch[1/2](8000/263857)   loss=2.4033 …</span>
+<span class="out">…Epoch[1/2](32000/263857)  loss=2.0209 …</span>
+<span class="out">…Epoch[1/2](128000/263857) loss=1.7863 …</span>
+<span class="p">$ </span><span class="cmd">grep "Epoch\[2/2\](131929/\|评估\|训练结束" runs/pretrain_full/20260925_005504/train.log | tail -4</span>
+<span class="out">…Epoch[2/2](131929/263857) loss=1.6643 lr=1.16e-04 …</span>
+<span class="out">…评估：val/loss=1.6850（固定 50 batch）        ← epoch 1 末</span>
+<span class="out">…评估：val/loss=1.5276（固定 50 batch）        ← epoch 2 末</span>
+<span class="ok">…训练结束：best_val_loss=1.527550458908081 optimizer_steps=32984</span></code></pre>
+      <p>
+        画成曲线（横轴示意，条长 ∝ 已降掉的 nat 数）：
+      </p>
+      <pre class="ascii"><code>pretrain_full 的 train loss（[存档 runs/pretrain_full/20260925_005504 · 2×RTX 4090 DDP · bf16]）
+
+step 50      8.131 ███▎                    ─┐ 第一段：垂直下跌
+step 100     7.413 ██████▊                   │ （学词频）
+step 500     6.127 █████████████▎             │
+step 1000    4.882 ███████████████████▌     ─┘
+step 2000    3.576 ██████████████████████████▎  ─┐ 第二段：变缓
+step 4000    2.785 ██████████████████████████████▎ │ （学局部搭配）
+step 8000    2.403 ███████████████████████████████▊─┘
+step 16000   2.174 ████████████████████████████████▎ ─┐ 第三段：长平台
+step 32000   2.021 █████████████████████████████████▊ │ 缓慢爬向地板
+step 64000   1.883 ██████████████████████████████████▌│ （学语法/语义长尾）
+step 128000  1.786 ███████████████████████████████████▎│
+step 131929* 1.664 ███████████████████████████████████▌┘ *epoch 2 末
+val：ep1 末 1.6850 → ep2 末 1.5276（best）；tok/s ≈ 253k，mfu ≈ 29%（M13 算过账）</code></pre>
+
+      <h3 id="loss-reading">loss 曲线读法：三段式</h3>
+      <p>
+        这条形状不是 minimind 特产——几乎所有语言模型的预训练曲线都长这样，只是刻度不同。
+        <b>本课第一个新概念：预训练动力学</b>，即 loss 随步数的下降规律。读法三段：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">阶段</th><th class="u-w130">本档区间</th><th>loss 在降什么</th></tr></thead>
+          <tbody>
+            <tr><td><b>① 垂直下跌</b></td><td>8.13 → 6.1（前 500 步）</td><td><b>词频</b>：哪些 token 高频。梯度最大、学得最快——unigram 统计（单字频率表）几步就能拟合，tiny 的 200 步全程都在这一段</td></tr>
+            <tr><td><b>② 快速变缓</b></td><td>6.1 → 2.4（500 → 8000 步）</td><td><b>局部结构</b>：固定搭配与相邻依赖（"北京"后面常是"市"）。信息量比词频大一个量级，但仍是局部统计</td></tr>
+            <tr><td><b>③ 长平台</b></td><td>2.4 → 1.66（8000 步 → 26 万步）</td><td><b>长尾</b>：句法、语义、事实——每降 0.1 nat 都要海量数据与参数。这段占了总时长 95%，也是"大模型为什么贵"的曲线形态</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        val 与 train 的关系在存档里也有一课：pretrain_full 的 <b>val（1.53）反而低于 train（1.66）</b>。
+        两个原因：日志里的 train loss 是"过去 50 步的窗口均值"，而模型还在下降通道里（评估时模型比窗口内的大部分时刻更强）；
+        验证集又是语料尾部固定 50 batch，分布略偏简单。方向健康——两边同降、无分叉。
+        <b>什么时候要警惕？看 SFT 的曲线。</b>
+      </p>
+
+      <h3 id="sft-curve">sft_full：起点不是 8.8</h3>
+      <p>
+        <b>[存档 runs/sft_full/20260925_075941 · 2×RTX 4090 DDP · bf16 · seed=42]</b>——
+        pretrain 结束（07:59:38）<b>3 秒后</b>（07:59:41）就开的下一棒，日志第二行就写着交接：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">head -6 runs/sft_full/20260925_075941/train.log | grep "严格\|启动"</span>
+<span class="out">2026-09-25 07:59:56 | INFO | minimind.trainer | 严格加载起点权重：out/pretrain_768.pth</span>
+<span class="out">2026-09-25 07:59:56 | INFO | minimind.trainer | 训练启动 stage=sft recipe=sft_full | 63.91M 可训练参数 | … | 数据=sft_t2t</span>
+<span class="p">$ </span><span class="cmd">grep "Epoch\[1/2\](100/\|Epoch\[1/2\](64000/\|Epoch\[2/2\](159191/" runs/sft_full/20260925_075941/train.log</span>
+<span class="out">…Epoch[1/2](100/318382)   loss=1.9356 lr=1.00e-05 …</span>
+<span class="out">…Epoch[1/2](64000/318382) loss=1.4187 lr=9.78e-06 …</span>
+<span class="out">…Epoch[2/2](159191/318382) loss=1.3240 lr=2.32e-06 …</span>
+<span class="p">$ </span><span class="cmd">grep "评估" runs/sft_full/20260925_075941/train.log</span>
+<span class="out">…评估：val/loss=1.9683（固定 50 batch）   ← epoch 1 末（train 1.37）</span>
+<span class="ok">…评估：val/loss=1.9559（固定 50 batch）   ← epoch 2 末（train 1.32）→ best</span></code></pre>
+      <p>
+        三个读数各有一课。<b>① 起点 1.94 而非 8.8</b>：init_from 严格加载生效——pretrain 的全部语言知识
+        在第一 step 就已在场。为什么不从 pretrain 末尾的 1.66 继续数？因为 SFT 的 loss 口径变了：
+        M12 的 loss mask 只对<b>回答区间</b>记账（<code>-100</code> 不算账），且回答里的内容词比
+        pretrain 语料的高频连接词难猜——起点 1.94 是"带着语言知识、第一次做对话任务"的合理起点。
+        <b>② lr=1e-5、近乎平的曲线</b>：小步长精修，2 个 epoch 只降 0.6。<b>③ train 1.32 vs val 1.96——分叉</b>：
+        train 一路降到 1.32，val 却钉在 1.96 附近不动。M13 铺过：val（验证集损失）代表"没见过的数据上的表现"。
+        train 降 val 不降，说明模型在<b>记忆训练集的回答</b>（过拟合，overfitting：背答案而不是学答题），
+        而不是继续学泛化（generalize，从例子提炼规律、对没见过的输入也成立）的对话能力。
+        SFT 的回答分布比开放语料集中得多，两轮 epoch 就足够模型开始背——
+        这也是为什么 M17 之后还有 DPO/RL 这些"不靠背答案"的范式接力。
+      </p>
+
+      <h3 id="compare">对照表：你的 200 步 vs 64M 的 26 万步</h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th></th><th class="u-w200">tiny 200 步（你的）</th><th>64M 全程（存档）</th></tr></thead>
+          <tbody>
+            <tr><td><b>pretrain 步数</b></td><td>200 micro / 100 optimizer</td><td>263,858 micro / 32,984 optimizer</td></tr>
+            <tr><td><b>pretrain 用时</b></td><td>5.6 秒（单卡）</td><td>≈ 7 小时 04 分（双卡 DDP）</td></tr>
+            <tr><td><b>pretrain 阅读量</b></td><td>7.7 万 token</td><td>≈ 32 亿 token（约 4.2 万倍）</td></tr>
+            <tr><td><b>pretrain 终点</b></td><td>train 7.88 / val 8.32</td><td>train 1.66 / val 1.53（best）</td></tr>
+            <tr><td><b>SFT 方式</b></td><td>从零（init_from: null）200 步：8.61 → 7.27</td><td>链式（init_from: pretrain）318,382 步：1.94 → 1.32，val 1.96</td></tr>
+            <tr><td><b>SFT 用时</b></td><td>≈ 10 分钟（tiny 上 SFT 慢 100 倍：逐条模板重编码，M13 讲过）</td><td>≈ 11 小时 17 分（双卡）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测（tiny 两列 · 2026-10-01 · RTX 4090）+ 存档 runs/pretrain_full/20260925_005504、runs/sft_full/20260925_075941（64M 列 · 2×RTX 4090 DDP · bf16）]</b>
+      阅读量 = micro 步数 × batch × seq_len：tiny 200×4×96=76,800；64M 263,858×32×380≈32.1 亿。
+      64M 用时由日志首尾时间戳相减（00:55:12→07:59:38；07:59:56→19:16:29）。</p>
+      <p>
+        曲线形状的异同值得说透：两条都是"先快后慢"的凹形（动力学不因规模改变），但 tiny 只走完了第一段——
+        它的 0.85 nat 全是词频；64M 走完三段、把 loss 压到 1.66。<b>规模买到的不是新的学习规律，
+        而是走得更远的资格</b>。
+      </p>
+
+      <h2 id="behavior">行为跃迁：同一问题，两份权重</h2>
+      <p>
+        M02 你见过一张表：pretrain 权重用对话模板问只会堆模板词，SFT 权重会接话。当时承诺
+        "M16 你会亲手训出这两类权重再对照——这张表将从『现象』变成你自己的结论"。兑现。
+        同一句「春天来了，」（seed=7、temperature=0.8、48 token），768 权重三路对照：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w200">权重 + 入口路径</th><th>输出（截断）</th></tr></thead>
+          <tbody>
+            <tr><td><code>pretrain_768.pth</code><br>bos+直拼（pretrain_mode）</td><td>「天气开始变暖了，树木变得绿油油的。人们开始穿上轻便的衣服，享受阳光和微风。人们开始穿上轻便的衣服，去公园里散步和跑步」——<b>通顺的续写</b></td></tr>
+            <tr><td><code>pretrain_768.pth</code><br>chat 模板</td><td>「reader<br>reader<br>reader…」——<b>模板词堆叠</b>，48 个 token 几乎全是同一个词</td></tr>
+            <tr><td><code>full_sft_768.pth</code><br>chat 模板</td><td>「春天来了，万物复苏，大地开始变得生机勃勃。树木抽出嫩芽，花儿绽放，小鸟儿欢快地歌唱。远处」——<b>按对话格式接话</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 2×RTX 4090 · torch 2.14.0+cu130 · seed=7 · T=0.8 · top_p=0.95]</b>
+      与 M02（2026-09-29）同设置复跑：字句不同（采样随机性），三行的<b>结构差异</b>（通顺续写 / 堆叠 / 接话）稳定复现。</p>
+      <p>
+        现在你能从<b>训练侧</b>解释这张表了——这正是<b>本课第二个新概念：SFT 行为跃迁</b>。
+        pretrain 的损失对<b>每个</b>位置记账（M09：labels 就是 input_ids），模型学的是"文字接龙"这一件事，
+        语料里混着的 chat 文本只教会它"表格词常出现"，于是拿着对话模板它只会把见过的表格词一个个填下去。
+        SFT 换了两个东西：<b>数据</b>变成（用户问题，助手回答）对；<b>账本</b>被 M12 的 loss mask 改成
+        只对助手回答区间记账。成千上万个 optimizer step 之后，梯度只强化一件事——
+        <b>在 assistant 标记之后，以助手身份把回答说完</b>。行为跃迁不是涌现的魔法，是账本改了、
+        模型跟着账本学的必然。第三行"万物复苏"与第一行"天气开始变暖"用的是同一套 pretrain 语言知识，
+        差别只在"以什么身份接下文"。
+      </p>
+
+      <h3 id="jump-tiny">tiny 上做同样的实验（🎮 已替你跑完）</h3>
+      <p>
+        把 200 步 tiny 基座交给 SFT（<code>smoke_sft.yaml --set train.init_from=pretrain</code>，
+        严格加载 out/pretrain_64.pth，再训 200 步），然后同一句「你好，请介绍一下你自己」：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w200">tiny 权重 + 路径</th><th>输出</th></tr></thead>
+          <tbody>
+            <tr><td>pretrain（200 步）+ 直拼</td><td>「.的问题境助手的问题请境，电影军污染头。。可以察笑尽量头a的问题合规快…」——高频字乱粥</td></tr>
+            <tr><td>full_sft（再 200 步）+ chat 模板</td><td>「。，」——<b>3 个 token 就停</b>（finish=stop）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 存档 runs/smoke_sft/20261001_095825 · seed=7 · T=0.8]</b>
+      SFT 链式 200 步：loss 8.43 → 7.23（对照从零版 8.61 → 7.27；val 7.53 两者几乎持平——
+      tiny 基座太小，pretrain 那点家底在 SFT 任务上优势仅 0.2 nat）。</p>
+      <p>
+        跃迁在 tiny 上只有<b>雏形</b>：它没学会"当助手"，但学会了"回答可以很短、说完就停"——
+        loss mask 把"何时给 EOS"也计进了账。行为跃迁的幅度与模型容量、SFT 数据量成正比：
+        64M 上是质变，0.53M 上是"从话痨变成寡言"。诚实呈现，这就是 100 倍参数差距的行为学刻度。
+      </p>
+
+      <h2 id="milestone-b">🏁 里程碑 B</h2>
+      <div class="milestone">
+        <div class="ms-head"><span class="flag">🏁</span>
+          <div>
+            <div class="ms-title">里程碑 B · 自己的基座</div>
+            <div class="ms-sub">第四篇收官：你训出的权重，被你自己的推理链路加载并开口说话</div>
+          </div>
+        </div>
+        <div class="ms-body">
+          <p>三道绿灯，全部可判定。逐项打勾：</p>
+          <ul class="checklist">
+            <li><b>① tiny 基座可加载、可生成</b>：<code>out/pretrain_64.pth</code> 是你 200 步训出的权重，
+              且被 M03 那条完整推理链路（tokenizer→engine→generator→模型→KV cache→采样→detok）
+              strict 载入并生成。7 行验证脚本（真跑过）：
+              <div class="codeblock"><div class="code-head"><span>/tmp/m16_verify.py · 基座生成验证</span><span class="lang">python</span></div><pre class="code"><code>import torch
+from minimind_reborn.configuration.schemas import GenerateConfig
+from minimind_reborn.inference.engine import MiniMindLLM
+
+torch.manual_seed(7)
+llm = MiniMindLLM.build("pretrain", config_path="runs/smoke_pretrain/20261001_094752/config.json")
+out = llm.generate_text([{"role": "user", "content": "北京是中国的"}],
+                        GenerateConfig(temperature=0.8, max_new_tokens=48), pretrain_mode=True)
+print("生成:", out["content"], "| finish:", out["finish_reason"], "| tokens:", out["generated_tokens"])</code></pre></div>
+              <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m16_verify.py</span>
+<span class="out">生成: .在为：了篇 | finish: stop | tokens: 7</span></code></pre>
+              config.json 快照来自<b>你自己</b>的 run 目录（坑卡的解法）——生成质量不重要，
+              "strict 载入 + 走完生成链 + 正常停止"这条链通才重要；</li>
+            <li><b>② 存档分析对照表完成</b>：<a href="#compare">对照表</a>三行（步数 / 用时 / 终点 loss）填完，
+              并能口头复述曲线三段各自在学什么（词频 → 局部结构 → 长尾）——读档分析是正式学习路径，不是降级；</li>
+            <li><b>③ 🎮 选做：64M 短训达标线</b>（需 GPU，约 12 分钟）：
+              <code>uv run python tools/train.py configs/pretrain_64m.yaml --set train.max_steps=4000 --set train.resume=false --set train.log_interval=200 --set output_dir=out/m16_64m_short</code>
+              ——<b>达标线：val/loss ≤ 4.5</b>。<span class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · seed=42 · runs/pretrain_64m/20261001_101130]</b>
+              500 optimizer step（4000 micro）后 train 3.45 / val 4.34，用时 11 分 21 秒，亮绿。</span>
+              注意 <code>--set output_dir=...</code> 把产物引到独立目录，别覆盖 out/ 里的 768 存档正主。
+              无 GPU 就读 runs/pretrain_full 存档完成 ②（等效）。</li>
+          </ul>
+          <h3 id="retro">复盘三问（写在笔记里，比绿灯本身更重要）</h3>
+          <ul>
+            <li><b>学到什么</b>：不看资料说出——母版为什么只有 37 行（引擎收走了什么）、
+              SFT 起点为什么是 1.94 不是 8.8、行为跃迁的账本解释。各 30 秒，卡壳的那条回对应小节；</li>
+            <li><b>还差什么</b>：模型现在"会说话"但不会"挑更好的说法"——两个回答它都觉得像，
+              因为 SFT 的损失只知道"模仿标准答案"，不知道"比别的答案好"。
+              M17 的 DPO 就是给模型装这把尺子（偏好对齐）；</li>
+            <li><b>卡点在哪</b>：①验证脚本 size mismatch → 回<a href="#tiny">坑卡</a>（用 config_path 快照）；
+              ②SFT 启动报 FileNotFoundError: out/pretrain_64.pth → 链式依赖，先跑完 pretrain；
+              ③64M 短训爆显存 → batch_size 减半、累积翻倍（等效 batch 不变，M13 的梯度累积）。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · SFT 为什么用 pretrain 权重当起点，而不是从零训？用两组数字回答</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>从零 SFT 意味着用几万条对话同时学"语言"和"当助手"两件事，前者根本学不动。数字：64M 链式 SFT 起点即 1.94（pretrain 的语言知识第一 step 就在场），从零则是 8.8 起步——差近 7 个 nat；tiny 上同款实验（从零 8.61 → 7.27 vs 链式 8.43 → 7.23）差距缩小到 0.2 nat，因为 tiny 的 pretrain 本身只学到词频。另外 SFT 还配 1e-5 的小 lr（pretrain 的 1/50）：起点是训好的权重，大步长会把旧知识震掉（灾难性遗忘）。</p>
+            <p class="back">答错回看：<a href="#chain">init_from：两棒的交接棒</a> 与 <a href="#sft-curve">sft_full 曲线</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · loss 曲线的三段各在学什么？平台期是"训练失败"吗？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>三段：①垂直下跌学<b>词频</b>（unigram 统计，几步就拟合完）；②快速变缓学<b>局部结构</b>（搭配、相邻依赖）；③长平台学<b>长尾</b>（句法、语义、事实）——信息越深越难挖，每 0.1 nat 都要海量数据。平台期不是失败，是第三段的常态（pretrain_full 用 95% 的时长走它）；真正的失败信号是曲线<b>不动</b>（lr/数据/实现有 bug）或<b>回升</b>（发散）。另外 loss 有下界——语料本身的条件熵，64M 的 1.66 已接近这套迷你语料的地板。</p>
+            <p class="back">答错回看：<a href="#loss-reading">loss 曲线读法</a> 与 <a href="#tiny">直觉卡</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · tiny 与 64M 的曲线形状有什么异同？tiny 的 0.85 nat 学到了什么、没学到什么？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>同：都是"先快后慢"的凹形——预训练动力学不因规模改变。异：tiny 只走完第一段（7.7 万 token 阅读量，学的全是词频）；64M 走完三段（32 亿 token，压到 1.66）。tiny 学到的是"哪些字高频、短前缀后该停"（生成上表现为只会吐高频字然后 EOS）；没学到的是局部结构以上的东西——通顺的续写属于第二段以后。规模买到的不是新的学习规律，而是走得更远的资格。</p>
+            <p class="back">答错回看：<a href="#compare">对照表</a> 与 <a href="#tiny">tiny 实战</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · sft_full 的 train 降到 1.32、val 钉在 1.96——这个分叉说明什么？和 pretrain_full（val 1.53 &lt; train 1.66）方向相反又是为什么？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>SFT 的分叉 = 过拟合信号：train 一路降而 val 不降，模型在记忆训练集的回答（背答案），不是在学泛化的对话能力——SFT 数据相对模型小，两个 epoch 就到临界。pretrain_full 方向相反（val 略低于 train）且两边同降无分叉，属于健康：train loss 是过去 50 步的窗口均值（模型还在下降通道），val 集又是尾部固定 50 batch 略偏简单。判断健康与否看的不是谁高谁低，而是<b>两者是否同向收敛</b>。</p>
+            <p class="back">答错回看：<a href="#sft-curve">sft_full：起点不是 8.8</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · 步数 ×10：把 tiny pretrain 从 200 步拉到 2000 步</div>
+        <div class="ex-body">
+          <p>
+            只改一个旋钮：<code>--set train.max_steps=2000</code>（同样 <code>train.resume=false</code> 从零跑，
+            约 21 秒）。先笔算再动手。
+          </p>
+          <div class="ex-predict"></div>
+          <p>写下预测：①终点 loss 大概降到多少？（提示：三段式——200 步刚学完词频，2000 步够不够摸到第二段？）
+          ②「春天来了，」的续写会变成什么样——通顺？更长？还是换一种乱法？</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.max_steps=2000 --set train.resume=false --set train.log_interval=200 --set train.save_interval_steps=10000</span>
+<span class="out">…Epoch[1/2](200/317242)  loss=8.0489 …（窗口均值含开局）</span>
+<span class="out">…Epoch[1/2](1000/317242) loss=6.8759 …</span>
+<span class="out">…Epoch[1/2](2000/317242) loss=6.6523 lr=5.00e-05 …</span>
+<span class="ok">…训练结束：best_val_loss=6.944757461547852 optimizer_steps=1000</span></code></pre>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>
+              续写对比（同 seed=7、T=0.8；200 步是「.在为：了篇」）：
+            </p>
+            <pre class="term"><code><span class="out">2000 步：「它在为：1. 在这有红中。 有有1.    这一</span>
+<span class="out">         1.     这有3.」</span>
+<span class="out">（另一句「北京是中国的」→「的文本，这篇篇一一个是一一段对话中。这一一一在句子…」）</span></code></pre>
+            <p>
+              <b>机制：</b>loss 7.88 → 6.65（再降 1.2 nat ≈ PPL 从 2653 到 775），但生成<b>依然不通顺</b>——
+              变化在于：输出更长、出现了中文标点与"1."这类<b>排版结构</b>、高频字的组合更像"句子零件"。
+              这正是第二段的入口：模型开始捕捉局部搭配与文本的表层格式统计，但 77 万 token
+              （约 115 万汉字——十本薄书）的阅读量远不足以学会语法。<b>边际收益也在递减</b>：
+              前 200 步贡献 0.85 nat，
+              后 1800 步只多贡献 1.2 nat——三段式的凹形在你自己的 run 里重现。
+              顺带一提：max_steps 同时决定余弦总长（M13），×10 后调度也被拉长 10 倍，
+              两次实验的 lr 轨迹并不相同——单变量实验里"步数"和"调度"其实绑在一起动。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M16 验收：两棒命令 + 生成验证（= 里程碑 B 核心）</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下依次执行。第一棒，tiny pretrain 200 步（约 6 秒 GPU / 几分钟 CPU）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.max_steps=200 --set train.resume=false --set train.log_interval=20 --set train.save_interval_steps=100</span>
+<span class="out">… | minimind.trainer | 已保存：pretrain_64.pth + best（epoch=1 step=200 best_val=8.31648874282837）</span>
+<span class="ok">… | minimind.trainer | 训练结束：best_val_loss=8.31648874282837 optimizer_steps=100</span></code></pre>
+          <p>第二棒，tiny SFT 接力（<code>init_from=pretrain</code>，严格加载你的基座；tiny 上约 10 分钟——SFT 逐条重编码模板，M13 讲过为什么慢）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_sft.yaml --set train.max_steps=200 --set train.resume=false --set train.log_interval=20 --set train.save_interval_steps=200 --set train.init_from=pretrain</span>
+<span class="out">… | minimind.trainer | 严格加载起点权重：out/pretrain_64.pth</span>
+<span class="out">… | minimind.trainer | Epoch[1/2](200/277865) loss=7.2320 lr=5.00e-05 …</span>
+<span class="ok">… | minimind.trainer | 训练结束：best_val_loss=7.527796745300293 optimizer_steps=200</span>
+<span class="out">… | minimind.sft | 数据卡已写入 runs/smoke_sft/&lt;时间戳&gt;/data_card.json：去重 63910 条，C3 重映射 0 次</span></code></pre>
+          <p>第三步，里程碑验证脚本（/tmp/m16_verify.py，正文 7 行，见 <a href="#milestone-b">里程碑 B</a>；把 config_path 换成你自己最新的 runs/smoke_pretrain/&lt;时间戳&gt;/config.json）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m16_verify.py</span>
+<span class="out">生成: .在为：了篇 | finish: stop | tokens: 7</span></code></pre>
+          <ul class="pass-criteria">
+            <li>第一棒日志含 <code>已保存：pretrain_64.pth + best</code> 与 <code>optimizer_steps=100</code>（= 200 micro ÷ 累积 2）；</li>
+            <li>第二棒第一行训练日志是 <code>严格加载起点权重：out/pretrain_64.pth</code>——交接棒发生了；
+              末尾数据卡行证明 SFT 母版差异③在工作；</li>
+            <li>验证脚本一行输出且 <code>finish: stop</code>——strict 载入、走完生成链、正常停止，里程碑 B ① 亮灯。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按症状分流）</summary>
+            <p>
+              <b>第二棒 FileNotFoundError: out/pretrain_64.pth</b> → 链式依赖：第一棒没跑或没存档
+              （检查 save_interval_steps 是否 ≤ max_steps，且 epoch 末必存）；<b>验证脚本 size mismatch
+              （q_norm）</b> → 坑卡正主：config_path 没指向你 run 的快照，或手填了头数，回
+              <a href="#tiny">坑卡</a>；<b>验证脚本生成是空串</b> → finish=stop 且 tokens 极小是正常
+              （loss 8.3 的基座刚学会"停"），确认无 RuntimeError 即算通过；<b>SFT 卡在数据段、tok/s 只有几百</b> →
+              正常（逐条模板重编码），耐心或减 max_steps；<b>想要 64M 短训</b> → 里程碑 ③ 命令
+              （记得 output_dir 指到独立目录），val/loss ≤ 4.5 达标。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        两棒走完，你的模型会"以助手身份说话"了——但它没有偏好：同一个问题的两个回答，
+        在它眼里一样"像标准答案"，因为 SFT 的损失只会模仿，不会比较。M17 装上那把尺子：
+        DPO，让模型在两个回答里学会挑更好的那个。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>预训练动力学 <span class="en">pretraining dynamics</span></dt><dd>loss 随步数下降的三段规律：垂直下跌（学词频/unigram 统计）→ 快速变缓（学局部搭配）→ 长平台（学句法语法的长尾，占 95% 时长）。形状不随规模改变，规模决定能走到第几段。</dd>
+          <dt>SFT 行为跃迁 <span class="en">behavior shift</span></dt><dd>SFT 前后模型行为的质变：基座只会文字接龙（拿对话模板只会堆模板词），SFT 后学会"在 assistant 标记后以助手身份回答"。机制是 M12 的 loss mask 把账本改到只记回答区间——不是涌现，是账本改了、模型跟着账本学。</dd>
+          <dt>困惑度 <span class="en">perplexity, PPL</span></dt><dd>交叉熵损失的指数换算 e^loss：等效"每个位置在多少个候选词里犹豫"。乱猜 = 词表 6400；64M 全程终点 1.66 → PPL ≈ 5.3。曲线读数的直观化单位。</dd>
+          <dt>母版 workflow <span class="en">recipe workflow</span></dt><dd>范式侧的薄组装层：pretrain 37 行 / SFT 49 行，正文只做"组装四件 + compute_loss 闭包 + 交棒 Trainer"。M13 docstring"范式只提供 compute_loss"的实体。</dd>
+          <dt>init_from <span class="en">严格起点</span></dt><dd>训练侧三语义之一（M14）：按 {名}_{hidden}.pth 约定解析路径、strict=True 载入，结构必须完全一致。sft_64m.yaml 的 <code>init_from: pretrain</code> 就是两棒交接棒；配套小 lr（1e-5）防灾难性遗忘。</dd>
+          <dt>过拟合 <span class="en">overfitting</span></dt><dd>train loss 降而 val loss 不降的分叉状态：模型在记忆训练集（背答案）而非学习泛化能力。sft_full 两 epoch 后 train 1.32 / val 1.96 即此信号；判断标准是两者是否同向收敛（M13 的 val 语义）。</dd>
+          <dt>灾难性遗忘 <span class="en">catastrophic forgetting</span></dt><dd>在已训好的权重上用大 lr 继续训新任务，旧技能被新梯度冲刷掉。SFT 把 lr 降到 pretrain 的 1/50 就是为它；"严格起点 + 小步长"是微调的标准姿势。</dd>
+          <dt>熵 <span class="en">entropy</span></dt><dd>语料本身不可预测性的度量，交叉熵（训练 loss）的下界。模型永远降不到 0——读曲线先问"地板在哪"，再判断模型离地板多远。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+  };
+</script>
+<script async src="assets/vendor/tex-svg.js"></script>
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

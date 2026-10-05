@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="跟着 minimind_reborn 造一个大模型：22 模块的 LLM 全栈实训课——跟读真实工程代码、跑通训练全链路、复用 85 个测试做绿灯验收。">
+<title>跟着 minimind_reborn 造一个大模型 · 课程主页</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-page="index">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 课程主页</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content content-wide">
+
+      <section class="hero">
+        <div class="hero-inner">
+          <div class="eyebrow">Hands-on LLM Course · 22 模块</div>
+          <h1>跟着 minimind_reborn<br>造一个大模型</h1>
+          <p class="subtitle">
+            以工程化重构的 <b>minimind_reborn</b>（64M 中文小模型：pretrain → SFT → DPO → 蒸馏/LoRA → RL → 推理服务）为唯一实现目标——
+            <b>跟读真实工程代码</b>、<b>跑通训练全链路</b>、<b>复用其 85 个单元测试做绿灯验收</b>。
+            不造"教学专用玩具代码"：你在课里读的每一行，都在真实仓库里服役。
+          </p>
+          <div class="hero-meta">
+            <span class="chip"><b>22</b> 个模块 · 6 篇</span>
+            <span class="chip">主线约 <b>26</b> 小时</span>
+            <span class="chip">全程 <b>CPU/tiny</b> 可完成</span>
+            <span class="chip">🎮 64M 实训选做</span>
+            <span class="chip">🏁 里程碑 A / B / C</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="quickstart">
+        <h2 class="section-title">快速开始</h2>
+        <div class="quickstart">
+          <h3>五分钟拿到第一个绿灯</h3>
+          <ol>
+            <li>准备 Python 3.12+ 与 <a href="https://docs.astral.sh/uv/" target="_blank" rel="noopener noreferrer">uv</a>（课程唯一指定工具链）；</li>
+            <li><code>cd Reproduce/minimind_reborn &amp;&amp; uv sync --extra dev</code> 安装锁定环境；</li>
+            <li><code>uv run python tools/verify_env.py</code> 验证 torch / CUDA；</li>
+            <li>数据就位：设置 <code>MINIMIND_REBORN_DATA_ROOT</code> 指向数据目录，或用 <code>tools/download_data.py</code> 从 ModelScope 下载；</li>
+            <li><code>make smoke</code> —— tiny 模型 pretrain→SFT→DPO 全链路冒烟，11 秒内三段全绿。</li>
+          </ol>
+          <p class="qs-note">
+            全过程逐步讲解见 <a href="m01_get_started.html">M01 · 课程导览与第一个绿灯</a>。
+          </p>
+        </div>
+      </section>
+
+      <section id="map">
+        <h2 class="section-title">课程地图</h2>
+        <p>
+          六篇是六段旅程角色：先当<b>用户</b>把模型跑起来，再当<b>建造者</b>自底向上读模型与数据，
+          然后当<b>研究员</b>走完训练范式与评测。难度是平的——每模块新概念 ≤2，重数学全部折叠可跳。
+          点亮左侧圆圈（或模块页底部的"标记完成"）记录进度，进度保存在你自己的浏览器里。
+        </p>
+        <div class="parts-grid" id="parts-grid"></div>
+      </section>
+
+      <section id="how">
+        <h2 class="section-title">这门课怎么学</h2>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th class="u-w130">约定</th><th>含义</th></tr></thead>
+            <tbody>
+              <tr><td><b>混合式主线</b></td><td>跟读 reborn 真实代码 + 动手跑冒烟/实验 + 复用其 85 个测试做验收；关键模块（Attention、loss_mask）有页内填空环节。</td></tr>
+              <tr><td><b>绿灯验收</b></td><td>每模块的完成标准是具体测试/命令输出（如 <code>5 passed</code>），不是"读懂了"。</td></tr>
+              <tr><td><b>数字溯源</b></td><td>页面里的每个数字都能追溯到作者实测（附环境指纹）或 reborn 存档（<code>[存档 路径 · 环境]</code> 格式），禁止凭空写数。</td></tr>
+              <tr><td><b>bug 猎场</b></td><td>十余个取材自 reborn 真实 git 史的缺陷调查：症状 → 定位 → 修复 commit → 回归锁定。</td></tr>
+              <tr><td><b>硬件分层</b></td><td>主线 CPU/tiny 可完成；64M 真训与双卡 DDP 标 🎮 选做；无 GPU 走存档读档路线（同样是正式学习路径）。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="faq" class="faq">
+        <h2 class="section-title">常见问题</h2>
+        <details>
+          <summary>我需要什么基础？</summary>
+          <div class="faq-body">会 Python 和基本 PyTorch（张量、autograd、nn.Module）；LLM 零经验可以，每个概念都会在使用处即需即讲，重推导折叠可跳。</div>
+        </details>
+        <details>
+          <summary>没有 GPU 能学完吗？</summary>
+          <div class="faq-body">能。主线全部使用 tiny 配方（64 维 2 层模型，笔记本 CPU 可跑）与 reborn 的真实存档（训练日志、指标、权重）；64M 实训全部标注 🎮 选做。</div>
+        </details>
+        <details>
+          <summary>minimind_reborn 和官方 minimind 是什么关系？</summary>
+          <div class="faq-body">reborn 是官方 minimind 的工程化重构：权重 state_dict 逐键兼容（官方权重可直接 strict 加载）、tokenizer 相同，差异在工程层——配置系统、数据管线、测试、分布式与可观测性。课程以 reborn 为主线，官方仓在对照评测（M21）中登场。</div>
+        </details>
+        <details>
+          <summary>公式断网会坏吗？</summary>
+          <div class="faq-body">公式渲染库（MathJax）与全部样式脚本已本地化到课程目录——整站<b>完全离线可用</b>，无任何外部资源依赖。</div>
+        </details>
+        <details>
+          <summary>后续模块什么时候更新？</summary>
+          <div class="faq-body">全部 22 个模块已发布（2026-10-01）。课程结构与写作规范见仓库内 <code>DESIGN.md</code>；写作约定见 <code>ANALYSIS.md</code>。</div>
+        </details>
+      </section>
+
+      <footer class="course-footer">
+        课程内容基于 <code>Reproduce/minimind_reborn</code>（Python 3.12 · torch 2.14 · transformers 5.x）·
+        页面框架 GitHub light 风格 · 进度数据只存于你的浏览器 · 2026-09
+      </footer>
+    </div>
+  </main>
+
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>official_compare.md · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=3">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">Reproduce/minimind_reborn/out/official_compare.md</span>
+  <span class="cv-meta">35 行 · 1KB · minimind_reborn</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>out/official_compare.md</span><span class="lang">text</span></div><pre class="code"><code data-lines="1"># 官方对照评测
+
+## 权重兼容性
+
+| 权重 | strict 载入 | 结论 |
+|---|---|---|
+| 官方 pretrain_768.pth | ✅ strict=True 通过 | 键级完全兼容（63.9M） |
+| 官方 full_sft_768.pth | ✅ strict=True 通过 | 键级完全兼容（63.9M） |
+
+## 贪心输出一致性（同权重，前缀一致比例）
+
+| prompt | 一致前缀 / 总生成 | 一致率 |
+|---|---|---|
+| 推荐两道中国菜并说明做法… | 9/34 | 26.5% |
+| 为什么天空是蓝色的？… | 9/9 | 100.0% |
+| 解释一下什么是机器学习… | 5/70 | 7.1% |
+| 请用Python写一个计算斐波那契数… | 14/142 | 9.9% |
+| 比较一下猫和狗作为宠物的优缺点… | 13/14 | 92.9% |
+
+**平均逐位一致率 47.3%**（同权重同数学，浮点路径差异来自 SDPA/manual prefill 与 cache 组织，属预期）
+
+## 推理吞吐与峰值显存（长 prompt，贪心 384 token，3 次取中位）
+
+| 实现 | 吞吐 tok/s | 峰值显存 MB |
+|---|---|---|
+| reborn（KV cache 预分配） | 344 | 0 |
+| official（每步 torch.cat） | 318 | 0 |
+
+**吞吐比 1.08×，显存差 +0 MB**（63M 模型 + 短上下文下 KV cache 本身占比小，长上下文/大 batch 差距会放大）
+
+## 采样样例（官方 full_sft_768 权重，temperature 0.85 / top_p 0.9）
+
+```text
+推荐两道中国菜并说明做法
+```</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=3"></script>
+</body>
+</html>

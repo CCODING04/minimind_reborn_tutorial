@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M11 · 数据访问层：registry 与字节偏移索引 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m11">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第三篇 数据</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M11</span><span>第三篇 · 数据</span></div>
+        <h1>数据访问层：registry 与字节偏移索引</h1>
+        <p class="lede">
+          M10 造好了刀（tokenizer 与 chat 模板），结尾留了两个问题：几 GB 的语料文件怎么按名字被找到、
+          怎么随机取样而不每次读全文件——本课修"燃料仓库的货架"：一个声明式注册表 + 一个字节偏移索引。
+          顺带兑现 M01 的伏笔：那条 FileNotFoundError 三要素报错，就是在这里生成的。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M10</b>（M06 的"view vs copy"建议在手边）</span>
+          <span class="chip">时长：<b>约 60 分钟</b></span>
+          <span class="chip">新概念：<b>数据注册表 · 字节偏移索引</b></span>
+          <span class="chip">对照：<code>data/registry.py</code> · <code>datasets.json</code> · <code>data/datasets.py</code> · <code>data/manifest.py</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>复现同一份 1.24GB jsonl 的三种取样姿势实测账单（全量预载 / 顺序扫描 / 字节偏移索引），说出索引赢在哪、输在哪；</li>
+        <li>逐行读懂 <code>registry.py</code>，把 M01 那条三要素报错从生成处讲到每个要素的来源，并解释"声明式 JSON 优于 if-else"；</li>
+        <li>默写 <code>JsonlIndexedDataset</code> 的 <code>__init__</code> / <code>load_line</code> 分工：O(N) 建一次（只数偏移不解析），O(1)（与数据量无关的常数时间）取任意行；</li>
+        <li>用 <code>SegmentView</code> / <code>IndexListView</code> 在同一份索引上切 train/eval，讲清"视图不复制"（回收 M06）；</li>
+        <li>说出 manifest 的三件设计各防什么：md5 稳定哈希防跨进程漂移、哈希分桶防 eval 泄漏、mtime+size 指纹防旁车脏读。</li>
+      </ul>
+
+      <h2 id="problem">观测先行：1.24GB 语料的三种取样姿势</h2>
+      <p>
+        训练循环每个 step 都要"随机抽若干行、编码成样本"（DataLoader 的日常，M13 详讲它的调度）。
+        先看要对付的对手有多大——jsonl（JSON Lines：每行一个独立 JSON 对象的纯文本，大语料的事实标准格式；
+        reborn 的九个注册数据集全是它）的 pretrain mini 版：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">ls -la ~/Code/WorkSpace/minimind-reproduce/dataset/pretrain_t2t_mini.jsonl &amp;&amp; wc -l ~/Code/WorkSpace/minimind-reproduce/dataset/pretrain_t2t_mini.jsonl</span>
+<span class="out">-rw-rw-r-- 1 admin02 admin02 1241043656  9月  9 23:59 /home/admin02/Code/WorkSpace/minimind-reproduce/dataset/pretrain_t2t_mini.jsonl</span>
+<span class="out">1270238 /home/admin02/Code/WorkSpace/minimind-reproduce/dataset/pretrain_t2t_mini.jsonl</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30]</b> 1,241,043,656 字节（1.24GB）、1,270,238 行，平均每行约 977 字节。文件名里的 t2t 指 text-to-text（指令改写语料）。</p>
+      <p>取"第 100000 行"这么一件小事，有三种朴素程度不同的做法，全部真跑（脚本节选）：</p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m11_bench.py · 三姿势对比（节选，每姿势独立进程）</span><span class="lang">python</span></div><pre class="code"><code>import json, random, resource, time
+from pathlib import Path
+
+PATH = Path.home() / "Code/WorkSpace/minimind-reproduce/dataset/pretrain_t2t_mini.jsonl"
+
+def peak_mb():  # 峰值内存：进程实际占用的物理内存（RSS）
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+
+# 姿势 A：全量读进内存 list（"先都装进来再说"）
+base = peak_mb()
+t0 = time.perf_counter()
+with PATH.open("rb") as f:
+    data = [json.loads(line) for line in f if line.strip()]
+print(f"[A] 解析 {time.perf_counter()-t0:.2f}s 净增 {peak_mb()-base:.0f}MB 共 {len(data)} 行")
+
+# 姿势 B：不预载，要哪行从头数到哪行（open 逐行 enumerate 直到目标）
+# 姿势 C：reborn 的字节偏移索引（本课主角）
+from minimind_reborn.data.datasets import JsonlIndexedDataset
+t0 = time.perf_counter()
+ds = JsonlIndexedDataset(PATH)  # 一次 O(N) 扫描，只记每行起点偏移
+print(f"[C] 构建 {time.perf_counter()-t0:.2f}s 净增 {peak_mb()-base:.0f}MB 共 {len(ds)} 行")
+
+# 计时部分（三姿势通用）：随机 1000 行取样 + 单取第 100000 行
+rng = random.Random(42)
+idxs = rng.sample(range(1270238), 1000)
+t0 = time.perf_counter()
+for i in idxs:
+    ds.load_line(i)  # A 换成 data[i]，B 换成 scan_get(i)
+print(f"随机取样 {(time.perf_counter()-t0)/1000*1e6:.1f}µs/次")</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">/usr/bin/time -v uv run python /tmp/m11_bench.py --mode naive_load</span>
+<span class="out">[naive_load] 行数 1270238</span>
+<span class="out">[naive_load] 全量解析耗时 3.23s</span>
+<span class="out">[naive_load] 峰值内存 1351MB（进程基线 34MB → 数据净增 1317MB）</span>
+<span class="out">[naive_load] 随机取样 0.69µs/次（1000 次平均）</span>
+<span class="p">$ </span><span class="cmd">/usr/bin/time -v uv run python /tmp/m11_bench.py --mode naive_scan</span>
+<span class="out">[naive_scan] 不预载、直接取第 100000 行：21ms/次（需从头扫过前 100000 行）</span>
+<span class="out">[naive_scan] 峰值内存 34MB（单行缓存，与文件大小无关）</span>
+<span class="p">$ </span><span class="cmd">/usr/bin/time -v uv run python /tmp/m11_bench.py --mode indexed</span>
+<span class="out">[indexed] 行数 1270238（与 wc -l 一致）</span>
+<span class="out">[indexed] 索引构建 0.47s（一次 O(N) 顺序扫描，只记偏移不解析 json）</span>
+<span class="out">[indexed] 峰值内存 554MB（进程基线 502MB → 索引净增 52MB）</span>
+<span class="out">[indexed] 随机取样 6.5µs/次（1000 次平均：open+seek+readline+json）</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径 · Python 3.12.12]</b> 三姿势各自独立进程、随机种子 42、页缓存热；峰值内存用 <code>/usr/bin/time -v</code> 的 Maximum resident 与 <code>ru_maxrss</code> 双口径核对一致。indexed 模式基线 502MB 是 import torch 的开销（datasets.py 顶部 import），所以比的是"净增"。顺序扫描取近文件尾的第 1269999 行另测得 379ms——B 的成本随目标行位置线性增长。</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">姿势</th><th class="u-w200">一次性成本</th><th class="u-w130">常驻内存</th><th>随机取一行</th></tr></thead>
+          <tbody>
+            <tr><td>A 全量预载进 list</td><td>3.23s（全量 json 解析）</td><td>+1317MB</td><td>0.69µs（已在内存，最快）</td></tr>
+            <tr><td>B 顺序扫描不预载</td><td>无</td><td>≈0</td><td>21ms（第 10 万行）~ 379ms（近文件尾）</td></tr>
+            <tr><td>C 字节偏移索引</td><td>0.47s（只数偏移不解析）</td><td>+52MB</td><td>6.5µs（1000 次平均）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        读表三句话：<b>A 不慢，是贵</b>——1.3GB 常驻内存，且它随文件大小线性涨；全量 SFT 语料是 14GB，
+        预载就是 15GB 上下的常驻，还只是<b>一个</b>进程的份——M15 的 DDP（分布式数据并行，多张卡各开一个进程各自喂数据）每个进程都要背上这样一份。
+        <b>B 省，但每取一行都是 O(N)</b>（耗时随行数线性增长）——训练一个 epoch 要随机取上百万次，直接判死刑。
+        <b>C 用 0.47s 的一次性扫描 + 52MB 常驻，把每次取样压到微秒级</b>：内存与文件大小近似解耦。
+        14GB 的 sft_t2t.jsonl 实测同款索引：5,109,432 行、构建 7.2s、净增 265MB——文件大 11 倍，索引只大 5 倍。
+      </p>
+      <div class="callout tip">
+        <div class="co-title">💡 直觉：索引把"随文件增长的成本"从每次取样挪到了启动一次</div>
+        <p>
+          A 把成本付在内存（线性于文件大小），B 把成本付在每次访问（线性于行位置），C 把成本付在启动时的
+          一次扫描。训练恰恰是一个"启动一次、随机访问亿次"的负载，所以 C 的成本结构对它完美贴合。
+          同款思路你其实见过：M06 的 KV cache 把"每步重新算历史"变成"预分配一次、增量写"——都是把重复成本
+          换成一次性预付。C 的取样（6.5µs）比 A（0.69µs）慢 10 倍，但两者都在微秒级，真正的瓶颈在后面的
+          tokenize（毫秒级）——省下的 1.3GB 内存是纯赚。
+        </p>
+      </div>
+
+      <h2 id="registry">注册表：数据集是"数据"，不是代码</h2>
+      <p>
+        C 姿势解决了"怎么读"，还有个前置问题："文件在哪、叫什么"。最省事的写法是在训练代码里
+        <code>if name == "pretrain": path = "..."</code> 一路硬编码——reborn 的选择是把这件事变成一份<b>数据</b>：
+        <a href="codeview/src/minimind_reborn/data/datasets.json.html"><code>datasets.json</code></a>。
+        <b>数据注册表（registry）</b>就是这张清单：名字 → 四字段条目，<b>声明式</b>（只描述"有什么"，不含"怎么拿"的代码）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/datasets.json.html">src/minimind_reborn/data/datasets.json</a> · 9 条目中的 5 个 mini</span><span class="lang">json</span></div><pre class="code"><code>{
+  "pretrain_t2t_mini": {
+    "file": "pretrain_t2t_mini.jsonl",
+    "kind": "pretrain",
+    "description": "预训练语料（text 字段），MiniMind 官方 mini 版约 1.2GB"
+  },
+  "sft_t2t_mini": {
+    "file": "sft_t2t_mini.jsonl",
+    "kind": "sft",
+    "description": "SFT 对话语料（conversations 字段，支持 tools/reasoning_content）"
+  },
+  "dpo_mini":      { "file": "dpo.jsonl",       "kind": "dpo",   "description": "DPO 偏好对（chosen/rejected 各为消息列表）" },
+  "rlaif_mini":    { "file": "rlaif.jsonl",     "kind": "rlaif", "description": "RL 系提示集（conversations，最后一轮 assistant 回复被去掉）" },
+  "agent_rl_mini": { "file": "agent_rl.jsonl",  "kind": "agent", "description": "Agent RL 轨迹（conversations + tools + gt 真值）" }
+}</code></pre></div>
+      <p class="prov"><b>[事实核对]</b> 实测 <code>len(_REGISTRY) = 9</code>：上述 5 个 mini，再加 4 个全量/增强条目（pretrain_t2t 约 10GB、sft_t2t 约 14GB、sft_t2t_mt 多轮增强、pretrain_longctx 长文续训）。四字段里 name 即键、file 是相对数据根目录的文件名、kind 是数据形状类别、description 给人读。</p>
+      <p>
+        读表与校验只有一屏代码——<a href="codeview/src/minimind_reborn/data/registry.py.html"><code>registry.py</code></a>
+        全文 58 行，核心是 <code>resolve_dataset</code>（解析名字）与 <code>file_path</code>（拼路径）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/registry.py.html">src/minimind_reborn/data/registry.py</a> · resolve_dataset</span><span class="lang">python</span></div><pre class="code"><code>@dataclass(frozen=True)
+class DatasetEntry:
+    name: str
+    file: str
+    kind: str  # pretrain | sft | dpo | rlaif | agent
+    description: str
+
+def resolve_dataset(name: str, data_root: Path | None = None) -&gt; DatasetEntry:
+    """注册表名 → 条目；本地文件缺失时报三要素错误。"""
+    if name not in _REGISTRY:
+        raise ValueError(                                    # 错误路径一：名字没登记
+            f"数据集 '{name}' 未注册。已注册：{sorted(_REGISTRY)}。"
+            f"新增数据集请在 {Path(_REGISTRY_FILE)} 中声明（名称/文件名/kind），不要散落硬编码路径"
+        )
+    entry = _REGISTRY[name]
+    path = (data_root or envs.data_root()) / entry.file      # 数据根目录：envs.py 单一来源
+    if not path.exists():
+        raise FileNotFoundError(                             # 错误路径二：登记了但文件缺
+            f"数据集文件不存在：{path}（注册名 '{name}'）。"
+            f"请检查 MINIMIND_REBORN_DATA_ROOT 或运行 tools/download_data.py --name {name} 从 modelscope 下载"
+        )
+    return entry</code></pre></div>
+
+      <h3 id="payoff">伏笔回收：M01 那条报错，就是这三行 f-string</h3>
+      <p>
+        M01 坑卡末尾留了一句话："M11 讲数据注册表时你会看到这条消息是怎么生成的"。答案就在上面
+        <code>FileNotFoundError</code> 的 f-string 里——两个错误路径真触发一遍（第二要素"注册名"来自调用参数，
+        数据根目录默认 <code>~/Code/WorkSpace/minimind-reproduce/dataset</code>，可用环境变量覆盖，见
+        <a href="codeview/src/minimind_reborn/envs.py.html"><code>envs.py</code></a>）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m11_registry.py · 注册表解析 + 两条错误路径（节选）</span><span class="lang">python</span></div><pre class="code"><code>from minimind_reborn.data.registry import _REGISTRY, file_path, resolve_dataset
+
+print(f"注册条目 {len(_REGISTRY)} 个：{sorted(_REGISTRY)}")
+print(resolve_dataset("pretrain_t2t_mini"))       # 正常路径
+print(file_path(resolve_dataset("pretrain_t2t_mini")))  # → 数据根目录/pretrain_t2t_mini.jsonl
+
+try:
+    resolve_dataset("no_such_dataset")            # 错误路径一
+except ValueError as e:
+    print(f"-- ValueError: {e}")
+try:
+    resolve_dataset("pretrain_t2t_mini", data_root=Path("/tmp/nonexistent_data"))  # 错误路径二
+except FileNotFoundError as e:
+    print(f"-- FileNotFoundError: {e}")</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m11_registry.py 2&gt;/dev/null | head -4</span>
+<span class="out">注册条目 9 个：['agent_rl_mini', 'dpo_mini', 'pretrain_longctx', 'pretrain_t2t', 'pretrain_t2t_mini', 'rlaif_mini', 'sft_t2t', 'sft_t2t_mini', 'sft_t2t_mt']</span>
+<span class="out">resolve_dataset('pretrain_t2t_mini') → DatasetEntry(name='pretrain_t2t_mini', file='pretrain_t2t_mini.jsonl', kind='pretrain', description='预训练语料（text 字段），MiniMind 官方 mini 版约 1.2GB')</span>
+<span class="out">file_path → /home/admin02/Code/WorkSpace/minimind-reproduce/dataset/pretrain_t2t_mini.jsonl  存在=True</span>
+<span class="err">-- ValueError: 数据集 'no_such_dataset' 未注册。已注册：['agent_rl_mini', …, 'sft_t2t_mt']。新增数据集请在 datasets.json 中声明（名称/文件名/kind），不要散落硬编码路径</span>
+<span class="err">-- FileNotFoundError: 数据集文件不存在：/tmp/nonexistent_data/pretrain_t2t_mini.jsonl（注册名 'pretrain_t2t_mini'）。请检查 MINIMIND_REBORN_DATA_ROOT 或运行 tools/download_data.py --name pretrain_t2t_mini 从 modelscope 下载</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30]</b> 与 M01 存档的那条报错逐字同源（M01 用 /tmp/nonexistent_data 触发的是同一路径）。三要素逐个对号：<b>缺什么</b>=拼接出的完整路径（第一行 f-string）；<b>叫什么</b>=注册名（括号里）；<b>怎么办</b>=两个解法各占一句——检查环境变量，或用 tools/download_data.py --name 从 ModelScope（国内的模型/数据集托管平台）下载。没有任何一句"废话"。</p>
+
+      <h3 id="why-json">为什么是声明式 JSON，不是 if-else</h3>
+      <p>同一个需求两种写法，差距在"变更成本"与"错误质量"上：</p>
+      <ul>
+        <li><b>加数据集不改代码</b>：声明式加一个 JSON 条目就完事；if-else 要改源码、过 review、重新发版。M11 之后你想接自己的语料，只需要注册一个新条目；</li>
+        <li><b>报错能开出"已注册名单"</b>：<code>sorted(_REGISTRY)</code> 直接打印——清单是数据，机器读得出来；散在 if-else 里的名字，报错只能写死提示文案；</li>
+        <li><b>同一份清单被两处复用</b>：<a href="codeview/tools/download_data.py.html"><code>tools/download_data.py</code></a> 的 <code>--name</code> 参数用 <code>choices=sorted(_REGISTRY)</code> 自动获得合法名单与 tab 补全——下载器与解析器不可能对不上；训练侧的组装点 <a href="codeview/src/minimind_reborn/training/common/setup.py.html"><code>training/common/setup.py</code></a> 的 <code>build_lm_dataset</code> 也从 <code>resolve_dataset</code> 拿路径；</li>
+        <li><b>kind 字段是 M12 的路标</b>：五种取值 pretrain / sft / dpo / rlaif / agent 各对应一个 Dataset 类（<b>派发</b>：按 kind 把数据送到对应的类去构建），下一课逐一解剖——本课只需要知道 kind 声明"数据的形状"。</li>
+      </ul>
+      <p>
+        这与 M04 "配置即实验"是同一个哲学的两半：M04 把<b>超参数</b>从代码搬进 YAML，本课把<b>资源描述</b>从代码搬进 JSON
+        （registry.py 的 docstring 引用的 project-structure §4："数据描述的资源走配置文件"）。代码只保留"怎么拿"的逻辑。
+      </p>
+
+      <h2 id="index">字节偏移索引：O(N) 建一次，O(1) 取任意行</h2>
+      <p>
+        现在拆姿势 C 的主角。<b>字节偏移（byte offset）</b>指某行第一个字节在整个文件里的位置编号（第 0 行的偏移是 0，
+        第 1 行的偏移 = 第 0 行的字节长度，依此类推）。<b>字节偏移索引</b> = 把每行的起点偏移存成一个整数数组。
+        原理一句话：<b>建索引时 O(N) 扫一遍文件，把每行起点记下来；取行时 seek（把文件读写指针直接拨到第 N 个字节的系统调用，
+        成本与拨多远无关）到该行起点，读到换行符为止</b>——不用扫前面的任何字节：
+      </p>
+      <pre class="ascii"><code>磁盘上的 jsonl（字节流）                     内存里的索引 self._offsets
+ 0        ┌ {"text": "给我生成一首诗…"}\n     行 0
+ 977      │ {"text": "按照这件衣服…"}\n       行 1      [0, 977, 1988, …]
+ 1988     │ {"text": …}\n                    行 2       ↑ 只有整数，约 40B/行
+ …        └ … 共 1,270,238 行 / 1.24GB                  数据一个字节不进内存
+
+load_line(1) = open → seek(977) → readline → json.loads   ← 跳过前 977 字节，只读这一行</code></pre>
+
+      <h3 id="index-code">精读：__init__ 数偏移，load_line 跳着读</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/datasets.py.html">src/minimind_reborn/data/datasets.py</a> · JsonlIndexedDataset（节选）</span><span class="lang">python</span></div><pre class="code"><code>class JsonlIndexedDataset(Dataset):
+    """jsonl 基类：构建字节偏移索引，__getitem__ 零拷贝 seek+read。
+
+    内存占用与文件大小无关（只存每行偏移），替代 HF datasets 的内存映射方案。
+    """
+
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        self._offsets: list[int] = []
+        with self.path.open("rb") as f:       # "rb" 按字节读：偏移才是真实文件位置
+            offset = 0
+            for line in f:
+                if line.strip():              # 空行不占索引位（行号只数非空行）
+                    self._offsets.append(offset)
+                offset += len(line)           # 原始字节数（含 \n；CRLF 文件连 \r 一起计）
+        if not self._offsets:
+            raise ValueError(f"数据集为空：{self.path}（检查文件内容或注册表映射）")
+
+    def __len__(self) -&gt; int:
+        return len(self._offsets)
+
+    def load_line(self, index: int) -&gt; dict:
+        with self.path.open("rb") as f:       # 每次独立 open：跨 DataLoader worker 安全
+            f.seek(self._offsets[index])      # 指针拨到该行第 0 个字节
+            return json.loads(f.readline())   # 只读这一行到换行符，再解析</code></pre></div>
+      <p>六个值得停一拍的细节：</p>
+      <ul>
+        <li><b>构建时只数长度、不解析 json</b>：0.47s vs 全量解析的 3.23s——json.loads 是这条流水线上最贵的一步，建索引刻意跳过它（解析推迟到真正取样时，且只解析被取的那行）；</li>
+        <li><b>"rb" 二进制模式是正确性的根</b>：文本模式读 Windows 换行 CRLF 文件时，Python 会把 <code>\r\n</code> 悄悄换成 <code>\n</code>，<code>len()</code> 就不再等于文件真实字节数，偏移全错。二进制模式读什么是什么，<code>len(line)</code> 恒等于该行占用的字节数——<b>换行符差异被"按字节计数"天然免疫</b>。实测一个 CRLF + 空行混排的文件：3 行非空正确还原、空行跳过（len=3）；</li>
+        <li><b>空行跳过但不留洞</b>：<code>if line.strip()</code> 保证空行不占行号，索引永远是"非空行号 → 偏移"；</li>
+        <li><b>每次 load_line 独立 open</b>：open+seek+readline+close 一套实测 6.5µs，比常驻句柄慢一点，但换来自由——DataLoader 的多个 worker 进程（M13）各自持有文件句柄互不干扰，不用管句柄生命周期；</li>
+        <li><b>负索引是 Python 语义，不是 bug 也不是防御</b>：<code>ds.load_line(-1)</code> 走 <code>self._offsets[-1]</code> 静默返回最后一行（实测）。DataLoader 只会用 0..len-1 的合法下标，所以无碍——但手写循环时别指望它报错拦你；</li>
+        <li><b> subclasses 只需实现 encode</b>：五个 Dataset 类（M12）全部继承它，"怎么读一行"只写这一遍，"读来干什么"各家各写。</li>
+      </ul>
+
+      <h3 id="index-cost">账本与取舍：索引为什么不落盘</h3>
+      <p>
+        实测账本：1.24GB / 1,270,238 行 → 索引净增 52MB；14GB / 5,109,432 行 → 净增 265MB。账面上每行一个
+        Python 整数对象约 28~32 字节加列表槽位 8 字节，1,270,238 × ~36B ≈ 46MB，与实测 52MB 对得上（差值是列表扩容余量）。
+        顺带交代选型：这套自研索引替代的是 HF datasets 的内存映射方案——datasets.py 模块头的理由是"加载 JSONL 不值一个 2GB 的传递依赖"（依赖准入：能标准库解决的不引重型框架）。一个反直觉的决定藏在对比里：<b>偏移索引每次进程启动都重扫（0.47s / 7.2s），不写任何缓存文件</b>——因为重建太便宜；
+        而 manifest（下一节）要解析全量 json、重扫 14GB 得十多分钟，所以它落盘成旁车。<b>缓存与否是重建成本的函数，不是信仰</b>。
+      </p>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径]</b> 52MB / 265MB 均为进程内净增值（ru_maxrss 前后差）；14GB 扫描 7.2s 为页缓存热时的数字，冷盘首读会更久。工具侧同款技巧：<a href="codeview/tools/len_profile.py.html"><code>tools/len_profile.py</code></a> 与 <a href="codeview/tools/data_profile.py.html"><code>tools/data_profile.py</code></a>（数据画像：量长度分布/重复率/语言构成）做随机采样时同样按字节偏移取行，注释原话"避免头部偏差"。</p>
+
+      <h3 id="views">SegmentView / IndexListView：切分是视图，不是复制</h3>
+      <p>
+        有了索引，train/eval 切分（拿一小部分数据当验证集，训练时不碰它——用来观测过拟合：模型把训练集背下来、在新数据上反而变差的现象）就成了一个纯逻辑问题。
+        最笨的做法是把行拷成两份新 Dataset——reborn 的做法是两张<b>视图</b>：M06 讲过 view vs copy（<code>read()</code>
+        返回零拷贝前缀视图，"递指针不搬数据"），同一思想搬到 Dataset 层：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/datasets.py.html">src/minimind_reborn/data/datasets.py</a> · 两个视图类</span><span class="lang">python</span></div><pre class="code"><code>class SegmentView(Dataset):
+    """数据集的连续段视图（train 段 / eval 段）：复用底层字节索引，不复制数据。"""
+
+    def __init__(self, base: JsonlIndexedDataset, start: int, stop: int):
+        self._base = base                # 底层引用：不搬数据，索引仍只有一份
+        self._start, self._stop = start, stop
+
+    def __len__(self) -&gt; int:
+        return self._stop - self._start
+
+    def __getitem__(self, index: int):
+        return self._base.encode(self._start + index)   # 视图内第 i 行 = 底层第 start+i 行
+
+class IndexListView(Dataset):
+    """行索引子集视图（哈希分桶的 train/eval 各一）：复用底层字节索引，零数据复制。"""
+
+    def __init__(self, base, indices: list[int], *, filter_zero_loss: bool = False):
+        self._base = base                # 同一个底层
+        self._indices = list(indices)    # 只存行号数组——重复的也是行号不是数据
+        ...
+
+    def __getitem__(self, index: int):
+        pos = index % len(self._indices)
+        return self._base.encode(self._indices[pos])    # 行号 → 底层 O(1) 取行</code></pre></div>
+      <p>
+        两张视图各管一种切法：<b>SegmentView</b> 是连续段（pretrain 用：文件已打散时直接取尾部固定切片当 eval，
+        <code>_tail_split</code> 保证可复现）；<b>IndexListView</b> 是任意行号集合（SFT 用：按内容哈希分桶选行，
+        下一节讲为什么）。真跑一遍（/tmp/m11_registry.py 的后半）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m11_registry.py 2&gt;/dev/null | tail -7</span>
+<span class="out">PretrainDataset 构建 0.56s（含 0.47s 索引扫描）</span>
+<span class="out">总行数 1270238 = train 1263887 + eval 6351（eval_ratio=0.005）</span>
+<span class="out">train_view 是薄壳：_base is ds = True，只带 (_start,_stop)=(0,1263887)</span>
+<span class="out">建两张视图后峰值内存不变：743MB（视图零数据复制）</span>
+<span class="out">tr[0] → input_ids (512,)，labels (512,)</span>
+<span class="out">视图转发：tr[123] 与 ds.encode(123) 同源 = True</span>
+<span class="out">IndexListView([5,3,5]) → len=3，lv[0] 与 lv[2] 同一行 = True</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径]</b> eval_ratio=0.005 → 6,351 行 eval，恰为 0.5%；"峰值内存不变"指建视图前后 ru_maxrss 无增长。IndexListView 的行号可以重复（[5,3,5] 长度 3、第 0/2 位同一行）——这是 M12 多轮上采样（把多轮对话样本重复多遍喂，治占比过低）"重复行号而非复制数据"的底座。</p>
+      <p>
+        关键认知：<b>DataLoader 从头到尾只见视图</b>。<code>build_lm_dataset</code> 返回的就是
+        <code>ds.train_view(), ds.eval_view()</code>——训练循环拿到的"数据集"其实是两张薄壳，真正的数据在磁盘、
+        真正的索引只有一份。切分、上采样、过滤（M12 的零损失样本重映射也做在 IndexListView 里）全部变成
+        "改行号数组"这个廉价操作。
+      </p>
+
+      <h2 id="manifest">manifest 一节：稳定哈希、分桶与旁车指纹</h2>
+      <p>
+        SFT 的切分比 pretrain 讲究：要做<b>回复去重</b>和<b>按内容切分</b>，就得先知道每行的"回复规范化哈希"和"消息数"——
+        这需要解析全量 json（14GB 十多分钟），不能每次启动都付。<a href="codeview/src/minimind_reborn/data/manifest.py.html"><code>manifest.py</code></a>
+        的方案：<b>扫一次，把每行的派生信息存成"旁车文件"（sidecar：与数据文件同名、多一个后缀的伴生缓存）</b>
+        ——<code>sft_t2t_mini.jsonl.manifest.npz</code>（npz：numpy 的压缩存档格式）。三件设计各防一件事：
+      </p>
+      <ul>
+        <li>
+          <b>稳定哈希防跨进程漂移</b>：<code>stable_hash</code> 用 md5（一种摘要哈希：任意长度输入 → 定长指纹，快且确定），
+          而不是 Python 内置 <code>hash()</code>——后者被 <code>PYTHONHASHSEED</code> 环境变量加盐，<b>每个进程的值都不一样</b>：
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">python3 -c 'print(hash("你好"))'; python3 -c 'print(hash("你好"))'</span>
+<span class="out">-1270350379663970142</span>
+<span class="out">142117065527604372</span></code></pre>
+          用了它，昨天建的 manifest 今天读进来哈希全对不上。<code>stable_hash('你好') = -2771627962067793282</code> 则跨进程跨机器恒定
+          （注意 md5 在这里只当"稳定的指纹"用，不做加密——"md5 被破解"指的是碰撞攻击，对分桶/去重无威胁；快和稳定才是要的）。
+        </li>
+        <li>
+          <b>哈希分桶防 eval 泄漏</b>：切分不掷骰子，而是 <code>stable_hash(整行规范化文本) % 1000 &lt; bucket_take</code> 进 eval
+          （eval_ratio=0.005 → bucket_take=5，即 5‰）。<b>同一行内容的哈希固定，所以永远落同一侧</b>。对比随机切分两宗罪：
+          ① 每次重跑切分结果都变，eval 指标不可比；② 换数据集重训时，训练见过的行可能混进新 eval——
+          <b>eval 泄漏</b>（验证集混入训练样本），指标虚高，你以为什么都没发生过。
+        </li>
+        <li>
+          <b>mtime+size 指纹防旁车脏读</b>：旁车必须知道"数据文件变没变"。<code>_fingerprint</code> 返回
+          <code>f"{st.st_mtime_ns}:{st.st_size}"</code>（修改时间戳纳秒值 : 文件字节数），存进 npz；加载时不匹配就全量重建
+          （写入走 tmp+rename 原子替换：先写临时文件、再一步改名顶替，中途崩溃也留不下半个文件——同款手法 M14 在 checkpoint 里详讲）。真实旁车实测：
+          指纹 <code>1788969816217196132:1739201170</code>，冒号后半恰是 sft_t2t_mini.jsonl 的字节数。
+        </li>
+      </ul>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/manifest.py.html">src/minimind_reborn/data/manifest.py</a> · 两处关键逻辑（节选）</span><span class="lang">python</span></div><pre class="code"><code>def stable_hash(text: str) -&gt; int:
+    # signed=True：落在 int64 范围内（npz 存 int64 数组）
+    return int.from_bytes(hashlib.md5(text.encode("utf-8")).digest()[:8], "little", signed=True)
+
+_BUCKET_MOD = 1000  # 哈希分桶粒度：eval_ratio=0.003 → 命中 [0,3) 进 eval
+
+# 建清单时逐行判定归属（与文件顺序无关，与随机数无关）：
+is_eval_flags.append(stable_hash(normalize_text(text)) % _BUCKET_MOD &lt; bucket_take)
+
+def _fingerprint(path: Path) -&gt; str:
+    st = path.stat()
+    return f"{st.st_mtime_ns}:{st.st_size}"   # 修改时间(纳秒):字节数，便宜且够用</code></pre></div>
+
+      <h2 id="pit">坑卡：改了 eval_ratio 却"不生效"</h2>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：旁车的缓存键里没有 eval_ratio——同文件换口径，静默用旧切分</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            症状极隐蔽：你把配方里的 eval_ratio 从 0.001 改成 0.005，重跑训练——eval 集大小纹丝不动，
+            指标"看起来正常"，只是验证集比配置小了 5 倍，过拟合观测的分辨率悄悄打折。不报错、不告警。
+          </li>
+          <li class="cause">
+            <code>load_or_build</code> 的缓存命中只看指纹 <code>mtime_ns:size</code>，<b>不含构建参数</b>；而
+            <code>is_eval</code> 列在建清单时就把"eval_ratio=多少"烘进了数值里。恰好仓库里有两个配方共用同一份数据文件：
+            <code>configs/smoke/smoke_sft.yaml</code>（sft_t2t_mini，eval_ratio 0.001）与
+            <code>configs/sft_64m.yaml</code>（sft_t2t_mini，eval_ratio 0.005）——谁先把旁车建了，另一个就静默沿用它的切分。
+            作者机器上的真实旁车就是 smoke 建的（证据见下方实测）。
+          </li>
+          <li class="fix">
+            两步：<b>① 删旁车重建</b>——<code>rm sft_t2t_mini.jsonl.manifest.npz</code> 后下次加载自动全量重扫（20,000 行实测 0.83s；
+            14GB 全量按 docstring 经验 10~20 分钟，删之前想清楚）。顺带回答"乱删旁车有什么后果"：<b>没有任何风险</b>——
+            npz 是纯派生物，删了只是重建，数据文件分毫不动；真正的红线是反过来删 jsonl 留 npz。
+            <b>② 工程修复方向</b>：把 eval_ratio（或 bucket_take）写进指纹串——缓存键必须覆盖所有影响缓存内容的参数，
+            这与 M04 "配置漂移"是同一条纪律。多口径共用一个数据集的现成 workaround：先跑大口径的（旁车建成大桶），
+            或干脆各口径各留一份文件副本。
+          </li>
+        </ul>
+        <div class="codeblock"><div class="code-head"><span>/tmp/m11_pit.py · 用 64m 配方的口径去读 smoke 建的旁车</span><span class="lang">python</span></div><pre class="code"><code>import time
+from pathlib import Path
+from minimind_reborn.data.manifest import load_or_build
+
+SRC = Path.home() / "Code/WorkSpace/minimind-reproduce/dataset/sft_t2t_mini.jsonl"
+t0 = time.perf_counter()
+m = load_or_build(SRC, eval_ratio=0.005)   # sft_64m.yaml 的口径
+print(f"耗时 {time.perf_counter()-t0:.2f}s（毫秒级=命中缓存，没重建）")
+print(f"拿到的 eval 占比 {m.is_eval.mean():.5f}——是 smoke 的 0.001 桶，不是我要的 0.005")</code></pre></div>
+        <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m11_pit.py</span>
+<span class="out">耗时 0.04s（毫秒级=命中缓存，没重建）</span>
+<span class="err">拿到的 eval 占比 0.00092——是 smoke 的 0.001 桶，不是我要的 0.005</span></code></pre>
+        <p class="pit-note">缓存键少一味参数 = 缓存可能"对不上请求"——与 M04 bool 覆盖失效同一家族：配置变了，行为没变。</p>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-09-30]</b> 旁车现状：905,718 行、eval 占比 0.00092（=1‰ 桶的理论值）。该坑在仓库当前配置组合下真实存在（smoke 与 64m 配方同文件不同口径）；0.00092 与 0.001 的微小差值是哈希分桶的正常抽样噪声。</p>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · seek+偏移为什么能做到 O(1) 取行？它依赖哪两个前提？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>前提① 文件系统支持随机访问——seek 把读写指针拨到任意字节位置，成本与拨多远无关（不需要"经过"前面的数据）；前提② 每行起点的字节偏移在建索引时已经量好（O(N) 扫一遍存成整数数组）。于是取第 i 行 = 寻址 offsets[i] + 读到换行符，代价只与该行自身长度有关，与文件总大小无关——实测 6.5µs/次，顺序扫描同一行 21ms。若任一前提不成立（比如没有索引、或介质只能顺序读），O(1) 立刻塌回 O(N)。</p>
+            <p class="back">答错回看：<a href="#index">字节偏移索引原理图</a> 与 <a href="#index-code">__init__ / load_line 精读</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · SegmentView 为什么省内存？它和 M06 的 read() 有什么共同点？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>视图只持有两样东西：底层 Dataset 的引用 + 一个起止区间（SegmentView）或行号数组（IndexListView），<code>__getitem__</code> 是纯转发——数据仍在磁盘、字节索引仍只有一份，切 train/eval 不复制一个字节（实测建两张视图后峰值内存不变）。与 M06 <code>read()</code> 返回零拷贝前缀视图同理："递指针，不搬数据"——区别只在 M06 切的是张量维度、本课切的是行号空间。反例是 copy：若切分靠拷出行数据，14GB 语料切一次就是一次全量读+写。</p>
+            <p class="back">答错回看：<a href="#views">SegmentView / IndexListView</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · 哈希分桶切分防的是什么？随机切分错在哪？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>防 eval 泄漏与切分漂移。同一行内容的稳定哈希固定，% 1000 落进哪个桶永远不变——所以"同一条数据永远落同一侧"。随机切分两宗罪：① 每次重跑掷一次骰子，eval 集成员变了，两次实验的指标不可比；② 换数据集/重排文件重训时，训练见过的行会混进新的 eval 集——模型"考了自己做过的题"，指标虚高且你无从察觉。哈希分桶把切分变成内容的确定函数，重跑、换机器、改行序都不影响归属。</p>
+            <p class="back">答错回看：<a href="#manifest">manifest 一节</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · stable_hash 为什么用 md5 而不是内置 hash()？"md5 不安全"影响这里吗？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>内置 hash() 受 PYTHONHASHSEED 盐值影响，跨进程不稳定（实测两个进程对"你好"给出 -1270350379663970142 与 142117065527604372）——今天建的 manifest 明天读不回同一个桶。md5 是摘要哈希：确定的（跨进程跨机器同值）、快的、指纹定长的，正合"去重键 + 分桶"之需。"md5 被破解"指攻击者能构造碰撞（两串不同内容同指纹）——分桶与去重场景没有对抗者，不构成威胁；若做完整性校验对抗场景才需要换 SHA-256 级别。</p>
+            <p class="back">答错回看：<a href="#manifest">manifest 一节</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 1 · 预测：把 jsonl 原地改一个字节（大小不变），manifest 指纹会怎样？</div>
+        <div class="ex-body">
+          <p>取 2 万行做独立切片，建一次旁车，然后把最后一行的「。」原地换成「，」（两个标点都是 3 字节，文件大小分毫不变）。</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m11_ex.py</span></code></pre>
+          <div class="ex-predict"></div>
+          <p>先写下预测：① 指纹串会变吗？② 如果变，变的是冒号前（mtime）还是冒号后（size）？③ 旁车会重建吗——判断依据是什么？</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>作者实测（同环境，脚本 /tmp/m11_ex.py 全文见下方）：</p>
+            <pre class="term"><code><span class="out">首建 0.83s  行数 20000  eval 占比 0.098</span>
+<span class="out">指纹 = 1790818233326545818:57191431</span>
+<span class="out">改后 stat：size 57191431（不变）  指纹 = 1790818234220556055:57191431</span>
+<span class="out">重取(eval_ratio=0.5) 0.72s  eval 占比 0.492（重建，新口径生效）</span></code></pre>
+            <p>
+              <b>机制：</b>指纹变了，但变得不是你以为的那半边——size 两边都是 57191431，变的是 <b>mtime_ns</b>
+              （1790818233326545818 → 1790818234220556055）：写文件这个动作本身就会更新修改时间戳，<b>哪怕你只改一个字节、大小不变</b>。
+              于是旁车判定失效，下次加载触发全量重扫（0.72s），新口径 eval_ratio=0.5 也在重建中生效（0.492）——这同时就是坑卡的"修复动作"原理。
+              <b>追问（想深一层）</b>：<code>cp -p</code>（保留时间戳）复制一个同大小的不同文件过来，指纹不变、旁车不重建、内容却换了——脏读。
+              绝对保险是内容哈希，但 14GB 每次加载先全量 md5 一遍太贵；mtime+size 是"几乎不花时间、漏网概率极小"的工程折中——
+              缓存失效策略永远在"检查成本"与"脏读风险"之间选点。
+            </p>
+          </details>
+          <div class="codeblock"><div class="code-head"><span>/tmp/m11_ex.py · 切片 → 首建 → 改一字节 → 重取</span><span class="lang">python</span></div><pre class="code"><code>import subprocess, time
+from pathlib import Path
+from minimind_reborn.data.manifest import _fingerprint, load_or_build, manifest_path
+
+SRC = Path.home() / "Code/WorkSpace/minimind-reproduce/dataset/sft_t2t_mini.jsonl"
+SLICE = Path("/tmp/m11_slice.jsonl")
+subprocess.run(["head", "-n", "20000", str(SRC)], stdout=open(SLICE, "wb"), check=True)
+manifest_path(SLICE).unlink(missing_ok=True)          # 干净起点：先删旁车
+
+t0 = time.perf_counter()
+m1 = load_or_build(SLICE, eval_ratio=0.1)             # 第一次：全量扫描建旁车
+print(f"首建 {time.perf_counter()-t0:.2f}s  行数 {len(m1)}  eval 占比 {m1.is_eval.mean():.3f}")
+print(f"指纹 = {m1.fingerprint}")
+
+raw = SLICE.read_bytes()                              # 原地改一字节：3 字节标点互换，大小不变
+i = raw.rindex("。".encode())
+SLICE.write_bytes(raw[:i] + "，".encode() + raw[i + 3 :])
+print(f"改后 stat：size {SLICE.stat().st_size}（不变）  指纹 = {_fingerprint(SLICE)}")
+
+t0 = time.perf_counter()
+m2 = load_or_build(SLICE, eval_ratio=0.5)             # 指纹已变：必须全量重建
+print(f"重取(eval_ratio=0.5) {time.perf_counter()-t0:.2f}s  eval 占比 {m2.is_eval.mean():.3f}")</code></pre></div>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M11 验收</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下两步。第一步，O(1) 取样等价性实验（脚本全文）：</p>
+          <div class="codeblock"><div class="code-head"><span>/tmp/m11_accept.py · 同一行：索引 O(1) 取 vs 顺序扫描取，必须一致</span><span class="lang">python</span></div><pre class="code"><code>"""M11 验收：同一行，索引 O(1) 取 与 顺序扫描 取，必须逐字节等价。"""
+import json, time
+from pathlib import Path
+from minimind_reborn.data.datasets import JsonlIndexedDataset
+
+PATH = Path.home() / "Code/WorkSpace/minimind-reproduce/dataset/pretrain_t2t_mini.jsonl"
+TARGET = 100_000
+
+t0 = time.perf_counter()
+ds = JsonlIndexedDataset(PATH)
+print(f"OK 索引构建 {time.perf_counter()-t0:.2f}s，行数 {len(ds)}")
+
+t0 = time.perf_counter()
+row = ds.load_line(TARGET)                    # O(1)：seek(offset) + readline
+dt_idx = time.perf_counter() - t0
+
+with PATH.open("rb") as f:                    # O(N) 对照：从头数行
+    for n, line in enumerate(f):
+        if n == TARGET:
+            row_scan = json.loads(line); break
+dt_scan = time.perf_counter() - t0
+
+assert row == row_scan, "两种姿势取到的行必须一致"
+print(f"OK 第 {TARGET} 行一致：{row['text'][:30]!r}")
+print(f"OK 索引 {dt_idx*1e6:.0f}µs vs 顺序扫描 {dt_scan*1000:.0f}ms（{dt_scan/dt_idx:.0f} 倍）")
+print("ALL PASS")</code></pre></div>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m11_accept.py</span>
+<span class="out">OK 索引构建 0.47s，行数 1270238</span>
+<span class="out">OK 第 100000 行一致：'按照这件衣服的主题，设计一个与之配套的配饰。这件衣服是一件黑色皮革夹克，'</span>
+<span class="out">OK 索引 39µs vs 顺序扫描 25ms（650 倍）</span>
+<span class="ok">ALL PASS</span></code></pre>
+          <p>第二步，注册表的回归网——两条错误路径与正常解析的契约：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_data/test_registry.py -q</span>
+<span class="ok">..                                                                       [100%]</span>
+<span class="ok">2 passed in 0.01s</span></code></pre>
+          <ul class="pass-criteria">
+            <li><code>ALL PASS</code>——行数与 <code>wc -l</code> 一致（1,270,238）；两种姿势取到的行逐字节相等；索引比顺序扫描快两个数量级以上；</li>
+            <li><code>2 passed</code>——未注册名必须 raise ValueError 且报错含 datasets.json 提示；已注册名解析出合法 file/kind（<a href="codeview/tests/test_data/test_registry.py.html"><code>tests/test_data/test_registry.py</code></a> 全部 2 个用例）；</li>
+            <li>完成变式 1 的三项预测（指纹变不变 / 变哪半边 / 重建与否）再对照实测。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按症状分流）</summary>
+            <p>
+              <b>FileNotFoundError（数据集文件不存在）</b> → 数据未就位，回 M01 设 <code>MINIMIND_REBORN_DATA_ROOT</code> 或用
+              <code>uv run python tools/download_data.py --name pretrain_t2t_mini</code> 下载；<b>行数与 wc -l 不一致</b> →
+              文件里有空行（索引跳过空行属正常语义，对照时也应跳过空行计数），或数据根目录指向了不同版本的文件；
+              <b>索引不快（µs 级拿不到）</b> → 确认是对同一文件的二次访问（首次含页缓存加载），且不是在网络盘/容器卷上跑；
+              <b>pytest 报 ModuleNotFoundError</b> → 在仓库根目录执行且 <code>uv sync --extra dev</code> 已跑（M01）。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        货架修好了：注册表让"按名字找文件"零硬编码，字节偏移索引让"随机取一行"从毫秒降到微秒、内存与文件大小解耦，
+        视图让切分零复制，manifest 让昂贵的全量扫描只付一次。但取回的还只是 <code>{"text": …}</code> 或
+        <code>{"conversations": …}</code> 的原始行——下一课把它们变成四种训练范式真正吃的样本：五个 Dataset 类同承一个地基，
+        以及全系统最脆的那根线——loss mask 怎么在渲染产物里逐 token 找到"该学的那段"。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>数据注册表 <span class="en">registry</span></dt><dd>一张"名字 → 数据集描述"的清单，物理形态是 datasets.json（9 条目 × 四字段 name/file/kind/description）。声明式：只描述有什么，不含怎么拿的代码；resolve_dataset 是唯一解析入口。</dd>
+          <dt>声明式 <span class="en">declarative</span></dt><dd>用数据（JSON/YAML）描述"有什么"，而不是用代码写"怎么拿"。与 M04 配置即实验同源：加数据集 = 加条目，不改代码；报错能打印全量名单。</dd>
+          <dt>kind <span class="en">数据集类别</span></dt><dd>注册表里声明数据形状的字段，五种取值 pretrain / sft / dpo / rlaif / agent，各派发到 M12 的一个 Dataset 类；下载器与训练组装点共用同一份清单。</dd>
+          <dt>字节偏移索引 <span class="en">byte-offset index</span></dt><dd>每行第一个字节在文件中位置编号的整数数组。O(N) 扫一遍文件建一次（只数长度不解析，1.24GB 实测 0.47s），__getitem__ 走 seek+readline 为 O(1)（6.5µs/次）；内存与文件大小近似解耦（52MB vs 265MB @1.2/14GB）。</dd>
+          <dt>seek <span class="en">文件寻址</span></dt><dd>把文件读写指针直接拨到第 N 个字节的系统调用，成本与拨多远无关——随机访问的物理基础。二进制模式（rb）下偏移恒等于真实字节数，CRLF 换行差异天然免疫。</dd>
+          <dt>视图 <span class="en">view</span></dt><dd>只持底层引用 + 行号区间/数组、__getitem__ 纯转发的薄壳 Dataset（SegmentView / IndexListView），切分与上采样零数据复制——与 M06 零拷贝前缀视图同一思想（见 M06）。</dd>
+          <dt>旁车文件 <span class="en">sidecar / manifest</span></dt><dd>与数据文件同名、多一个 <code>.manifest.npz</code> 后缀的伴生缓存，存每行的派生信息（回复哈希/去重 keep/分桶 is_eval/消息数）。删了只会触发重建，无数据风险；是纯派生物。</dd>
+          <dt>指纹 <span class="en">fingerprint</span></dt><dd><code>mtime_ns:size</code>（修改时间戳纳秒:文件字节数）拼成的缓存键——改一个字节（mtime 变）、追加内容（size 变）都会失效重建；漏网情形是保时戳同大小替换，是"检查成本 vs 脏读风险"的工程折中。</dd>
+          <dt>稳定哈希 <span class="en">stable hash</span></dt><dd>跨进程/跨机器取值恒定的哈希——md5 前 8 字节读 int64。内置 hash() 受 PYTHONHASHSEED 盐值影响每进程不同，不可用于落盘的清单。</dd>
+          <dt>哈希分桶 <span class="en">hash bucket</span></dt><dd><code>stable_hash(行内容) % 1000 &lt; bucket_take</code> 的确定性切分：同一行永远落同一侧，防 eval 泄漏（验证集混入训练样本致指标虚高）与重跑切分漂移。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

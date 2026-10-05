@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M22 · 全链路与毕业实验：从一条命令到一个结论 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m22">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第六篇 毕业</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M22</span><span>第六篇 · 毕业</span><span class="badge-ms">🏁C</span></div>
+        <h1>全链路与毕业实验：从一条命令到一个结论</h1>
+        <p class="lede">
+          M21 用三把尺量完模型，留下的不是分数而是一张<b>弱项清单</b>——每条弱项配了一个可实验的假设。
+          毕业课把整条链从头到尾跑通（读 run_full.sh、真跑八范式冒烟、全量测试），
+          然后从清单里选一个假设，亲手完成课程最后一个、也是唯一的新东西：<b>研究迭代闭环</b>。🏁 里程碑 C。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M21</b>（弱项清单在手，本课消费它）</span>
+          <span class="chip">时长：<b>约 150 分钟</b>（毕业课）</span>
+          <span class="chip">新概念：<b>研究迭代闭环（假设→单变量对照→结论）</b></span>
+          <span class="chip">对照：<code>tools/run_full.sh</code> · <code>configs/smoke/</code> · <code>Makefile</code> · <code>tests/</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>逐段精读 run_full.sh，画出"数据下载→pretrain→SFT→DPO"四段的产物衔接图，说出每段递给下一棒的接力棒是什么；</li>
+        <li>按依赖顺序真跑 8 个 smoke 配方，为每个范式写一句"验证了什么"，并区分"管道通"与"学到东西"两种绿灯；</li>
+        <li>跑全量测试套件拿到 85 个绿灯，并解释 <code>make test</code> 的 5 个失败为什么是"测试环境改写了被测系统"；</li>
+        <li>用四步模板（假设→设计→数据→结论）完成一个单变量对照实验，让结论有数据支撑、有边界声明；</li>
+        <li>完成 🏁 里程碑 C 四项清单，回答复盘三问，带走下一步地图。</li>
+      </ul>
+
+      <pre class="ascii"><code>M22 毕业课 = 三道门 + 一个循环（每道门对应 🏁C 清单的一项）
+
+  门 1  全链路    run_full.sh 精读（读）→ 八范式冒烟（真跑，GPU 约 4 分钟）
+  门 2  测试      全量 pytest（真跑，85 个绿灯 + 一个新坑）
+  门 3  实验      M21 弱项清单 → 假设 → 单变量对照 → 结论（示范真做 + 你做）
+
+  ┌───────────── 研究迭代闭环（本课唯一新概念）─────────────┐
+  │  弱项清单 → 假设 → 设计（单变量）→ 数据 → 结论 → 新弱项   │
+  └────────────────────────────────┬───────────────────────┘
+                                   └─→ 回到起点，跑下一圈</code></pre>
+
+      <h2 id="runfull">run_full.sh 精读：一条命令的全链路</h2>
+      <p>
+        M16 用接力赛讲过两棒的交接（<code>init_from: pretrain</code> 严格加载上一棒产物）。
+        <a href="codeview/tools/run_full.sh.html">tools/run_full.sh</a> 把整场接力赛写成 20 行 shell——
+        全文如下，一段一段看：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/tools/run_full.sh.html">Reproduce/minimind_reborn/tools/run_full.sh</a> · 全文 20 行</span><span class="lang">bash</span></div><pre class="code"><code>#!/bin/bash
+# 全量训练链：数据下载校验 → pretrain → SFT → DPO（2×GPU DDP，resume 默认开）
+# 用法：nohup bash tools/run_full.sh > /tmp/full_chain.log 2>&1 &
+set -u
+cd "$(dirname "$0")/.."
+UV=${UV:-$HOME/.local/bin/uv}
+NP=${NP:-2}
+MARKER=/tmp/full_chain.log
+
+echo "[chain] start $(date)" >> "$MARKER"
+$UV run python tools/download_data.py --name pretrain_t2t >> "$MARKER" 2>&1 || { echo "[chain] 数据下载失败" >> "$MARKER"; exit 1; }
+$UV run python tools/download_data.py --name sft_t2t    >> "$MARKER" 2>&1 || { echo "[chain] 数据下载失败" >> "$MARKER"; exit 1; }
+
+$UV run torchrun --nproc-per-node "$NP" tools/train.py configs/pretrain_full.yaml > /tmp/full_pretrain.log 2>&1
+echo "[chain] pretrain exit=$? $(date)" >> "$MARKER"
+$UV run torchrun --nproc-per-node "$NP" tools/train.py configs/sft_full.yaml     > /tmp/full_sft.log 2>&1
+echo "[chain] sft exit=$? $(date)" >> "$MARKER"
+$UV run torchrun --nproc-per-node "$NP" tools/train.py configs/dpo_full.yaml     > /tmp/full_dpo.log 2>&1
+echo "[chain] dpo exit=$? $(date)" >> "$MARKER"
+echo "[chain] all done $(date)" >> "$MARKER"</code></pre></div>
+      <p>
+        四段各一句话。<b>① 头部（4–8 行）</b>：<code>set -u</code> 只防"引用未定义变量"直接死——
+        注意<b>不是</b> <code>set -e</code>（任何命令非零就停）；<code>cd "$(dirname "$0")/.."</code>
+        把工作目录钉在仓库根（从任何地方启动都能找到 configs/）；<code>NP=${NP:-2}</code> 是缺省 2 卡、
+        环境变量可覆盖（环境变量：进程级的配置开关，M04 的 CLI 覆盖是它的配置文件版）。<b>② 数据段（11–12 行）</b>：
+        两份语料各下载一次，<code>|| exit 1</code> 是全链唯一的 fail-fast（快速失败）——没有数据，
+        后面三棒全是白等，不如当场死。<b>③ 三棒（14–19 行）</b>：<code>torchrun --nproc-per-node</code>
+        就是 M15 的 DDP 启动器；每棒 stdout 重定向到各自的 <code>/tmp/full_*.log</code>，
+        而 MARKER 里只追加一行 <code>exit=$?</code>（上一命令的退出码）加时间戳——
+        <b>失败不停链，只记账</b>。<b>④ 为什么敢不停？</b>因为下一棒自带守门人：
+        <code>init_from</code> 走 M09 的 strict 加载，上一棒产物缺失或损坏会在下一棒启动前一秒炸出来，
+        日志里两行 <code>exit=1</code> 与报错对得上账。加上续训默认开启（M14：输出目录有 checkpoint 自动恢复），
+        这条脚本天然支持"断了重跑接着来"。
+      </p>
+      <h3 id="chain-products">产物衔接：每棒递出去的是什么</h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">段</th><th class="u-w200">配方（差异）</th><th>产物</th><th>下一棒怎么接</th></tr></thead>
+          <tbody>
+            <tr><td>download</td><td>pretrain_t2t + sft_t2t</td><td>语料 jsonl + 偏移索引（M11）</td><td>Dataset 按 registry 注册名取（M11 注册表 → M12 数据集）</td></tr>
+            <tr><td>pretrain</td><td>seq 380 · 2 ep · lr 5e-4</td><td><code>out/pretrain_768.pth</code></td><td><code>init_from: pretrain</code> → strict 载入（M16 交接棒）</td></tr>
+            <tr><td>sft</td><td>seq 768 · 2 ep · lr 1e-5</td><td><code>out/full_sft_768.pth</code></td><td><code>init_from: full_sft</code> → strict 载入（M17 同款）</td></tr>
+            <tr><td>dpo</td><td>seq 1024 · 1 ep · lr 4e-8</td><td><code>out/dpo_768.pth</code></td><td>M02/M21 的 chat 与评测直接吃它</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout tip">
+        <div class="co-title">💡 直觉：为什么要"一条命令"</div>
+        <p>
+          全链 18 小时级（见下），不可能有人盯着。一条命令的价值是<b>无人值守的原子性</b>：
+          nohup（no hang up：退出终端进程不死的挂后台方式）+ 各段独立日志 + resume 默认开，
+          深睡前敲一次、早上看 MARKER 的五行 <code>exit=0</code>。更深一层：这条脚本本身就是
+          <b>系统是否真的"链"得起来的最终测试</b>——三份 yaml 里的名字、路径、产物命名约定
+          （<code>{名}_{hidden}.pth</code>，M04 讲过）任何一处对不上，链当夜就断。M01 的 <code>make smoke</code>
+          三段链是它的分钟级缩影，本课下一节把缩影扩到八段。
+        </p>
+      </div>
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：shell 链 vs 训练平台</div>
+        <p>
+          工业界的"一条命令"长在训练平台里：DAG（有向无环图，节点按依赖自动排序的流水线描述）调度、
+          每节点独立重试、实验追踪（MLflow/W&amp;B）、数据版本（DVC）。reborn 用 20 行 shell + 命名约定 +
+          resume 达到同构的最小实现——<b>形状相同，规模不同</b>。你在本课程练的不是"用平台"，
+          而是平台替你做的那件事本身：把多阶段依赖写成可断点、可审计、可重跑的东西。
+        </p>
+      </div>
+      <p>
+        🎮 <b>全量链路的真实刻度</b>（无 GPU 走读档路线）：<b>[存档 runs/pretrain_full/20260925_005504 ·
+        runs/sft_full/20260925_075941 · runs/dpo_full/20260925_191632 · 2×RTX 4090 DDP · bf16 · seed=42]</b>
+        三段 run 档案的首尾时间戳相减：pretrain 7 小时 04 分 + SFT 11 小时 17 分 + DPO 4 分 18 秒 ≈
+        <b>18.5 小时</b>；docs 的开工前估算口径为 20.5 小时（pretrain 8.1h + SFT 12.4h + DPO 5min，
+        <b>[存档 docs/pretrain_readiness.md:60]</b>）。有意思的是 DPO 段只有 4 分钟——偏好数据只有 53MB、
+        单 epoch：对齐（alignment）阶段在工业界同样是三段里最便宜的一段，贵的是教它说话（pretrain）
+        和教它好好说话（SFT）。主线不追这个量级：八范式冒烟用同一形状的 tiny 配方，几分钟跑完全部八段。
+      </p>
+
+      <h2 id="smoke8">八范式冒烟：几分钟跑完八种训练</h2>
+      <p>
+        冒烟测试（smoke test，M01 定义的"通电检查"：不验证效果，验证链路没断）在 reborn 里有 8 个配方，
+        全在 <code>configs/smoke/</code>。你在课程里已点亮过六盏灯——M16 的 pretrain/sft、M17 的 dpo、
+        M18 的 lora/distill、M19 的 grpo；本课补上最后两盏（ppo/agent），并按依赖顺序把八盏一起点亮。
+        一条循环真跑（注意顺序：dpo 依赖 pretrain 的产物）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">for s in pretrain sft dpo lora distill grpo ppo agent; do
+    uv run python tools/train.py configs/smoke/smoke_$s.yaml --set train.resume=false || break
+done</span>
+<span class="out">… | minimind.trainer | 已保存：pretrain_64.pth + best（epoch=1 step=6 best_val=8.771874904632568）</span>
+<span class="out">… | minimind.trainer | 训练结束：best_val_loss=8.731240272521973 optimizer_steps=6</span>
+<span class="out">… | minimind.sft | 数据卡已写入 runs/smoke_sft/20261001_110350/data_card.json：去重 63910 条，C3 重映射 0 次</span>
+<span class="out">… | minimind.trainer | 严格加载起点权重：out/pretrain_64.pth</span>
+<span class="out">… | minimind.trainer | 已保存：dpo_64.pth（epoch=1 step=4 best_val=None）</span>
+<span class="out">… | minimind.lora | LoRA rank=8：0.004M/0.537M（0.76%）</span>
+<span class="out">… | minimind.trainer | 已保存：lora_smoke_64.pth + best（epoch=1 step=4 best_val=8.776169300079346）</span>
+<span class="out">… | minimind.trainer | 已保存：full_dist_64.pth + best（epoch=1 step=4 best_val=4.391155958175659）</span>
+<span class="out">… | minimind.grpo | Epoch[1/2](1/19502) train/reward=0.5000 train/kl_ref=-0.0002 train/adv_std=0.0000 …</span>
+<span class="out">… | minimind.rl | 已保存 grpo_64.pth（epoch=1 step=2）</span>
+<span class="out">… | minimind.ppo | Epoch[1/2](1/9751) train/reward=0.5000 train/policy_loss=-0.0001 train/critic_loss=0.2747 …</span>
+<span class="out">… | minimind.rl | 已保存 ppo_actor_64.pth（epoch=1 step=2）</span>
+<span class="out">… | minimind.agent | Epoch[1/2](1/39988) train/reward=0.5000 train/kl_ref=-0.0001 train/adv_std=0.0000 …</span>
+<span class="ok">… | minimind.rl | 已保存 agent_64.pth（epoch=1 step=2）</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · seed=42 · 存档 runs/smoke_*/20261001_11*]</b>
+      八段连续跑完 11:03:46 → 11:07:54，共约 4 分钟（GPU；CPU 数倍于此但同形状）。逐段墙钟：
+      pretrain 4s · sft 11s · dpo 3s · lora 4s · distill 3 分 22 秒 · grpo 4.0s · ppo 3.5s · agent 4.1s。
+      distill 独占八成时长：教师模型构造 + 首批数据的模板重编码（M13 的 loader 案 A，tok/s 一度掉到 2）。</p>
+      <p>
+        每盏灯"验证了什么"——这张表就是八范式复习提纲，右列每条都能回指一课：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">配方</th><th class="u-w130">范式（课时）</th><th>验证了什么（管道事实）</th></tr></thead>
+          <tbody>
+            <tr><td><code>smoke_pretrain</code></td><td>pretrain（M16）</td><td>移位交叉熵（M09）训练循环闭合；产物 <code>pretrain_64.pth</code> 是 dpo 棒的 init_from 依赖——链式结构真实存在</td></tr>
+            <tr><td><code>smoke_sft</code></td><td>sft（M16）</td><td>chat 模板渲染（M10）+ loss mask 只对回答记账（M12）；数据卡落盘（M12 的 D5）证明 SFT 母版收尾 10 行在工作</td></tr>
+            <tr><td><code>smoke_dpo</code></td><td>dpo（M17）</td><td>严格加载 pretrain 起点（日志第一行）；chosen/rejected 拼批前向；loss 从 ln(2)=0.6931 起步（五五开）</td></tr>
+            <tr><td><code>smoke_lora</code></td><td>lora（M18）</td><td>冻结基座只训 0.76% 适配器参数（日志 <code>0.004M/0.537M</code>）；产物只存适配器不存 0.53M 基座</td></tr>
+            <tr><td><code>smoke_distill</code></td><td>distill（M18）</td><td>教师模型按 teacher_weight 独立构造再加载；loss=4.39 而非 8.77——KL 软目标口径不同，不是学得快</td></tr>
+            <tr><td><code>smoke_grpo</code></td><td>grpo（M19）</td><td>rollout 组生成（M19：一次采样一组再组内比）+ 组相对优势通道畅通；<code>adv_std=0.0000</code>：随机 tiny 下同组奖励全同，优势全零——诚实信号</td></tr>
+            <tr><td><code>smoke_ppo</code></td><td>ppo（M19）</td><td>actor/critic 双前向；critic_loss、approx_kl、clipfrac 监控指标在流（M19 讲过的 mypy 揪出的 all_reduce 也在其中）</td></tr>
+            <tr><td><code>smoke_agent</code></td><td>agent（M19）</td><td>多轮轨迹生成（max_turns=2）+ 工具奖励通道；三段 RL 冒烟的 <code>reward=0.5000</code> 是规则奖励的底噪，非学习信号</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        表里最容易误读的是最后三行：三个 RL 范式的 reward 恒等于 0.5、GRPO 的优势恒为零——
+        README 的已知短板原话："RL 系验收深度为冒烟级（规则奖励下无学习信号）"。
+        这正是"管道通"与"学到东西"的分界：冒烟的绿灯只担保前者。诚实地知道每个绿灯担保什么、
+        不担保什么——这本身就是毕业要求。
+      </p>
+
+      <h2 id="tests">全量测试：85 个绿灯，和一个新坑</h2>
+      <p>
+        M01 的第一条绿灯是 <code>make smoke</code> 三段全绿；当时课程按 DESIGN 口径说仓库有 49 个单元测试。
+        课程写作期间仓库在继续生长（M14 的 checkpoint 回归、M17–M21 期间工程化的每一课都往 tests/ 里加锚点），
+        到本课写作时点，快层测试已经 85 个。全量真跑：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -m pytest tests/ -m "not slow" -q</span>
+<span class="out">……（85 项测试的点阵与 warnings 摘要）</span>
+<span class="ok">85 passed, 1 warning in 13.98s</span>
+<span class="dim">（warning 来自 test_moe_aux_loss_positive：带梯度张量转 float，M08/M09 见过，无害）</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 2×RTX 4090 · torch 2.14.0+cu130 · pytest 快层]</b>
+      85 = configuration 10 + data 26 + inference 14 + metrics 2 + models 19 + training 14（分目录真跑统计）。
+      其中一大半是你在课程里逐个见过面的：test_models 的十九个（M09 验收 19 passed）、
+      kv_cache 系列（M06）、loss_mask 系列（M12 填空的正是它）、
+      test_rope_buffer_rebuild_after_meta_init（M09 猎场的回归锁）、
+      test_full_chain_train_save_resume_generate——M01 那条三段冒烟链的测试化身。</p>
+      <p>
+        但"全量测试"这件事本身，本课挖到一个新坑——毕业课的最后一次现场排雷：
+      </p>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：make test 五个失败——测试环境改写了被测系统</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            <b>症状</b>：按 README 跑 <code>make test</code>，输出 <code>5 failed, 80 passed</code>；
+            失败的五个全是 metrics/observability 一族（test_unknown_metric_backend_raises、
+            test_dual_backend_jsonl_and_tensorboard、test_tensorboard_events_in_subdir_only、
+            test_metrics_steps_monotonic_and_unified、test_full_chain_train_save_resume_generate）。
+            而上一条终端里<b>同参数</b>的裸 pytest 是 85 全绿。
+          </li>
+          <li class="cause">
+            <b>原因</b>：<a href="codeview/Makefile.html">Makefile</a> 的 test 目标给命令前置了
+            <code>MINIMIND_REBORN_METRICS_DISABLED=1</code>（README 说的"强制离线、禁云端上报"纪律）。
+            这个进程级开关会让 build_backends 把<b>一切指标后端替换成 null</b>（测试输出里那行
+            WARNING "全部指标后端替换为 null" 就是自白）。五个失败测试测的恰是后端本身——
+            被测对象被测试环境改写了。"离线纪律"与"测后端"两条正当需求在这里真实冲突。
+          </li>
+          <li class="fix">
+            <b>解法</b>：全量验收用不带环境变量的 <code>uv run python -m pytest tests/ -m "not slow" -q</code>
+            （本课验收块如此）；想离线跑训练再补 <code>MINIMIND_REBORN_METRICS_DISABLED=1</code>。
+            make test 的 <code>$(PYTEST_ARGS)</code> 只能追加 pytest 参数、去不掉前置的环境变量——
+            若要 make test 复绿，需把"离线"改为 pytest fixture 或 skipif 条件（改仓库属上游决策，课程只读）。
+          </li>
+        </ul>
+      </div>
+      <p>
+        这个坑与本课主题严丝合缝：被测系统会读环境开关时，<b>环境本身就是变量</b>——
+        单变量对照的控制清单里必须包含它。你在毕业实验里会再遇到这句话。
+      </p>
+
+      <h2 id="gradexp">毕业实验：从弱项清单到一个结论</h2>
+      <p>
+        全课唯一的新概念，也是最后一件行李。<b>研究迭代闭环</b>：
+      </p>
+      <div class="callout tip">
+        <div class="co-title">💡 直觉：闭环的每一步都在防一件事</div>
+        <p>
+          <b>假设</b>防"乱试"（先说清你相信什么、为什么）；<b>单变量对照</b>防"归因错误"
+          （只动一个旋钮，其余全部冻结——自变量是你动的那个，因变量是你量的那个，
+          控制变量是冻住的一切，包括环境）；<b>结论</b>防"数据白产"（说清方向、幅度、边界——
+          几个样本、什么权重、什么题目）。而"闭环"的意思是：结论几乎总会暴露新的弱项或设计缺陷，
+          于是回到起点再跑一圈。M21 已经示范过一圈（era1→era2 召回率 16.7%→50%）；
+          下面从 M21 的弱项清单里选四个可执行的选题，然后真做一个。
+        </p>
+      </div>
+      <h3 id="topics">选题清单：四个可执行的假设</h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">选题</th><th class="u-w130">自变量</th><th>因变量</th><th>控制变量（冻结）</th><th>预期</th></tr></thead>
+          <tbody>
+            <tr><td>① 系统消息注入率</td><td>SFT 的 <code>add_system_ratio</code> 0.2→0.5（M12 数据旋钮，默认 0.2）</td><td>固定 8 题输出质量 + val loss</td><td>数据/步数/lr/seed/权重结构</td><td>注入更多 system 前缀会提升指令遵循的稳定性，但 val loss 略升（模板噪声多了）</td></tr>
+            <tr><td>② 温度对照 <b>（示范 ✅）</b></td><td>temperature 0.7 vs 0.85</td><td>distinct-2、生成长度、finish=stop、吞吐</td><td>同权重、top_p/top_k、max_new_tokens、8 题、seed 组</td><td>升温提高多样性；长度未知（这就是要测的）</td></tr>
+            <tr><td>③ YaRN 外推边界</td><td>推理侧 YaRN 开/关（factor=6，M05 折叠卡）</td><td>1536/2048 tok 的重复率与在题率</td><td>权重、题目、贪心解码（每步取最高分 token 的确定性解码，M21 变式练过）——直接用 M21 存档</td><td>YaRN 只救急不治本：1536 以上重复率仍崩（存档 0.842/0.980）</td></tr>
+            <tr><td>④ LoRA 秩</td><td>rank 8 vs 16</td><td>同步数的 train/val loss</td><td>数据、步数、lr、alpha 冻结</td><td>rank 翻倍容量翻倍，tiny 上同步数差异很小（0.004M→0.008M 可训参数）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        选②当示范的理由：零训练、单脚本、两分钟出数据，且直接接 M21 弱项清单的第三条
+        （"贪心复读循环 → 对比采样温度作为复读抑制剂"）。四步模板完整走一遍。
+      </p>
+
+      <h3 id="demo-hypo">第一步 · 假设</h3>
+      <p>
+        同一权重、同一批题，把采样温度从 0.7 升到 0.85：<b>回答的多样性会上升</b>
+        （distinct-2 变大——复读变轻）。次级猜测：更高的温度可能让回答更长（更"敢说"）。
+        注意把猜测拆成"有把握的"（多样性，采样数学直接支持）与"没把握的"（长度，纯直觉）——
+        实验设计时对两者都要安排测量。
+      </p>
+      <h3 id="demo-design">第二步 · 设计（单变量 + 控制清单）</h3>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m22_temp_ab3.py · 温度 A/B（终版，28 行）</span><span class="lang">python</span></div><pre class="code"><code>import torch
+from minimind_reborn.configuration.schemas import GenerateConfig
+from minimind_reborn.inference.engine import MiniMindLLM
+
+PROMPTS = ["你有什么特长？", "为什么天空是蓝色的", "请用Python写一个计算斐波那契数列的函数",
+           "推荐一些中国的美食"]  # 节选 4/8 题（页面版；实跑用 M21 eval_llm.py 全部 8 题）
+
+def distinct2(text: str) -> float:
+    """distinct-2：不重复 bigram 占比。复读越重值越低，全新搭配=1.0。"""
+    chs = list(text)
+    grams = [tuple(chs[i:i+2]) for i in range(len(chs)-1)]   # 相邻二字组
+    return len(set(grams)) / len(grams) if grams else 1.0
+
+llm = MiniMindLLM.build("full_sft")          # 控制变量①：两臂同一权重同一实例
+for t in (0.7, 0.85):                        # 自变量：唯一的旋钮
+    for seed in (42, 43, 44):                # 控制变量②：两臂共用同一组随机种子
+        torch.manual_seed(seed)              # 固定随机数发生器起点：本臂重跑可复现
+        gen = GenerateConfig(temperature=t, top_p=0.95, max_new_tokens=384)  # top_p：M02 的核采样旋钮，冻结
+        lens, d2, stops = [], [], 0
+        for p in PROMPTS:
+            r = llm.generate_text([{"role": "user", "content": p}], gen)
+            lens.append(r["generated_tokens"]); d2.append(distinct2(r["content"]))
+            stops += r["finish_reason"] == "stop"
+        print(f"T={t} seed={seed}: distinct2={sum(d2)/len(PROMPTS):.4f} "
+              f"len={sum(lens)/len(PROMPTS):.1f} stop={stops}/{len(PROMPTS)}")</code></pre></div>
+      <p>
+        设计不是一次成的——<b>第一版 max_new_tokens=256 就被数据打回来了</b>：8 题里 15/16 跑满上限
+        （finish=length），长度这个因变量被测量天花板压死，根本分不出两臂。把上限提到 384 重跑，
+        stop 开始出现（这是闭环的第一次转圈：数据暴露设计缺陷 → 改设计 → 重跑）。
+        第一版留下的有效读数只有一个：distinct-2 均值 0.582（T=0.7）vs 0.650（T=0.85），方向与预期一致。
+      </p>
+      <h3 id="demo-data">第三步 · 数据</h3>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m22_temp_ab3.py</span>
+<span class="out">temp  seed  distinct2  平均长度  stop/8  tok/s</span>
+<span class="out">0.70    42  0.5483     368.2   3/8    161.8</span>
+<span class="out">0.70    43  0.5551     358.9   3/8    164.2</span>
+<span class="out">0.70    44  0.5329     355.0   2/8    162.6</span>
+<span class="out">0.85    42  0.5846     354.8   3/8    160.9</span>
+<span class="out">0.85    43  0.6137     336.1   4/8    166.6</span>
+<span class="out">0.85    44  0.5883     334.0   4/8    164.6</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · out/full_sft_768.pth · 8 题 × 2 温度 × 3 seed = 48 次生成]</b>
+      每个（温度 × seed）格约 15–18 秒，3-seed 终版全程约 2 分钟；含 256 上限的第一版在内，两轮合计约 3 分钟。
+      汇总表如下，均值对均值、逐 seed 对逐 seed 都看：</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>指标</th><th class="u-w130">T=0.7（3 seed）</th><th class="u-w130">T=0.85（3 seed）</th><th>读法</th></tr></thead>
+          <tbody>
+            <tr><td>distinct-2 均值</td><td>0.5455</td><td><b>0.5955</b></td><td>三个 seed 逐一对应全部上升——方向稳健，幅度 +0.050</td></tr>
+            <tr><td>平均生成长度</td><td>360.7 tok</td><td>341.6 tok</td><td><b>与次级猜测相反</b>：升温反而更短</td></tr>
+            <tr><td>finish=stop</td><td>8/24</td><td>11/24</td><td>升温更常"说完即停"</td></tr>
+            <tr><td>吞吐</td><td>162.9 tok/s</td><td>164.0 tok/s</td><td>采样开销可忽略（差在噪声内）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="demo-concl">第四步 · 结论（含边界）</h3>
+      <p>
+        <b>结论一（有数据支撑的主结论）</b>：同一权重同一题集，温度 0.7→0.85 让回答多样性稳定上升
+        （distinct-2 +0.050，且 42/43/44 三个 seed 逐对全升，不是单一幸运样本）——支持 M21 弱项清单
+        "采样温度可作复读抑制剂"的假设。<b>结论二（猜错的部分，同样值钱）</b>：回答反而更短、更常说完即停。
+        机制：温度把整个分布拉平，EOS（end of sequence，结束符——模型给出它即停止生成，M03 的 im_end）
+        与句读这类"低概率但合理"的 token 也被托举上来，序列更容易自然收尾；话痨的根源在权重——
+        M21 弱项清单第一列的"美食题 28 项列表跑满 256 tok"，不在温度。
+        <b>边界</b>：n=3 个 seed、单一权重、8 道题；distinct-2 量的是多样性不是质量——
+        "更发散"不等于"更好"：质量的判定需要裁判模型（LLM-as-judge：用更强的模型给输出打分）或人工，
+        而 M21 的三把尺都明说过自己"看不见对错"。
+        下一个假设已经写在桌上：repetition_penalty（M20 采样链的旋钮）与温度对复读的作用能否分离？
+      </p>
+      <div class="callout note">
+        <div class="co-title">📐 为什么必须单变量</div>
+        <p>
+          若同时改 temperature 与 top_p，两臂差异便无法归因——两个旋钮都在改分布形状，
+          观察到的任何变化都是混合效应。形式化地说：设观察差异 Δ = f(T 变化) + g(p 变化) + 噪声，
+          单变量设计让 g 严格为 0，Δ 才可归因；多变量同时动的"实验"只是两次改动，
+          不是一次对照。同理，种子与温度的顺序（先固定 seed 组再切温度臂）保证了噪声项在两臂间对称。
+          这条纪律对训练实验同样成立——选题④若同时改 rank 与 lr，得出的任何 loss 差异都没有主人。
+        </p>
+      </div>
+
+      <h2 id="milestone-c">🏁 里程碑 C</h2>
+      <div class="milestone">
+        <div class="ms-head"><span class="flag">🏁</span>
+          <div>
+            <div class="ms-title">里程碑 C · 毕业</div>
+            <div class="ms-sub">三道门全亮 + 复盘三问：你拥有了全链路的工程与读真实代码的方法</div>
+          </div>
+        </div>
+        <div class="ms-body">
+          <p>四道绿灯，全部可判定。逐项打勾：</p>
+          <ul class="checklist">
+            <li><b>① 全量测试全绿</b>：<code>uv run python -m pytest tests/ -m "not slow" -q</code> 输出
+              <code>85 passed</code>（M01 时代口径 49——测试清单与仓库一起生长，绿灯纪律不变）；
+              并能说清 make test 五个失败的原因（<a href="#tests">坑卡</a>：测试环境改写被测系统）；</li>
+            <li><b>② 八范式冒烟全通过</b>：按依赖顺序跑完 8 个 smoke 配方，每段日志出现
+              <code>已保存：…</code>；能对每个范式说出"验证了什么"与"没验证什么"（<a href="#smoke8">八范式表</a>，
+              RL 三段只担保管道通）；</li>
+            <li><b>③ 毕业实验报告</b>：四步模板齐全（假设/设计/数据/结论），至少一个结论有数据支撑、
+              有边界声明——照 <a href="#demo-hypo">示范</a> 的规格写；选题来自 <a href="#topics">选题清单</a>
+              或 M21 弱项清单的任何一条；</li>
+            <li><b>④ 复盘三问</b>（写在笔记里，比绿灯本身更重要）：
+              <b>学到什么</b>——22 课里哪三课改变了你对"大模型"的理解，各一句话；
+              <b>还差什么</b>——M21 弱项清单里你最想先还的债，以及它需要什么资源（数据/算力/时间）；
+              <b>下一个项目是什么</b>——不是"继续学"，是一个具体到能开工的东西（见下方地图，选一个）。</li>
+          </ul>
+          <h3 id="grad-word">毕业辞</h3>
+          <p>
+            你现在拥有两样东西。<b>一个能跑通全链路的 64M 模型工程</b>：从 tokenizer 到 serve，
+            每个数字（63.91M 参数、ln(6400)=8.7641 的初始 loss、三段 18.5 小时的存档、85 个绿灯）
+            都是你亲手跑出来或逐行读出来的，不是听来的。<b>一套读真实代码的方法</b>：绿灯验收（可判定的
+            完成标准）、测试当锚点（改坏了知道哪断）、存档当教材（读真实日志是正式路径）、
+            弱项当路标（每个缺点都是一个可实验的假设）。模型会过时，这套方法跟着你走下一个项目。
+          </p>
+        </div>
+      </div>
+
+      <h2 id="next">下一步地图</h2>
+      <ul>
+        <li><b>官方 minimind 生态</b>：reborn 的上游 jingyaogong/minimind 提供不同规模的模型与更多语料、
+          任务——你的 reborn 经验可以整套平移去读官方源码；仓库里也有现成的下一档练手素材：
+          runs/pretrain_26m 存档（hidden 512 的 26M 变体，配方即实验——M04）——同一套链，换个尺寸再来一遍；</li>
+        <li><b>继续训练你的权重</b>：<a href="codeview/docs/retrain_plan_longctx_multiturn.md.html">docs/retrain_plan_longctx_multiturn.md</a>
+          的档二路线（长上下文底座续训全链约 28h / 从头重训约 42h，双卡）——M21 弱项清单"长上下文塌缩"的正解；</li>
+        <li><b>把 serve 部署起来</b>：M20 读过 tools/serve.py（OpenAI 风格接口）；M21 的 HF 导出（to-qwen）
+          让你的权重直接进 transformers / vLLM、ollama 这类推理引擎（M21 讲过：它们不认识 minimind_reborn，
+          但认识 Qwen3）；旁边的 Reproduce/minimind-studio 是 DeepSeek 风格的
+          网页试验台（独立项目，path 依赖复用 reborn 的推理门面）——给自己的模型一个家；</li>
+        <li><b>番外线</b>：PPO 深潜（M19 只到冒烟——critic 训练动力学与 KL 惩罚值得一个完整项目）；
+          或把 M21 弱项清单最后一条还掉（给 eval_llm 补种子与贪心模式——它本身就是一次漂亮的毕业实验）。</li>
+      </ul>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · 全链路为什么要一条命令？run_full.sh 为什么对数据下载 fail-fast，对三个训练段却只记 exit 码不停链？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>一条命令的价值是无人值守的原子性：全链 18 小时级，靠 nohup 挂后台、各段独立日志、resume 默认开启（断了重跑接着来），并且它本身就是"三份配置的命名与依赖真的咬合"的最终测试。数据下载 fail-fast 是因为没有数据后面全是白等，当场死最便宜；训练段不停链是因为下一棒自带守门人——init_from 走 strict 加载，上一棒产物有问题会在下一棒启动前一秒炸出来，MARKER 里的 exit= 行保留完整现场供对账。</p>
+            <p class="back">答错回看：<a href="#runfull">run_full.sh 精读</a> 与 <a href="#chain-products">产物衔接表</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · 单变量对照为什么必须？如果示范实验同时改 temperature 和 top_p，结论会发生什么？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>观察差异 Δ = f(改动甲) + g(改动乙) + 噪声；单变量设计让 g 严格为 0，Δ 才能归因给甲。若同时改温度与 top_p（两个都在改采样分布的形状），看到 distinct-2 上升你无法知道是温度的功劳还是 top_p 放宽的功劳——得到的是"两次改动"的混合效应，不是一次对照。同理，示范实验让两臂共用同一组 seed、同一权重实例、同一题集，就是为了让噪声项在两臂间对称。</p>
+            <p class="back">答错回看：<a href="#demo-design">第二步 · 设计</a> 与 <a href="#gradexp">直觉卡</a>、📐 卡。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · 开放题：85 个测试里，你印象最深的一个是哪个？为什么是它？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>参考答案</b>（任选其一，说得出"它锁住什么行为"即可）：
+              ① <code>test_rope_buffer_rebuild_after_meta_init</code>——M09 猎场的回归锁：非持久 buffer 在 meta 初始化下责任真空，模型用"全零判据 + 重算重注册"自我兜底，测试保证这层兜底永远在；
+              ② <code>test_full_chain_train_save_resume_generate</code>——M01 冒烟链的测试化身，一条测试锁住"训练→保存→续训→生成"整条链，是"绿灯担保什么"的最佳样本（也在 make test 坑卡里当过受害者）；
+              ③ loss_mask 系列——M12 填空时你手写过它的核心逻辑，全系统最脆的一格有测试盯着。
+              共同点：好测试锁的是<b>行为契约</b>而不是实现细节——实现可以换，契约破了必须有人知道。</p>
+            <p class="back">答错回看：<a href="#tests">全量测试</a> 与 M09/M12 的对应猎场/填空。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · make test 的五个失败是怎么来的？这个坑和毕业实验的方法论有什么关系？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>Makefile 给 pytest 前置了 MINIMIND_REBORN_METRICS_DISABLED=1（离线纪律、禁云端上报），该开关把 build_backends 的所有指标后端替换成 null；五个失败测试测的恰是后端本身——被测对象被测试环境改写了，裸跑同参数 pytest 则 85 全绿。与方法论的关系：当被测系统会读取环境开关时，环境就是自变量/控制变量清单的一部分——"冻结其他一切"必须包括环境，否则你的对照实验在另一台机器上不可复现。</p>
+            <p class="back">答错回看：<a href="#tests">坑卡：测试环境改写了被测系统</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · 毕业实验：这就是练习本身</div>
+        <div class="ex-body">
+          <p>
+            从 <a href="#topics">选题清单</a>（或 M21 弱项清单）里挑一个不是②的选题，用四步模板跑完。
+            最低配置：选题①/④在 tiny 上各约 10–20 分钟（CPU 亦可，只是更久）；选题③零运行——
+            读 M21 存档 <code>out/multiturn_eval_yarn.md</code> 与 <code>out/multiturn_eval.md</code> 对照即可，
+            但"设计"一步要写清哪两份存档构成对照、控制了什么。
+          </p>
+          <div class="ex-predict"></div>
+          <p>动手前先写下预测：你的自变量朝预设方向动之后，因变量会怎么变？把预测写成一句可被数据推翻的话
+          （例如"rank 16 的 val loss 在第 200 步比 rank 8 低至少 0.05"）——不可推翻的预测不算预测。</p>
+          <div class="codeblock"><div class="code-head"><span>毕业实验报告模板（照此四步填）</span><span class="lang">text</span></div><pre class="code"><code>① 假设：我相信改 ___ 会让 ___（方向），因为 ___（机制或来源：M21 弱项清单第 N 条）
+② 设计：自变量 ___（唯一）；因变量 ___（怎么量：命令/指标名）
+          控制变量 ___（权重/数据/步数/lr/seed/环境…逐项列出）
+③ 数据：命令 + 原始输出（贴终端，不誊抄美化）；汇总表（均值对均值、逐 seed 对逐 seed）
+④ 结论：主结论（数据支撑：方向+幅度）；猜错的部分（如有，机制解释）
+          边界（n=?、什么权重、什么题）；下一个假设（闭环交棒）</code></pre></div>
+          <details>
+            <summary>什么算"合格"？（先动手再看）</summary>
+            <p>
+              合格线与示范同规格：<b>每个数字可溯源</b>（命令可重跑、输出是原始的）、
+              <b>结论有边界声明</b>（n 多少、什么权重、什么范围成立）、<b>至少一个反直觉或猜错的发现</b>
+              （示范里是"升温反而更短"——猜错不是失败，是没有被数据骗着走）。两份存档做对照的选题③，
+              合格线是写清两份档的"控制变量"哪些真的相同（同权重？同题？同解码？）——
+              <b>读档分析也要过设计这一关</b>。若你的结论与预期完全一致且毫无曲折，
+              大概率是因变量选得太迟钝（回忆示范第一版的长度天花板）——换更灵敏的尺再跑一圈，闭环本来就是圈的。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M22 验收（= 里程碑 C 三条命令）</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下依次执行。第一条，全量测试（约 14 秒）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -m pytest tests/ -m "not slow" -q</span>
+<span class="ok">85 passed, 1 warning in 13.98s</span></code></pre>
+          <p>第二条，八范式冒烟（GPU 约 4 分钟；缺 RL 数据先 <code>make download-rl</code>；CPU 可跑但更久）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">for s in pretrain sft dpo lora distill grpo ppo agent; do
+    uv run python tools/train.py configs/smoke/smoke_$s.yaml --set train.resume=false || break
+done</span>
+<span class="out">… | minimind.trainer | 已保存：pretrain_64.pth + best（epoch=1 step=6 best_val=8.771874904632568）</span>
+<span class="dim">（中段七行的绿灯样例见正文八范式一节：full_sft_64 / dpo_64 / lora_smoke_64 / full_dist_64 / grpo_64 / ppo_actor_64 / agent_64）</span>
+<span class="ok">… | minimind.rl | 已保存 agent_64.pth（epoch=1 step=2）</span></code></pre>
+          <p>第三条，毕业实验（示范脚本 48 次生成约 2 分钟；你的选题自定，报告按模板四步）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m22_temp_ab3.py</span>
+<span class="out">0.70    42  0.5483     368.2   3/8    161.8</span>
+<span class="dim">（共 6 行：2 温度 × 3 seed，全表见正文第三步 · 数据）</span>
+<span class="out">0.85    44  0.5883     334.0   4/8    164.6</span></code></pre>
+          <ul class="pass-criteria">
+            <li>第一条输出 <code>85 passed</code>（若你跑 <code>make test</code> 看到 5 个 metrics 失败——回
+              <a href="#tests">坑卡</a>，那是环境变量在改写被测系统，不是你的代码坏了）；</li>
+            <li>第二条八个 <code>已保存：…_64.pth</code> 全部出现且循环未被 <code>|| break</code> 掐断——八盏灯全亮；</li>
+            <li>第三条你的报告四步齐全、至少一个结论带原始数据与边界声明——里程碑 C ③ 亮灯，复盘三问写完即毕业。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按症状分流）</summary>
+            <p>
+              <b>pytest 出现非 metrics 的 failed</b> → 读用例名回对应课（models→M09、loss_mask→M12、
+              kv_cache→M06），回归测试失败几乎一定是环境（torch/transformers 版本）漂移；
+              <b>冒烟循环在 dpo 段断</b> → 链式依赖：pretrain 段必须先成功产出 out/pretrain_64.pth
+              （顺序错了重跑 pretrain 一段即可）；<b>grpo/ppo/agent 报数据集缺失</b> →
+              <code>make download-rl</code> 下载 rlaif_mini 与 agent_rl_mini；
+              <b>distill 段看起来"卡住"</b> → 正常，教师构造 + 首批模板重编码约 3 分钟（tok/s 先低后高）；
+              <b>毕业实验两臂数据一模一样</b> → 检查是不是忘了在每臂前重置种子、或温度参数没真正传进
+              GenerateConfig（≤0 会静默走贪心分支，M20 讲过）。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        22 课到此全部走完：🏁A 你建成了与官方逐键等价的模型，🏁B 你训出了自己的基座，
+        🏁C 今天你把全链路跑通、并用数据支撑了一个自己的结论。课程结束的地方，正是闭环开始的地方——
+        下一圈的第一步，已经写在你的复盘三问第三问里。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>研究迭代闭环 <span class="en">research iteration loop</span></dt><dd>弱项清单 → 假设 → 单变量对照设计 → 数据 → 结论（含边界）→ 新弱项，回到起点再跑一圈。本课唯一新概念，也是全课程的方法论收束：评测的终点不是分数，是下一圈的假设（M21）。</dd>
+          <dt>单变量对照实验 <span class="en">controlled experiment</span></dt><dd>只动一个旋钮（自变量）、只量约定的指标（因变量）、冻结其余一切（控制变量——含随机种子与环境变量）的实验设计。多变量同时动得到的只是混合效应，无法归因。</dd>
+          <dt>自变量 / 因变量 / 控制变量 <span class="en">independent / dependent / controlled variables</span></dt><dd>对照实验三角色：动的那个、量的那个、冻住的一切。示范实验里分别是 temperature、distinct-2 等四指标、权重/top_p/max_new_tokens/题集/seed 组。</dd>
+          <dt>distinct-2</dt><dd>多样性的自动指标：文本中不重复相邻二字组（bigram）占全部 bigram 的比例，复读越重越低。便宜可全自动，但量的是"多样"不是"对错"（M21 三把尺里的第一把）。</dd>
+          <dt>天花板效应 <span class="en">ceiling effect</span></dt><dd>因变量被测量上限截断而失去区分力的现象：示范第一版 max_new_tokens=256 时 15/16 题跑满 finish=length，长度分不出两臂。对策是抬高上限重跑——设计缺陷由数据暴露，也是闭环的一圈。</dd>
+          <dt>随机种子 <span class="en">random seed</span></dt><dd>随机数发生器的起点：固定它，同一命令重跑得到同一序列（采样可复现）。示范实验每臂前 torch.manual_seed(seed)，两臂共用同一组 seed 让噪声对称；M21 弱项清单里"eval_llm 不设种子"就是它的缺席。</dd>
+          <dt>fail-fast <span class="en">快速失败</span></dt><dd>越早暴露不可恢复的错误越便宜的纪律。run_full.sh 对数据下载用 <code>|| exit 1</code> 当场死；训练段则交棒给下一棒的 strict 加载守门——两种失败策略各配一种依赖关系。</dd>
+          <dt>全链路脚本 <span class="en">run_full.sh</span></dt><dd>20 行 shell 串起 download→pretrain→SFT→DPO：nohup 无人值守、各段独立日志、MARKER 记 exit 码、resume 默认开断点重跑。工业界同构物是训练平台的 DAG 流水线。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

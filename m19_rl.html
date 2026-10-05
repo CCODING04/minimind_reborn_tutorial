@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M19 · RL 一览：rollout 的世界 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m19">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第四篇 训练</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M19</span><span>第四篇 · 训练</span></div>
+        <h1>RL 一览：rollout 的世界</h1>
+        <p class="lede">
+          M18 收官了监督家族：SFT/DPO/蒸馏/LoRA 四范式都在学<b>给定的答案或偏好</b>。
+          最后一族 RL（reinforcement learning，强化学习）换一种学法——学<b>自己试出来的后果</b>：
+          采样、打分、把好后果的概率调高。reborn 的 RL 是冒烟级实现，本课的目标是<b>看懂结构</b>。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M18</b>（M12 的 RLAIF 数据集与 M17 的参考模型将再次登场）</span>
+          <span class="chip">时长：<b>约 75 分钟</b></span>
+          <span class="chip">新概念：<b>rollout 型训练 · 组相对优势（GRPO）</b></span>
+          <span class="chip">对照：<code>training/rollout.py</code> · <code>training/grpo/workflow.py</code> · <code>training/{ppo,agent}/</code> · <code>training/common/{rl_utils,rewards}.py</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>画出 GRPO 一步的五个阶段（prompt → N 条 completion → 打分 → 组内优势 → 更新），说出它与监督训练"逐 batch 前向"的形态差别；</li>
+        <li>逐行读 <code>RolloutEngine</code> 协议与 torch/SGLang 两个实现，解释"推理引擎可插拔"为什么用 Protocol（协议）而不是继承；</li>
+        <li>用 z-score 公式手算一个采样组的优势，说出 GRPO 为什么不需要价值网络、什么情况下优势恒为零；</li>
+        <li>一句话讲清 PPO 的 actor-critic 分工与 Agent 的 observation 掩码（回收 M12 的 loss mask 思想），复述 mypy 在 f8af44d 里揪出的两个真 bug 的机制；</li>
+        <li>真跑 <code>smoke_grpo</code> 冒烟，从日志里读出"一行 = 一次完整 rollout+更新"的节奏与 <code>adv_std</code> 的平局信号。</li>
+      </ul>
+
+      <h2 id="phenomenon">最后一族范式：从"给定的答案"到"试出来的后果"</h2>
+      <p>
+        第四篇走过的四种范式有个共同点：训练信号都是<b>数据集里写好的</b>——SFT 给标准回答、
+        DPO 给偏好对（哪个回答更好）、蒸馏给老师的分布、LoRA 只是换了参数化的 SFT。
+        RL 把"标准答案"换成"裁判"：模型自己生成回答，环境只回一个<b>分数</b>，
+        训练把高分回答的概率调高、低分的压低。M17 的折叠卡提过 RLHF
+        （RL from Human Feedback，人类反馈强化学习：先训一个给回答打分的奖励模型，再用 RL 最大化它）
+        才是偏好对齐的"本尊"，DPO 是绕开 RL 循环的离线改写——本课把 RL 循环本身装回来。
+      </p>
+      <pre class="ascii"><code>八范式两家谱（M16 那张图的补完——最后一列的内部结构是本课）
+
+监督家族（M16–M18）：pretrain · sft · dpo · distill · lora     ← 学"给定的答案/偏好"
+        └─ 全走 Trainer（M13）：逐 batch 前向 → loss → backward → step
+
+RL 家族（本课）   ：grpo · ppo · agent                        ← 学"自己试出来的后果"
+        └─ 不走 Trainer：每个 batch 先采样（rollout，生成 N 条回答）
+                          再打分（奖励）→ 算优势 → 更新策略
+                          循环用刚更新的模型继续采样（on-policy：采样者即受训者）</code></pre>
+      <p>
+        先亮牌，这是本课的阅读姿势。README 的"已知短板"一节原话：
+        <i>"RL 系验收深度为冒烟级（规则奖励下无学习信号）"</i>——三个 RL workflow 的代码是真的、
+        结构是完整的（组采样、KL 锚、多轮工具调用一应俱全），但默认的<b>规则奖励</b>
+        （按格式打分，不判断答对与否）在 tiny 模型上产生不了可观测的学习曲线，后半课你会从日志里亲眼看到"无信号"长什么样。
+        所以本课是<b>概念精读单元</b>：目标是看懂结构、跑通冒烟，不是调参炼丹——PPO 与 Agent 的深潜属于番外。
+      </p>
+
+      <h2 id="rollout">概念卡：rollout</h2>
+      <div class="callout tip">
+        <div class="co-title">💡 概念卡：rollout（试走一局）</div>
+        <p>
+          让当前模型对 prompt <b>采样出 N 条完整回答</b>（completion，模型的生成段），
+          打分后把好回答的概率调高、坏回答压低，再进入下一轮。一次 rollout 就是模型当前水平的一次
+          "考试 + 阅卷"。与监督训练的本质区别：监督的 batch 是数据集里静态的，rollout 的 batch 是
+          <b>模型刚刚现场生成的</b>——训练信号来自后果（分数），不来自标准答案。
+          RL 里把被训练的模型叫<b>策略</b>（policy：给定上文后"出哪个 token"的概率分布就是它的决策）。
+        </p>
+      </div>
+      <pre class="ascii"><code>GRPO 一步的主循环（_grpo_step 一次调用 = 下列五阶段，然后 step+1 重复）
+
+  ① 取 prompt（M12 的 RLAIFDataset：只留到最后一问的对话提示）
+        ↓
+  ② rollout 引擎：prompt 复制 N 份 → 温度采样 N 条 completion
+        （torch 版走 M06 预分配 KV cache 的 generate；sglang 版走 HTTP）
+        ↓
+  ③ 打分：rewards.py 规则奖励（+ 可选奖励模型）→ (b·N,) 分数向量
+        ↓
+  ④ 组内 z-score：每条回答与同 prompt 的 N 条均值比较 → 优势 advantage
+        ↓
+  ⑤ 更新：损失 × 优势 × KL 锚（M17 的冻结参考模型）→ backward → optimizer.step
+        ↓
+  循环：② 用的策略就是 ⑤ 刚更新过的策略</code></pre>
+      <p>形态差别值得列表——这张表是本课与 M16 之间的桥：</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130"></th><th class="u-w200">监督家族（M16–M18）</th><th>RL 家族（本课）</th></tr></thead>
+          <tbody>
+            <tr><td><b>batch 来源</b></td><td>数据集静态样本</td><td>模型现场生成（rollout）</td></tr>
+            <tr><td><b>训练信号</b></td><td>给定答案的 logp / 偏好标签</td><td>后果分数（奖励）</td></tr>
+            <tr><td><b>循环宿主</b></td><td><code>Trainer.run()</code>（M13）</td><td>workflow 自持循环 + <code>RLSession</code> 基件</td></tr>
+            <tr><td><b>每步开销</b></td><td>一次前向一次反向</td><td>先采 N 条再打分再更新——生成占大头</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="observe">观测先行：对一个模型做一次组采样</h3>
+      <p>
+        概念落地最快的方式是真采一次。随机初始化一个 tiny 模型（0.53M，M16 的冒烟尺寸），
+        对同一个 prompt 采 4 条回答——这正是 GRPO 里 N=4 的"组"：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m19_rollout.py · 组采样观测（1 prompt × 4 completions）</span><span class="lang">python</span></div><pre class="code"><code>import torch
+from transformers import AutoTokenizer
+
+from minimind_reborn.inference.chat import render_chat
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+from minimind_reborn.training.rollout import TorchRolloutEngine
+
+torch.manual_seed(7)
+tok = AutoTokenizer.from_pretrained("assets/tokenizer")
+cfg = MiniMindConfig(hidden_size=64, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2)
+model = MiniMindForCausalLM(cfg).eval()          # 随机权重：只看结构，不看点数
+engine = TorchRolloutEngine(model, tok, device="cpu")
+
+prompt = render_chat(tok, [{"role": "user", "content": "1+1等于几？"}])   # M10 的模板
+enc = tok([prompt], return_tensors="pt", padding=True,
+          padding_side="left", add_special_tokens=False)  # 左填充：补齐位放左边，生成端右对齐
+result = engine.rollout(enc["input_ids"], enc["attention_mask"],
+                        num_generations=4, max_new_tokens=16, temperature=0.8)
+
+print("prompt 长度:", result.prompt_lens.tolist(), " completion_ids 形状:", tuple(result.completion_ids.shape))
+print("per_token_logps 形状:", tuple(result.per_token_logps.shape))
+for i, c in enumerate(result.completions):
+    n = int(result.completion_mask[i].sum())     # 有效生成位（右 padding 不算）
+    print(f"[{i}] {c!r}  有效长度={n}  平均logp={result.per_token_logps[i, :n-1].mean():.3f}")</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m19_rollout.py</span>
+<span class="out">prompt 长度: [23, 23, 23, 23]   completion_ids 形状: (4, 16)</span>
+<span class="out">per_token_logps 形状: (4, 16)</span>
+<span class="out">[0] '帮助企业数字 miss或服务\x03 mar生产吸 please,绿色询互之LP�'  有效长度=16  平均logp=-8.336</span>
+<span class="out">[1] 'ding邀est整个衡目前数据分析面的". kilometersamesging的地方的� 21\'m'  有效长度=16  平均logp=-8.302</span>
+<span class="out">[2] ' growth聚iz的手urnailed cration�启混有助��治疗ames'  有效长度=16  平均logp=-8.295</span>
+<span class="out">[3] ' assistance�产品的ering):�责任�权限� conditions的建议的建议网页领导AP'  有效长度=16  平均logp=-8.288</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 纯 CPU 路径 · seed=7]</b>
+      乱码是诚实的：随机权重本来就不会回答。要看的是<b>结构</b>——同一个 prompt、四条不同的 completion、
+      每条带自己的逐 token logp（logp：对数概率，M17 DPO 里 chosen/rejected 用过的量）。
+      这四个张量（output_ids / completion_ids / per_token_logps / completion_mask）就是
+      rollout 交给训练阶段的全部行李。</p>
+
+      <h3 id="protocol">精读：RolloutEngine——推理引擎可插拔的抽象</h3>
+      <p>
+        三个 RL workflow 都不直接调用生成函数，而是通过同一个协议要服务。
+        <a href="codeview/src/minimind_reborn/training/rollout.py.html">training/rollout.py</a>
+        的骨架（节选）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/rollout.py.html">src/minimind_reborn/training/rollout.py</a> · 协议与工厂（节选）</span><span class="lang">python</span></div><pre class="code"><code>@dataclass
+class RolloutResult:
+    output_ids: Tensor       # (b·N, prompt+completion) 右 padding 的完整序列
+    completion_ids: Tensor   # (b·N, R) 只含生成段
+    per_token_logps: Tensor  # (b·N, R) 采样那一刻策略的逐 token logp（old_logps 基线）
+    completions: list[str]   # 解码后的文本
+    prompt_lens: Tensor      # (b·N,)
+    completion_mask: Tensor  # (b·N, R) 1=有效生成位（右 padding 与截断位是 0）
+
+class RolloutEngine(Protocol):        # 协议而非强制继承：同签名即可互换
+    def rollout(self, prompt_ids, attention_mask, num_generations,
+                max_new_tokens, temperature=0.8) -&gt; RolloutResult: ...
+    def update_policy(self, model) -&gt; None: ...
+
+def create_rollout_engine(cfg, policy_model, tokenizer, device) -&gt; RolloutEngine:
+    if cfg.rl.rollout_engine == "torch":     # 配方一个键切换（M04：配置即实验）
+        return TorchRolloutEngine(policy_model, tokenizer, device)
+    if cfg.rl.rollout_engine == "sglang":
+        return SGLangRolloutEngine(cfg.rl.sglang_base_url, cfg.rl.sglang_model_path, ...)
+    raise ValueError(...)                    # 未知引擎：守门人应已拦截</code></pre></div>
+      <p>
+        逐个回答三个问题。<b>为什么是 Protocol？</b>docstring 原话："协议而非强制继承——同签名
+        rollout()/update_policy() 即可互换"。<code>Protocol</code>（Python 的结构化接口：
+        不要求继承，只要方法签名对得上，类型检查器就认）让两个实现<b>零耦合</b>：
+        TorchRolloutEngine 包着模型本体，SGLangRolloutEngine 包着一个 HTTP 地址——
+        谁都不需要知道对方存在，workflow 只认协议。
+      </p>
+      <p>
+        <b>两个方法各是什么？</b><code>rollout()</code> 是采样：torch 版内部就是一行
+        <code>generate(model, prompt_ids.repeat_interleave(N, dim=0), ...)</code>——
+        M06 的预分配 KV cache、M03 的采样与停止全在里面（M20 深潜这套推理栈，它就是 rollout 引擎的地基）；
+        sglang 版把请求 POST 给外部推理服务。<code>update_policy()</code> 是<b>权重同步钩子</b>：
+        训练循环每存档一次就调用它，让"采样的引擎"拿到"最新受训的权重"——torch 版只需换个引用
+        （模型对象本来就是同一个），sglang 版要走磁盘热更新（rank0 写 checkpoint →
+        POST update_weights_from_disk → 广播成败，失败直接 raise 中止训练：采样引擎与训练权重失配的
+        rollout 全是白算的）。
+      </p>
+      <p>
+        <b>per_token_logps 为什么单独返回？</b>RL 的损失要用"采样那一刻"的 logp 当分母算比率
+        （后面 ratio = exp(new − old)），而采样发生在 <code>torch.no_grad()</code> 下、且模型随后就被更新——
+        这份"当时觉得多大概率"的快照必须随行李带出来。这正是 RL 特有的数据依赖：监督学习里不存在"batch 过期"这回事。
+      </p>
+
+      <h3 id="session">为什么 RL 不走 Trainer：RLSession 的取舍</h3>
+      <p>
+        M16 验证过"八范式共用一台引擎"，但那台 <code>Trainer</code> 的不变量（逐 batch 前向、
+        epoch 末评估、best_val 保存）匹配的是监督形态。RL 循环有三点对不上：每步先做耗时的
+        no_grad 采样（no_grad：不建计算图的推理模式，M06 验证 KV cache 时用过）；
+        没有验证集 loss 可看（RL 看的是奖励曲线）；
+        <a href="codeview/src/minimind_reborn/training/common/rl_utils.py.html">rl_utils.py</a>
+        注释原话："best 语义不适用：RL 以 reward 曲线观测，仅存 last"。所以三个 RL workflow
+        各自持有循环——但目录、四件套、续训、rank0 门控这些<b>同构的基件服务</b>不能丢，
+        于是抽成 <code>RLSession</code> 共用：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/common/rl_utils.py.html">src/minimind_reborn/training/common/rl_utils.py</a> · RLSession 关键行（节选）</span><span class="lang">python</span></div><pre class="code"><code>class RLSession:
+    """RL workflow 的公共状态：目录/日志/指标/精度上下文/保存与续训。"""
+    def __init__(self, cfg, *, save_weight, device=None, local_rank=0):
+        setup_logging(cfg.run_dir)                 # M13 同款日志
+        if dist.is_main_process():
+            atomic_write_json(snapshot(cfg), self.run_dir / "config.json")   # 四件套
+            env_fingerprint.dump(self.run_dir, seed=cfg.train.seed)          # 环境指纹
+        self.metrics = MetricLogger(build_backends(...))                     # 指标后端
+
+    def save(self, model, optimizer, scheduler, epoch, step, extra_states=None):
+        if not dist.is_main_process():            # rank0 门控（M15），与 Trainer 同构
+            return
+        save_inference_weights(model, weight_path)          # out/grpo_64.pth
+        save_checkpoint(..., scaler=None, best_val_loss=None, extra_states=extra_states)
+        # scaler=None：RL 用 bf16 autocast，无 GradScaler 的 scale 语义</code></pre></div>
+      <p>
+        这是 M13 那条设计纪律的延续：<b>循环形态交给范式，基件服务抽公共</b>。
+        对比一下分界线——Trainer 收走的是"监督循环的全部机械动作"；RLSession 收走的是
+        "任何训练都要的账本与落盘"，循环本身留给各 workflow（GRPO 的循环里要插 rollout 与打分，插不进 Trainer 的骨架）。
+      </p>
+
+      <h2 id="grpo">GRPO 精读：同题竞标</h2>
+      <p>
+        GRPO（Group Relative Policy Optimization，组相对策略优化）是 reborn 三个 RL 范式的中心，
+        也是本课主体。先看 64M 配方全文——它比任何解释都短：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/configs/rl/grpo_64m.yaml.html">configs/rl/grpo_64m.yaml</a> · 全文</span><span class="lang">yaml</span></div><pre class="code"><code># GRPO 组相对策略优化（规则奖励；要接外部 RM 填 rl.reward_model_path）
+stage: grpo
+data:
+  dataset: rlaif_mini        # M12 的 RLAIF 提示集（19,502 条）
+  max_seq_len: 768
+train:
+  epochs: 1
+  batch_size: 2
+  learning_rate: 3.0e-7      # RL 步长：比 SFT 的 1e-5 还小 ~30 倍——防策略崩坏
+  dtype: bf16
+  init_from: full_sft        # 交接棒（M16）：严格加载 SFT 产物，RL 从"会说话"起步
+  save_interval_steps: 10
+  log_interval: 1
+rl:
+  num_generations: 6         # ← 本课主角：每个 prompt 采 6 条
+  beta: 0.1                  # KL 锚强度
+  loss_type: cispo           # cispo | grpo 两种损失
+  max_gen_len: 256
+  thinking_ratio: 0.9        # 90% 的样本开 think 段（M10 模板的 &lt;think&gt;）
+  reward_model_path: ""      # 空 = 纯规则奖励（无 RM 依赖，冒烟可用）</code></pre></div>
+
+      <h3 id="group">组采样：一个 prompt，N 条回答</h3>
+      <p>
+        RLAIFDataset 每条样本只给出"到最后一问为止"的对话（渲染成 M10 的模板 prompt），
+        回答留给模型自己写。<code>_grpo_step</code> 把 prompt 交给 rollout 引擎，
+        引擎内部 <code>repeat_interleave</code> 复制 N 份再采样：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/rollout.py.html">src/minimind_reborn/training/rollout.py</a> · TorchRolloutEngine.rollout 开头</span><span class="lang">python</span></div><pre class="code"><code>result = generate(
+    model,
+    prompt_ids.detach().repeat_interleave(num_generations, dim=0),  # (b, P) → (b·N, P)
+    gen,                                       # GenerateConfig：T=0.8 top_p=0.95 top_k=50（M02 旋钮）
+    eos_token_id=..., pad_token_id=...,
+    max_new_tokens=max_new_tokens,             # 每条最多生成 max_gen_len 个 token
+    attention_mask=attention_mask.detach().repeat_interleave(num_generations, dim=0),
+)</code></pre></div>
+      <p>
+        一次 <code>generate</code> 出 <code>b·N</code> 条回答：batch 里每个 prompt 换来一个
+        <b>组</b>（group）——同一道题的 N 份答卷。这个"组"就是 GRPO 名字里的 G。
+      </p>
+
+      <h3 id="zscore">组内 z-score：N 条回答互为基线</h3>
+      <p>
+        分数打完（下一小节规则清单），中心六行算优势——GRPO 的全部秘密：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/grpo/workflow.py.html">src/minimind_reborn/training/grpo/workflow.py</a> · 优势计算（_grpo_step 节选）</span><span class="lang">python</span></div><pre class="code"><code>flat_prompts = [p for p in prompts for _ in range(rl.num_generations)]
+rewards = batch_rewards(flat_prompts, completions, reward_model, device)  # (b·N,)
+grouped = rewards.view(-1, rl.num_generations)      # (b, N)：每行 = 同一 prompt 的 N 条分数
+mean_r = grouped.mean(dim=1).repeat_interleave(rl.num_generations)   # 组均值铺回 (b·N,)
+std_r = grouped.std(dim=1, unbiased=False).repeat_interleave(rl.num_generations)
+advantages = (rewards - mean_r) / (std_r + 1e-4)    # z-score：组内标准分</code></pre></div>
+      <p>
+        公式只有一行——<b>每条回答的分数减去同组均值，再除以同组标准差</b>（z-score，
+        统计学里的标准分；1e-4 是防除零）：
+      </p>
+      <p>
+        $$ A_i \;=\; \frac{r_i - \mathrm{mean}(\mathbf{r})}{\mathrm{std}(\mathbf{r}) + \epsilon} \qquad \text{（}\mathbf{r}\text{ 是同一 prompt 的 } N \text{ 条分数）} $$
+      </p>
+      <div class="callout note">
+        <div class="co-title">📐 严谨卡：GRPO 的出身与代价</div>
+        <p>
+          GRPO 由 DeepSeekMath（arXiv:2402.03300）提出，DeepSeek-R1 用它做推理 RL 而出圈。
+          核心洞察：PPO 里基线（baseline，"平均能拿多少分"的参照，优势 = 分数 − 基线）由一个
+          <b>价值网络</b>预测，而价值网络本身要训练、要显存、要不稳——
+          <b>同一道题的 N 条回答天然处在同一难度水平，它们的组均值就是免费的基线</b>。
+          省掉整个 critic 的代价：每题要采 N 条回答（采样本来就是 RL 最贵的阶段），以及——
+          组内全同分时基线失效（下一段日志会亲历）。
+        </p>
+      </div>
+      <p>用真张量算五组，每个数字都值得盯三秒：</p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "</span>
+<span class="cmd">import torch</span>
+<span class="cmd">def adv(rs):  # grpo/workflow.py 优势计算同款</span>
+<span class="cmd">    r = torch.tensor(rs, dtype=torch.float32)</span>
+<span class="cmd">    return (r - r.mean()) / (r.std(unbiased=False) + 1e-4)</span>
+<span class="cmd">for tag, rs in [('温差 0.1（低温组）', [0.5, 0.4]), ('温差 1.5（高温组）', [1.0, -0.5]),</span>
+<span class="cmd">               ('整体抬高但同差距',  [1.5, 0.5]), ('全体同分（平局）',  [0.5, 0.5]),</span>
+<span class="cmd">               ('6 条组（64M 配方）', [1.0, 0.5, 0.5, -0.5, 0.5, 0.5])]:</span>
+<span class="cmd">    a = adv(rs)</span>
+<span class="cmd">    print(f'{tag:18s} 奖励={rs} → 优势={[round(x,3) for x in a.tolist()]}  无偏std={a.std():.4f}')"</span>
+<span class="out">温差 0.1（低温组）        奖励=[0.5, 0.4] → 优势=[0.998, -0.998]  无偏std=1.4114</span>
+<span class="out">温差 1.5（高温组）        奖励=[1.0, -0.5] → 优势=[1.0, -1.0]  无偏std=1.4140</span>
+<span class="out">整体抬高但同差距           奖励=[1.5, 0.5] → 优势=[1.0, -1.0]  无偏std=1.4139</span>
+<span class="out">全体同分（平局）          奖励=[0.5, 0.5] → 优势=[0.0, 0.0]  无偏std=0.0000</span>
+<span class="out">6 条组（64M 配方）       奖励=[1.0, 0.5, 0.5, -0.5, 0.5, 0.5] → 优势=[1.3, 0.186, 0.186, -2.042, 0.186, 0.186]  无偏std=1.0952</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · 纯 CPU 路径]</b>
+      三个读数：<b>① 尺度不变</b>——温差 0.1 与 1.5 的优势同为 ±1：z-score 只保留组内相对名次，
+      奖励整体放大或抬高不改变优势（GRPO 对奖励的<b>绝对</b>刻度天然免疫，变式练习会回收这一点）。
+      <b>② 平局是死组</b>——全组同分 → std=0 → 优势全 0 → 这组样本对本步策略<b>零梯度</b>。
+      <b>③ N=2 退化</b>——两条回答只要分数不同优势必然 ±1（一组只有两个名次），
+      其无偏标准差（无偏：除以 N−1 的那版样本标准差，N=2 时恰好放大 √2 倍；注意归一化算式里用的
+      是有偏版 <code>unbiased=False</code>，统计口径与日志不同）等于 √2 ≈ 1.4142——
+      马上你会在冒烟日志里认出这个数字。</p>
+
+      <h3 id="loss">双损失与 KL 锚：更新那一步</h3>
+      <p>
+        优势算好，最后一步是"按优势调整概率"。逐 token 的损失有两个分支
+        （ratio = exp(当前策略 logp − 采样时 logp)，即新旧策略的比率）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/grpo/workflow.py.html">src/minimind_reborn/training/grpo/workflow.py</a> · 损失分支（节选）</span><span class="lang">python</span></div><pre class="code"><code>kl_div = ref_logps - per_token_logps          # 与参考模型（M17 冻结的那份）的 logp 差
+per_token_kl = torch.exp(kl_div) - kl_div - 1 # k3 估计：恒 ≥0，kl_div=0 时恰好为 0
+ratio = torch.exp(per_token_logps - old_per_token_logps)
+if rl.loss_type == "cispo":                   # 分支 A：钳制比率系数（DAPO 谱系）
+    clamped = torch.clamp(ratio, max=rl.epsilon_high).detach()
+    per_token_loss = -(clamped * advantages.unsqueeze(1) * per_token_logps
+                       - rl.beta * per_token_kl)
+else:                                         # 分支 B：grpo 双面 clip（PPO 同款形状）
+    clipped = torch.clamp(ratio, 1 - rl.epsilon, 1 + rl.epsilon)
+    per_token_loss = -(torch.min(ratio * advantages.unsqueeze(1),
+                                 clipped * advantages.unsqueeze(1)) - rl.beta * per_token_kl)</code></pre></div>
+      <p>
+        一句话讲清共同点与差别：两个分支都在做"高优势回答的 logp 推高、低优势压低，
+        同时按 β=0.1 扣一笔离参考模型太远的罚金"（KL 锚——回收 M17：参考模型是 SFT 权重的冻结副本，
+        给 RL 的漂移上保险；k3 估计 exp(Δ)−Δ−1 是 KL 的低方差无偏下界形式，恒非负）。
+        差别在<b>怎么防单步冒进</b>：cispo 把比率系数钳到上界后 detach（系数不回传梯度，梯度直接走 logp，
+        正优势的长回答不被截断地鼓励）；grpo 分支用双面 clip（把比率按 1±ε 截断后与未截断取小——
+        离采样分布太远的更新会被"剪掉"）。配置一个键 <code>loss_type</code> 切换，默认 cispo。
+        最后对生成位取平均：<code>(per_token_loss * mask).sum(1) / mask.sum(1)</code>——
+        又见掩码平均，和 M09 移位交叉熵里 -100 不算账是同一门手艺。
+      </p>
+
+      <h3 id="rewards">规则奖励清单：奖励工程的冰山一角</h3>
+      <p>
+        分数从哪来？<a href="codeview/src/minimind_reborn/training/common/rewards.py.html">rewards.py</a>
+        的 <code>rule_reward</code>——一段纯 Python 规则（无任何模型）：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w200">规则</th><th class="u-w130">分数</th><th>意图</th></tr></thead>
+          <tbody>
+            <tr><td>回答长度 20–800 字</td><td>±0.5</td><td>防极短敷衍与无限膨胀</td></tr>
+            <tr><td>think 段 20–300 字</td><td>±1.0</td><td>鼓励"想一下再答"（think 段：M10 模板里的 &lt;think&gt;…&lt;/think&gt;）</td></tr>
+            <tr><td>think 恰好闭合 1 次</td><td>±0.25</td><td>格式纪律</td></tr>
+            <tr><td>3-gram 重复率惩罚（n-gram：连续 n 个词的片段）</td><td>最多 −0.5</td><td>防复读（M16 tiny 生成那种"同一词堆叠"）</td></tr>
+            <tr><td>总分截断</td><td>clamp 到 [-3, 3]</td><td>防单条极端分数主导整组梯度</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        看清楚这些分数衡量的是<b>格式健康度</b>，不是"答对了没有"。填上 <code>reward_model_path</code>
+        可以叠加一个外部奖励模型（RM：专门训出来给回答打分的网络，RLHF 的第一棒）的分数，
+        但 reborn 默认不依赖它。README 那句"规则奖励下无学习信号"的机制至此完整：
+        tiny 随机模型生成的乱码在规则奖励下<b>大量平局</b>（长度都差不多、think 都不合格）——
+        而平局是死组（§zscore 读数②）。
+      </p>
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：奖励从哪来，决定 RL 能走多远</div>
+        <p>
+          奖励设计是工业 RL 的第一难题，三条路线：RM 打分（InstructGPT/ChatGPT 的 RLHF——
+          人类偏好标注训奖励模型，但模型可被钻空子，reward hacking：分数上去了、回答反而变差，
+          比如长度奖励养出啰嗦怪）；规则奖励（本课所见，便宜但没有"对错"信号）；
+          可验证奖励（DeepSeek-R1 的主路线：数学答案对错可以程序判定、代码能跑过测试即得分，
+          verifiable reward 天然难钻空子）。reborn 的 agent 配方里有雏形——真值命中分
+          2.5 × 命中数 ÷ 真值数，就是最小的可验证奖励。
+        </p>
+      </div>
+
+      <h3 id="logread">冒烟日志读法：adv_std 里的平局信号</h3>
+      <p>
+        真跑一把（tiny 冒烟配方，默认 2 步；下面是为了看节奏放大到 6 步的真实输出）：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_grpo.yaml --set train.resume=false --set train.max_steps=6</span>
+<span class="out">10:37:28 | INFO | minimind.train | 配方=smoke_grpo stage=grpo overrides=['train.resume=false', 'train.max_steps=6']</span>
+<span class="out">10:37:29 | INFO | minimind.env | 环境指纹：{"torch": "2.14.0+cu130", "cuda_runtime": "13.0", "gpu": ["NVIDIA GeForce RTX 4090", "NVIDIA GeForce RTX 4090 D"], "seed": 42}</span>
+<span class="out">10:37:30 | INFO | minimind.grpo | Epoch[1/2](1/19502) train/reward=0.0000 train/kl_ref=-0.0006 train/adv_std=1.4139 train/policy_loss=-0.0244 train/avg_response_len=16.5000 lr=5.00e-04</span>
+<span class="out">10:37:30 | INFO | minimind.grpo | Epoch[1/2](2/19502) train/reward=0.5000 train/kl_ref=-0.0402 train/adv_std=0.0000 train/policy_loss=0.0006 train/avg_response_len=21.0000 lr=5.00e-04</span>
+<span class="out">10:37:30 | INFO | minimind.grpo | Epoch[1/2](3/19502) train/reward=0.0000 train/kl_ref=-0.0428 train/adv_std=1.4139 train/policy_loss=0.0441 train/avg_response_len=13.0000 lr=5.00e-04</span>
+<span class="out">10:37:31 | INFO | minimind.grpo | Epoch[1/2](4/19502) train/reward=0.5000 train/kl_ref=-0.0177 train/adv_std=0.0000 train/policy_loss=0.0013 train/avg_response_len=24.0000 lr=5.00e-04</span>
+<span class="out">10:37:31 | INFO | minimind.grpo | Epoch[1/2](5/19502) train/reward=0.0000 train/kl_ref=0.0103 train/adv_std=1.4139 train/policy_loss=0.0233 train/avg_response_len=13.0000 lr=5.00e-04</span>
+<span class="out">10:37:31 | INFO | minimind.grpo | Epoch[1/2](6/19502) train/reward=0.5000 train/kl_ref=0.0533 train/adv_std=0.0000 train/policy_loss=0.0013 train/avg_response_len=24.0000 lr=5.00e-04</span>
+<span class="out">10:37:31 | INFO | minimind.grpo | 达到 max_steps=6 截断（冒烟/调试预算）</span>
+<span class="ok">10:37:31 | INFO | minimind.rl | 已保存 grpo_64.pth（epoch=1 step=6）</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · seed=42 · 存档 runs/smoke_grpo/20261001_103728]</b>
+      全程约 3 秒（含启动；纯 CPU 也能跑）。另注：与 2 步版（存档 runs/smoke_grpo/20261001_103703）相比，
+      前两行逐位相同——同 seed 同数据序，M14 的确定性纪律在 RL 循环里同样成立。</p>
+      <p>四个读数，每个都对回正文：</p>
+      <ul>
+        <li><b>一行 = 一次完整循环。</b>没有单独的 rollout 日志行——每行 <code>Epoch[1/2](k/19502)</code> 背后都是
+          "采样（冒烟配方 N=2、batch=1，即每步采 2 条回答）→ 打分 → 更新"整轮。
+          <code>avg_response_len</code> 就是 rollout 阶段的产物（16.5 = 两条回答的有效长度均值）。
+          这就是 rollout 型训练的日志节奏：一行一个世代，行与行之间模型已经变了。</li>
+        <li><b>adv_std 的交替 1.4139 / 0.0000。</b>N=2 时分数不同 → 优势 ±1 → 无偏 std = √2 ≈ 1.4142（§zscore 读数③的数字本人）；
+          分数相同 → 平局死组 → 0。<b>六个 step 三个是死组</b>——README"无学习信号"的日志画像。</li>
+        <li><b>reward 的 0.0 与 0.5。</b>组均值：偶数步 adv_std=0（平局）且均值 0.5 → 两条各拿 +0.5（都过了长度线，
+          这两步 avg_response_len 21/24 也不短）；奇数步均值恰为 0 → 两条分数互为相反数
+          （规则奖励分值对称，如 +0.5/−0.5 各一条）。</li>
+        <li><b>kl_ref 的绝对值不超过 0.06。</b>策略几乎没离参考模型——平局为主 + 随机基座本来也没什么可保护，KL 锚很闲。
+          真正的 RL 运行里这个数持续上涨时要警惕（奖励钻空子或崩坏前兆）。</li>
+      </ul>
+
+      <h2 id="ppo-agent">PPO 与 Agent 速览</h2>
+      <p>
+        同一个 rollout 引擎、同一份规则奖励、同一个 KL 锚——PPO 与 Agent 是在 GRPO 骨架上换零件。
+        PPO（Proximal Policy Optimization）比 GRPO 老得多（2017，OpenAI），核心差异一张表：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130"></th><th class="u-w200">GRPO（DeepSeekMath 谱系）</th><th>PPO（经典）</th></tr></thead>
+          <tbody>
+            <tr><td><b>基线从哪来</b></td><td>同题 N 条回答的组均值（免费）</td><td>critic 网络预测每个位置的"价值"</td></tr>
+            <tr><td><b>额外网络</b></td><td>无（+冻结参考模型）</td><td>critic + 冻结参考模型</td></tr>
+            <tr><td><b>采样方式</b></td><td>每 prompt N 条（组）</td><td>每 prompt 1 条</td></tr>
+            <tr><td><b>每步更新</b></td><td>1 次</td><td>内循环 minibatch 多次（ppo_update_iters=2）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        三个 PPO 专属词各一句话（够用即可，深潜是番外）。<b>actor-critic</b>：actor（演员）= 被训的策略模型本体，
+        critic（评论员）= 价值网络——reborn 的 <a href="codeview/src/minimind_reborn/training/ppo/critic.py.html">critic.py</a>
+        全文 22 行，M09 的基座接一个标量头，输出每个位置的"从这里往下预计能拿多少分"：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/ppo/critic.py.html">src/minimind_reborn/training/ppo/critic.py</a> · 全文（去 docstring）</span><span class="lang">python</span></div><pre class="code"><code>class CriticModel(MiniMindForCausalLM):
+    """复用基座表征，接一个标量价值头；lm_head 不参与 forward（靠 tie 保持 DDP 满足）。"""
+    def __init__(self, config: MiniMindConfig):
+        super().__init__(config)
+        self.value_head = nn.Linear(config.hidden_size, 1)
+
+    def forward(self, input_ids=None, attention_mask=None, **kwargs):
+        hidden, _aux = self.model(input_ids, attention_mask, None)   # (b, seq, hidden)
+        return self.value_head(hidden).squeeze(-1)                   # (b, seq) 逐位置价值</code></pre></div>
+      <p>
+        组装它的两行也有讲究：<code>load_inference_weights(critic, init, strict=False)</code>——
+        value_head 是新参数随机初始化，其余权重严格对齐 actor 的 SFT 起点；注释里"靠 tie 保持 DDP 满足"
+        回收 M09 的 weight tying（lm_head 与 embedding 共享，不新增参数，DDP 的"每个参数都收到梯度"
+        才成立）。<b>GAE</b>（Generalized Advantage Estimation，γλ）：把"实际奖励"与"critic 预测"按指数
+        混合、从最后一个 token 往回摊的优势估计器——workflow 里那个 <code>for tpos in reversed(range(gen_len))</code>
+        循环。<b>clip</b>：把新旧策略比率钳在 1±ε（GRPO 的 grpo 分支同款形状），
+        防一次更新把策略改得太狠。外加一个 PPO 特有的保险：<b>KL 早停</b>——内循环里近似 KL 超过
+        early_stop_kl=0.25 就放弃本轮剩余更新。它的跨卡版本埋着一个真 bug，猎场见。
+      </p>
+
+      <h3 id="agent">Agent：把工具接进 rollout</h3>
+      <p>
+        <a href="codeview/src/minimind_reborn/training/agent/workflow.py.html">agent/workflow.py</a>
+        把 rollout 从"一次生成"扩成"多轮对话"——模型可以说"我要调工具"，环境执行后把结果拼回上下文，
+        最多 max_turns=3 轮：
+      </p>
+      <pre class="ascii"><code>Agent rollout 的一题（_rollout_single，最多 3 轮）
+
+  prompt（带 6 个工具的 schema，M10 模板 tools 参数） ──► 模型生成
+        ▲                                                  │
+        │                        文本里有 &lt;tool_call&gt;{json}&lt;/tool_call&gt;？
+        │                                  │是                │否 → 收卷
+        │                        execute_tool（6 种查表 mock 工具）
+        │                                  ▼
+        └──── 工具结果以 tool 消息拼回上下文（观测段 mask=0，不学）</code></pre>
+      <p>
+        训练思想浓缩在 <code>_rollout_single</code> 的三行——<b>observation 掩码</b>：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/agent/workflow.py.html">src/minimind_reborn/training/agent/workflow.py</a> · 观测段对齐（节选）</span><span class="lang">python</span></div><pre class="code"><code>response_ids.extend(new_ids)                # 模型生成的话进序列
+response_mask.extend([int(t != tokenizer.eos_token_id) for t in new_ids])  # 它们的 mask=1（要学）
+...
+# marker 技巧：在 assistant 内容尾部塞一个标记串，重新渲染整段对话，
+# 取 marker 之后的增量 token —— 即模板为 tool 消息补上的观测段
+obs_delta = tokenizer(observation, add_special_tokens=False)["input_ids"]
+response_ids.extend(obs_delta)              # 观测也进序列（上下文需要它）
+response_mask.extend([0] * len(obs_delta))  # 但 mask=0：不计损失、不回传梯度
+response_old_logps.extend([0.0] * len(obs_delta))</code></pre></div>
+      <p>
+        为什么？回答序列里现在混着两种 token：<b>模型说的</b>（它生成的动作，好坏要对它记账）
+        和<b>环境塞的</b>（工具返回的观测——不是模型生成的，不该被学成"模型的话"）。
+        这正是 M12 loss mask（prompt 不算账、只对 assistant 回答记账）在 RL 里的化身：
+        梯度只流向策略真正采样的 token。marker 对齐失败会直接 raise
+        （"模板变更需同步 loss 对齐逻辑"）——又是 fail-fast（M04）。
+      </p>
+      <p>
+        最后一句给工具环境：<a href="codeview/src/minimind_reborn/training/agent/tools.py.html">tools.py</a>
+        的 6 个工具全是<b>查表 mock</b>（mock：预置假数据的替身环境——天气 15 城、时间 6 时区、
+        汇率 8 对；可复现的训练环境比真实环境更适合冒烟）；
+        唯一"真计算"的 calculate_math 走 <code>safe_math_eval</code>：把表达式解析成 Python 语法树
+        （AST），只放行白名单里的算术运算与 math 函数、幂运算防爆炸——<b>绝不对模型生成的字符串
+        eval()</b>。让模型递过来的文本直接进 eval 是注入漏洞，这一句是红线。
+      </p>
+      <div class="callout danger">
+        <div class="co-title">🛑 红线：模型生成的字符串永远不进 eval</div>
+        <p>
+          RL 里工具的入参来自模型采样——本质是"不可信输入"。safe_math_eval 用 AST 白名单替换 eval：
+          只认常量、白名单算子与 math 函数，其余语法一律 ValueError。任何把模型输出拼进 shell、
+          SQL、动态 import 的写法，都是给一个正在被奖励信号驱动着探索的模型递 root 权限——
+          它会找到你能给的一切。
+        </p>
+      </div>
+
+      <h2 id="hunt">🔍 猎场：mypy 揪出 PPO 两个真 bug</h2>
+      <p>
+        本课最特别的一次修复：两个 bug 都不是人发现、也不是测试发现，是被<b>静态检查</b>发现的。
+        f8af44d 的提交信息原话："mypy 接入（68→0，顺带修复 PPO all_reduce 透传与 rollout
+        is_available 两个真 bug）"。先看档案：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">git show f8af44d --stat | head -8 &amp;&amp; git show f8af44d --stat | tail -1</span>
+<span class="out">commit f8af44d01f2a8d8212a45dcbb231296cfa03ebc8</span>
+<span class="out">Author: reborn &lt;reborn@local&gt;</span>
+<span class="out">Date:   Thu Sep 24 22:47:33 2026 +0800</span>
+<span class="out"></span>
+<span class="out">    fix(quality): ml-dev-spec 审计修复——版本单源化(importlib.metadata)、assert→ValueError×2、MFU 入日志(train/mfu_est)、mypy 接入(68→0，顺带修复 PPO all_reduce 透传与 rollout is_available 两个真 bug)、py.typed 入 wheel、CUDA 侧流预取(training §8)、运行时入口(线程数/NOFILE)、死代码清理×3；60 轮次稳定性实测通过</span>
+<span class="out"> src/minimind_reborn/training/ppo/workflow.py    |  21 +-   ← 猎场现场 1</span>
+<span class="out"> src/minimind_reborn/training/rollout.py         |  12 +-   ← 猎场现场 2</span>
+<span class="out"> src/minimind_reborn/utils/dist.py               |  11 +-   ← 修复落点</span>
+<span class="ok"> 31 files changed, 513 insertions(+), 94 deletions(-)</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · Reproduce/minimind_reborn 仓库 git 档案]</b>
+      mypy（Python 的静态类型检查器：不运行代码，只读代码与类型标注，就能查出"这个名字根本不存在"一类错误）。</p>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡 ×2：写在多卡分支里的 AttributeError</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            <b>Bug 1（PPO all_reduce 透传）</b>：KL 早停那行写的是
+            <code>dist.all_reduce(kl_val, op=dist.ReduceOp.AVG)</code>——这里的 <code>dist</code> 是 reborn
+            自己的封装模块（M15），修复前它只有 <code>all_reduce_mean</code>，根本没有
+            <code>all_reduce</code>/<code>ReduceOp</code> 这两个名字。双卡训练一走到这行就 AttributeError。
+            <b>为什么一直没炸？</b>全部测试与冒烟都是单卡——<code>dist</code> 未初始化，整个
+            <code>if dist.is_initialized()</code> 分支不进。<b>多卡分支是测试盲区</b>。
+          </li>
+          <li class="cause">
+            <b>Bug 2（rollout is_available）</b>：SGLang 引擎的 <code>update_policy</code> 写的是
+            <code>DistributedDataParallel.is_available()</code>——DDP 这个类根本没有此方法
+            （torch 2.14 实测 <code>hasattr(...) == False</code>），正确写法是
+            <code>torch.distributed.is_available()</code>。触发场景：sglang 引擎 × 任意卡数——
+            同样是"主线从不经过的路径"（默认引擎是 torch）。
+          </li>
+          <li class="fix">
+            修复只有几行：<code>utils/dist.py</code> 加两行透传
+            （<code>all_reduce = dist.all_reduce; ReduceOp = dist.ReduceOp</code>，业务代码仍经本模块访问分布式原语）、
+            is_available 改指 torch.distributed。回归锁定是 <code>make quality</code>（内含
+            <code>uv run mypy</code>）——作者实测今跑：<code>Success: no issues found in 68 source files</code>，
+            68 与提交信息里的"68→0"对上。
+          </li>
+        </ul>
+      </div>
+      <p>
+        通用教训：<b>测试覆盖行为，静态检查覆盖"名字存在性"</b>——两者互补而非替代。
+        越是难跑的分支（多卡、外部服务、罕见配置），测试越难触及，mypy 的边际价值越高；
+        而它查这类 bug 的成本是零（不跑代码）。顺手把 KL 早停为什么需要 all_reduce 讲完
+        （all_reduce：M15 见过的集合通信原语——每张卡各交出一个数，换回一个聚合值，这里取平均）：
+        双卡各自算 KL，若一张卡决定停、另一张继续，两边 backward 的集合通信（M15 的梯度同步）次数
+        对不上，就是<b>死锁</b>（deadlock：两边互相等对方的通信，永远卡住）——所以先 all_reduce
+        求全卡平均，让"停不停"的决定在所有卡上一致。修复前这一行根本执行不到，等于双卡 PPO
+        从未真正可用，而没有任何测试知道这件事。
+      </p>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · GRPO 为什么不需要价值网络（critic）？代价是什么？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>因为基线换成了"组均值"：同一 prompt 的 N 条回答天然处在同一难度水平，它们的平均分就是免费的基线——优势 = 分数 − 组均值再除组标准差（z-score）。PPO 里这个基线要靠 critic 网络逐位置预测，网络本身要训练、要显存。代价两条：①每题必须采 N 条回答（采样本是 RL 最贵阶段）；②组内全同分（平局）时 std=0、优势全零，该组对策略零梯度——奖励区分度不够时 GRPO 直接失去信号（冒烟日志里一半 step 是死组）。</p>
+            <p class="back">答错回看：<a href="#zscore">组内 z-score</a> 与 <a href="#logread">日志读法</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · rollout 引擎为什么抽象成 Protocol（协议），这个设计买到了什么？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>Protocol 是结构化接口：不要求继承，只要 rollout()/update_policy() 签名对得上即可互换。买到三样：①<b>可插拔</b>——TorchRolloutEngine（单卡/小模型，直接调 M06/M20 那套 generate）与 SGLangRolloutEngine（HTTP 服务化、磁盘热更新权重）零耦合并存，配方 <code>rollout_engine</code> 一个键切换；②<b>权重同步有明确钩子</b>——update_policy 是"采样引擎拿到最新受训权重"的契约，sglang 版失败会 raise 中止训练（失配的 rollout 全是白算）；③M20 要深潜的推理栈正是 torch 版地基，协议让"教学级实现"与"工业级实现"共享同一批消费方。</p>
+            <p class="back">答错回看：<a href="#protocol">RolloutEngine 协议精读</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · Agent 训练里，工具返回的观测 token 为什么 mask=0？和 M12 的 loss mask 什么关系？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>因为观测不是模型生成的——它是环境塞进上下文的文字。RL 的梯度应该只调整"策略真正采样的 token"（模型说的话），若观测位也计损失，模型会被训练去模仿工具输出（把天气报文当成自己的话学），优势信号就串味了。这与 M12 的 loss mask 同一思想：SFT 里 prompt 与填充位不算账（-100）、只对 assistant 回答记账——都是"账本只记该学的位置"。实现上观测 token 经 marker 技巧从模板增量对齐出来，对齐失败直接 raise（fail-fast）。</p>
+            <p class="back">答错回看：<a href="#agent">Agent：把工具接进 rollout</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · PPO 的 KL 早停为什么必须先跨卡 all_reduce 再比较？f8af44d 修的是什么？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>早停是个"分支决定"：若一张卡 KL 超阈值停了、另一张继续更新，两边 backward 的集合通信次数不一致 → DDP 死锁。所以先 all_reduce 求全卡平均 KL，让所有卡拿到同一个数、做同一个决定。f8af44d 修的是：这行调用的 dist.all_reduce / dist.ReduceOp 在 utils/dist 封装里根本不存在（只有 all_reduce_mean），双卡一跑到就 AttributeError——但因为所有测试和冒烟都是单卡（分支不进），一直没被发现，由 mypy 静态查出。教训：测试覆盖行为，静态检查覆盖名字存在性；多卡/外部服务分支是测试盲区。</p>
+            <p class="back">答错回看：<a href="#hunt">猎场：mypy 揪出两个真 bug</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · 预测：采样温度越高，组内方差越大，优势信号就越强吗？</div>
+        <div class="ex-body">
+          <p>
+            直觉上：温度（M02 的旋钮）越高，N 条回答越发散，奖励分数应该拉开，z-score 优势的"信号"就更强。
+            先别跑——从公式 $A_i=(r_i-\bar r)/(\mathrm{std}+\epsilon)$ 出发推一遍，写下你的预测
+            （提示：分子分母是同一条分数轴上的两个统计量），再用一行命令验证：
+          </p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "</span>
+<span class="cmd">import torch</span>
+<span class="cmd">adv = lambda rs: ((r := torch.tensor(rs, dtype=torch.float32)) - r.mean()) / (r.std(unbiased=False) + 1e-4)</span>
+<span class="cmd">print('基准组    ：', [round(x,3) for x in adv([0.5, 0.4]).tolist()])</span>
+<span class="cmd">print('温差x3   ：', [round(x,3) for x in adv([1.5, -1.2]).tolist()])</span>
+<span class="cmd">print('高温全平局：', [round(x,3) for x in adv([0.5, 0.5, 0.5, 0.5, 0.5, 0.5]).tolist()])"</span></code></pre>
+          <div class="ex-predict"></div>
+          <p>写下预测：① 温差 ×3 后优势会变大约 3 倍吗？② "高温但全部同分"的组，优势长什么样？</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>作者实测（同环境）：</p>
+            <pre class="term"><code><span class="out">基准组    ： [0.998, -0.998]</span>
+<span class="out">温差x3   ： [1.0, -1.0]</span>
+<span class="out">高温全平局： [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</span></code></pre>
+            <p>
+              <b>机制：</b>①预测"信号×3"不成立——z-score 是<b>尺度不变</b>的：分数差距放大 3 倍，
+              均值与标准差同步放大，优势还是 ±1（这正是 GRPO 对奖励绝对刻度免疫的原因，
+              也意味着"把奖励乘个大系数让训练更猛"在 z-score 世界里是徒劳的）。
+              ②高温全平局优势全零——<b>温度真正影响的是"能不能分出胜负"，不是"分差多大"</b>：
+              温度高让回答更多样，若奖励有区分度则平局更少（活组更多）；但规则奖励只看格式时，
+              更样多的乱码反而更容易同分——全是死组。<b>RL 想有信号，先让奖励能分胜负，
+              其余都是次要的。</b>（顺带一提：训练里温度固定 0.8，本练习是纯公式侧的变式。）
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M19 验收：smoke_grpo 黑箱跑通 + RL 前三问自查</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下两步。第一步，RL 数据就位（rlaif_mini 提示集 + agent 轨迹）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">make download-rl</span>
+<span class="out">uv run python tools/download_data.py --name rlaif_mini</span>
+<span class="out">已存在，跳过：/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/rlaif.jsonl</span>
+<span class="out">uv run python tools/download_data.py --name agent_rl_mini</span>
+<span class="ok">已存在，跳过：/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/agent_rl.jsonl</span></code></pre>
+          <p class="prov"><b>[作者实测 · 2026-10-01]</b> 数据已在库（rlaif.jsonl 19,502 行，M12 注册表里的 rlaif_mini），
+          下载器幂等跳过；首次需要真下载时它从 modelscope 拉取（需 <code>uv sync --extra download</code>）。</p>
+          <p>第二步，GRPO 冒烟黑箱跑通（tiny 模型，GPU/CPU 均可，秒级）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_grpo.yaml --set train.resume=false</span>
+<span class="out">10:37:03 | INFO | minimind.train | 配方=smoke_grpo stage=grpo overrides=['train.resume=false']</span>
+<span class="out">10:37:06 | INFO | minimind.grpo | Epoch[1/2](1/19502) train/reward=0.0000 train/kl_ref=-0.0006 train/adv_std=1.4139 train/policy_loss=-0.0244 train/avg_response_len=16.5000 lr=5.00e-04</span>
+<span class="out">10:37:06 | INFO | minimind.grpo | Epoch[1/2](2/19502) train/reward=0.5000 train/kl_ref=-0.0402 train/adv_std=0.0000 train/policy_loss=0.0006 train/avg_response_len=21.0000 lr=5.00e-04</span>
+<span class="out">10:37:06 | INFO | minimind.grpo | 达到 max_steps=2 截断（冒烟/调试预算）</span>
+<span class="ok">10:37:06 | INFO | minimind.rl | 已保存 grpo_64.pth（epoch=1 step=2）</span></code></pre>
+          <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · seed=42 · 存档 runs/smoke_grpo/20261001_103703]</b>
+          全程约 3 秒。注意这证明的是"管线通"：权重从随机初始化出发（smoke 配方 init_from: null）、
+          奖励无学习信号（README 已知短板）——冒烟级验收本就以此为限。</p>
+          <ul class="pass-criteria">
+            <li>两行 <code>Epoch</code> 日志各含五指标（reward / kl_ref / adv_std / policy_loss / avg_response_len）——一行一次完整 rollout+更新；</li>
+            <li>末尾出现 <code>达到 max_steps=2 截断</code> 与 <code>已保存 grpo_64.pth</code>（RLSession 落盘成功）；</li>
+            <li>至少一个 step 的 <code>adv_std</code> 非零且接近 1.414（N=2 分出胜负的 √2），至少一个为 0（平局死组）——两个信号都在场才算读懂了这行日志。</li>
+          </ul>
+          <h3>训 RL 前先问自己三个问题（自查卡）</h3>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th class="u-w130">问题</th><th>看哪里（reborn 对应物）</th></tr></thead>
+              <tbody>
+                <tr><td><b>① 奖励信号从哪来？</b></td><td><code>reward_model_path</code>（RM）还是规则？奖励能"分出胜负"吗——平局占比高 = 没有学习信号（看 adv_std=0 的比例）。要真信号，考虑可验证奖励（agent 配方的真值命中分）。</td></tr>
+                <tr><td><b>② 策略离参考模型多远？</b></td><td>看 <code>train/kl_ref</code> 与 β（KL 锚强度）/ early_stop_kl：持续上涨是 reward hacking 或崩坏前兆；策略漂移过大，语言能力（SFT 的家底）会被冲掉。</td></tr>
+                <tr><td><b>③ rollout 引擎拿的是最新权重吗？</b></td><td><code>update_policy</code> 钩子：torch 版换引用（免费），sglang 版磁盘热更新（失败即 raise 中止）。采样与训练权重失配，所有 rollout 白算。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <details>
+            <summary>失败了怎么办？（按症状分流）</summary>
+            <p>
+              <b>FileNotFoundError: …/rlaif.jsonl</b> → 数据没就位：检查 MINIMIND_REBORN_DATA_ROOT
+              指向或跑 make download-rl（首次需 <code>uv sync --extra download</code>）；
+              <b>显存不足（64M 配方）</b> → batch_size 降到 1、max_gen_len 减半——采样阶段的
+              b×N×生成长度是显存大头；<b>ModuleNotFoundError: requests/sglang 相关</b> →
+              你把 rollout_engine 切到了 sglang：需要额外依赖与外部推理服务，教学主线用默认 torch；
+              <b>日志 adv_std 恒为 0</b> → 不是 bug：平局死组（规则奖励 + 随机/tiny 模型的常态），
+              回<a href="#logread">日志读法</a>；<b>mypy 报错</b> → 你改动了 RL 代码且引入了名字/类型问题，
+              这正是猎场的防线在工作，按提示修而不是绕过。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        RL 三个 workflow 的每一次采样，走的都是 TorchRolloutEngine 里那一行
+        <code>generate(model, ...)</code>——温度采样、top_p、eos 停止、KV cache 预分配，
+        全是推理栈的完整调用。M20 把这套 rollout 引擎的地基拆开看：采样纯函数链的契约、
+        三重停止、预分配推理与 engine 门面，还有 M02 埋下的 chat 签名 bug 的深修。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>rollout <span class="en">试走一局</span></dt><dd>让当前策略对 prompt 采样出 N 条完整回答再训练的循环：生成 → 打分 → 算优势 → 更新，用刚更新的模型继续采（on-policy：采样者即受训者）。与监督训练的区别：batch 是模型现场生成的，信号来自后果而非标准答案。</dd>
+          <dt>RolloutEngine <span class="en">rollout 引擎协议</span></dt><dd>rollout()/update_policy() 两个方法的结构化接口（Protocol：同签名即可互换，不要求继承）。torch 实现直调推理栈（M20 地基），SGLang 实现走 HTTP + 磁盘热更新；配方 rollout_engine 一个键切换。update_policy 是"采样引擎拿到最新权重"的契约。</dd>
+          <dt>completion <span class="en">生成段</span></dt><dd>rollout 采出的回答：prompt 之后的生成 token 序列。RolloutResult 把它连同逐 token logp（采样时刻的概率快照，重要性比率的分母）与有效位掩码一起带回训练侧。</dd>
+          <dt>组相对优势 <span class="en">GRPO advantage</span></dt><dd>z-score 组内标准分：A=(r−组均值)/(组标准差+ε)。同一 prompt 的 N 条回答互为基线，省掉价值网络；尺度不变（奖励整体放大不改变优势）；全组平局则优势全零（死组）。DeepSeekMath 提出，DeepSeek-R1 发扬。</dd>
+          <dt>规则奖励 <span class="en">rule-based reward</span></dt><dd>纯 Python 规则打分：长度 ±0.5、think 段 ±1.0、闭合 ±0.25、重复惩罚 ≤0.5，总分 clamp [-3,3]。衡量格式健康度而非对错——reborn 冒烟"无学习信号"的根源。对照：RM 打分（RLHF）与可验证奖励（R1，程序判对错）。</dd>
+          <dt>actor-critic <span class="en">演员-评论员</span></dt><dd>PPO 的双网络结构：actor=被训的策略（LLM 本体）；critic=价值网络（基座+标量头），逐位置预测"从这里往下预计拿多少分"，供 GAE 算优势。GRPO 用组均值替代 critic。</dd>
+          <dt>GAE <span class="en">γλ 优势估计</span></dt><dd>把实际奖励与 critic 预测按指数混合、从最后一个 token 反向累积的优势估计器（PPO workflow 里那个 reversed 循环）。本课只需知道：PPO 的优势来源，GRPO 不用。</dd>
+          <dt>observation 掩码 <span class="en">观测掩码</span></dt><dd>Agent RL 里对工具返回 token 置 mask=0（不计损失、不回传梯度）：观测是环境塞的，不是模型生成的，不该被学成模型的话。M12 loss mask（-100 不算账）在 RL 里的化身；靠 marker 模板增量对齐，失败即 raise。</dd>
+          <dt>KL 锚 <span class="en">KL penalty to reference</span></dt><dd>按 β 对"策略偏离冻结参考模型（M17）"逐 token 收罚金，k3 估计 exp(Δ)−Δ−1 恒非负。防 RL 把 SFT 家底冲掉；PPO 另有 KL 早停（跨卡 all_reduce 平均后同进退，防 DDP 死锁）。</dd>
+          <dt>AST 白名单求值 <span class="en">safe_math_eval</span></dt><dd>把表达式解析成 Python 语法树（AST），只放行白名单算子与 math 函数、幂运算防爆炸——模型生成的字符串永远不进 eval()。对不可信输入的静态防线（tools.py）。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+  };
+</script>
+<script async src="assets/vendor/tex-svg.js"></script>
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>

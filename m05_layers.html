@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M05 · 地基件：RMSNorm 与 RoPE | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=3">
+</head>
+<body data-module="m05">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第二篇 模型：造</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M05</span><span>第二篇 · 模型：造</span></div>
+        <h1>地基件：RMSNorm 与 RoPE</h1>
+        <p class="lede">
+          M04 的配置系统交来一张零件清单：hidden_size=768、8 个注意力头、head_dim=96。从这一课起照单造零件——
+          先造两个最小也最要紧的<b>地基件</b>：RMSNorm 管每个向量的<b>幅度</b>，RoPE 管词与词的<b>距离</b>。
+          它们加起来不到 70 行代码，却是 64M 模型每层都要踩两遍的地基。造完贴回 M03 的⑤站地图。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>M04</b>（M03 的⑤站图建议在手边）</span>
+          <span class="chip">时长：<b>约 75 分钟</b></span>
+          <span class="chip">新概念：<b>RMSNorm · 旋转位置编码（RoPE）</b></span>
+          <span class="chip">对照：<code>models/layers.py</code> · <code>tests/test_models/test_rope_scaling.py</code> · <code>models/config.py</code></span>
+        </div>
+      </header>
+
+      <h2 id="objectives">学完你能</h2>
+      <ul>
+        <li>说出 RMSNorm 与 LayerNorm 的两点差异（去均值、去偏置），解释为什么现代 LLM 甘愿"少一次统计"；</li>
+        <li>复现 bf16 直算 vs fp32 纪律的误差实验，用实测数字辩护"<b>敏感算子精度纪律</b>"（M07/M17 复用）；</li>
+        <li>手推 $R(m\theta)^\top R(n\theta)=R((n-m)\theta)$，用真跑脚本验证"同距离、换起点，内积不变"；</li>
+        <li>沿 freqs <code>(end, dim/2)</code> → cos/sin <code>(end, dim)</code> → q/k <code>(B, T, H, D)</code> 的 shape 链路读懂两个 RoPE 函数；</li>
+        <li>讲清 YaRN 折叠深读里"常数曾是 2048"为什么是 bug（真实训练窗 380），把 <code>test_rope_scaling.py</code> 的 6 个测试当回归锚点。</li>
+      </ul>
+
+      <h2 id="map">从尺寸到零件：⑤站的第一块砖</h2>
+      <p>
+        造零件的原料已在手：M04 的守门人把 <code>ModelConfig</code> 换算成 <code>MiniMindConfig</code>（768 宽、8 层、
+        8 个 query 头 / 4 个 KV 头、head_dim=96、词表 6400）。M03 ⑤站画过 Block 图纸——<b>先归一化再进子层的
+        残差结构</b>（pre-norm：<code>x + attn(norm(x))</code>）。本课拆图纸里最靠边的两个构件：
+      </p>
+      <pre class="ascii"><code>Block 内部（model.py:28-48，即 M03 ⑤站图纸；【M05】= 本课覆盖，GQA/SwiGLU 分别归 M07/M08）
+
+x  ──┬──────────────────────────────┐
+     └─►【M05】RMSNorm ─► Attention ─►(+)      x + attn(norm(x))
+                            ↑
+                            └─【M05】RoPE 在 q/k 打分前旋转（attention.py:68）
+x₁ ──┬─────────────────────────────┐
+     └─►【M05】RMSNorm ─► FFN(SwiGLU)─►(+)     x₁ + ffn(norm(x₁))      ← SwiGLU 是 M08
+
+8 层全部结束后，出口处还站着第 17 个 RMSNorm（model.py:63）——全模型共 2×8+1 = 17 个</code></pre>
+      <p>
+        全部家当在 <a href="codeview/src/minimind_reborn/models/layers.py.html"><code>models/layers.py</code></a>，
+        98 行、4 个部件：<code>RMSNorm</code>（管幅度，全模型 17 处）、<code>precompute_freqs_cis</code> +
+        <code>apply_rotary_pos_emb</code>（位置 → 旋转 → 施加到 q/k，含 YaRN 折叠深读）、<code>repeat_kv</code>
+        （KV 头扩张，M07 的主角，本课只看一眼形状）。
+      </p>
+      <p class="prov"><b>[事实核对]</b> 行数与行号来自 <code>wc -l</code> 与源码逐行核对（layers.py 98 行；17 个 RMSNorm = 每层 2 个（model.py:28-29）× 8 层 + 出口 1 个（model.py:63））。</p>
+
+      <h2 id="rmsnorm">RMSNorm：少一次统计的归一化</h2>
+
+      <h3 id="rmsnorm-why">它到底归一化了什么</h3>
+      <p>
+        <b>归一化（normalization）</b>指按向量自身的统计量把它缩放、让幅度可控的一层操作——训练几十万步后
+        各层幅度会漂移，不压住后面的乘法越乘越炸。经典做法 LayerNorm（PyTorch 自带的 <code>nn.LayerNorm</code>，
+        2020 年前 Transformer 的标配）与 RMSNorm 对照：
+        $$ \text{LayerNorm}(x) = \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} \cdot \gamma + \beta \qquad\quad \text{RMSNorm}(x) = \frac{x}{\sqrt{\tfrac{1}{d}\textstyle\sum_i x_i^2 + \epsilon}} \cdot \gamma $$
+        差异就两处：<b>不减均值</b>（$\mu$ 整个消失），<b>没有偏置 β</b>。RMS 是 root mean square（均方根），
+        向量的"典型幅度"。
+      </p>
+      <div class="callout tip">
+        <div class="co-title">💡 直觉：RMSNorm 只管"长度"，不管"原点"</div>
+        <p>
+          除以 RMS 后，向量长度被拉到 $\sqrt{d}$（768 维 ≈ 27.7），<b>方向一丝不变</b>——而注意力真正关心的恰恰是方向
+          （打分靠内积，方向决定语义）。为什么敢把减均值砍掉？经验答案是：对 Transformer 效果几乎不掉
+          （RMSNorm 原始论文 <a href="https://arxiv.org/abs/1910.07467" target="_blank" rel="noopener">arXiv:1910.07467</a> 的核心实验），
+          而均值偏移这类"整体平移"可以被下一层的线性变换自然吸收。省下一次均值统计、一次减法、一个偏置参数——
+          768 维 × 17 处 × 每步前向，LLaMA、Qwen、DeepSeek 系全线换装。
+        </p>
+      </div>
+
+      <h3 id="rmsnorm-code">精读：14 行的 RMSNorm</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/layers.py.html">src/minimind_reborn/models/layers.py</a> · RMSNorm 类全文</span><span class="lang">python</span></div><pre class="code"><code>class RMSNorm(nn.Module):
+    """RMSNorm：fp32 归一化后回落输入精度。"""
+
+    def __init__(self, dim: int, eps: float = 1e-5):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))  # 逐维缩放 γ，初始全 1（等于"先不缩"）
+
+    def _norm(self, x: torch.Tensor) -&gt; torch.Tensor:
+        # x: (..., dim) —— 最后一维是 768；逐行（每个 token 位置）独立归一化
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+
+    def forward(self, x: torch.Tensor) -&gt; torch.Tensor:
+        return (self.weight * self._norm(x.float())).type_as(x)</code></pre></div>
+      <p>
+        三个读点。① <code>weight</code> 是这个层<b>唯一</b>的可学习参数（768 个数），这就是"无 β"的代码形态；
+        ② <code>eps</code>（epsilon，数值稳定小量）防分母为零——函数默认 1e-5，但 64M 模型实际传的是
+        <code>config.rms_norm_eps=1e-6</code>（config.py:34，变式练习 2 专门拆它）；
+        ③ <code>forward</code> 那一行的 <code>.float()</code> 与 <code>.type_as</code>，是下面整节的大知识点。
+      </p>
+
+      <h3 id="fp32">fp32 纪律：为什么先 .float() 再 type_as</h3>
+      <p>
+        先补背景：<b>bf16</b>（bfloat16，brain float 16）是 16 位浮点——8 位指数 + 7 位尾数。指数位宽与
+        fp32（32 位单精度浮点）相同，<b>动态范围</b>不缩水；但尾数只有 7 位显式（fp32 是 23 位），
+        <b>精度</b>只剩约 $2^{-8} \approx 0.4\%$。训练配方 <code>dtype: bf16</code>（M04）与 GPU 推理都用它省一半显存与带宽。
+        问题在于：<b>归一化是"用小数除小数"的精密活</b>，<code>mean(x²)</code> 与 <code>rsqrt</code> 在 bf16 里逐级舍入，
+        误差直接乘进每个输出元素。reborn 的对策写在 <code>forward</code> 单行里：<b>统计升 fp32 算，
+        算完 <code>type_as</code> 回落原精度</b>——存储不变、带宽不涨，只有计算中间态升精度。
+        真跑对比（脚本与 <code>_norm</code> 相同，只换精度路径）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m05_exp_bf16.py · bf16 直算 vs fp32 纪律</span><span class="lang">python</span></div><pre class="code"><code>import torch
+torch.manual_seed(0)
+eps = 1e-5
+def norm(x):                                    # 与 layers.py 的 _norm 相同
+    return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
+
+dev = "cuda" if torch.cuda.is_available() else "cpu"
+h = (torch.randn(8192, 768) * 30).to(dev)       # 模拟训练后期的 hidden（std=30），(8192, 768)
+x = h.bfloat16()                                # 全 bf16 模型里 RMSNorm 的真实输入
+ref    = norm(h.double()).float()               # fp64（双精度）参考答案
+direct = norm(x).float()                        # 无纪律：统计量在 bf16 里算
+discip = norm(x.float()).bfloat16().float()     # reborn：升 fp32 算完回落
+for name, out in [("bf16 直算", direct), ("fp32 纪律", discip)]:
+    print(f"{dev} · {name}: max_abs={(out-ref).abs().max():.4f} rel={(out-ref).norm()/ref.norm()*100:.3f}%")
+r64 = torch.rsqrt(h.double().pow(2).mean(-1, keepdim=True) + eps)
+print("scale 因子误差: bf16 %.4f%%  fp32 %.4f%%" % (
+    ((torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps).double() - r64).abs() / r64).max() * 100,
+    ((torch.rsqrt(x.float().pow(2).mean(-1, keepdim=True) + eps).double() - r64).abs() / r64).max() * 100))</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m05_exp_bf16.py</span>
+<span class="out">cuda · bf16 直算: max_abs=0.0452 rel=0.321%</span>
+<span class="out">cuda · fp32 纪律: max_abs=0.0298 rel=0.235%</span>
+<span class="out">scale 因子误差: bf16 0.4880%  fp32 0.0405%</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 同一 bf16 输入，唯一变量是统计量在哪算。最锐利的证据是第三行 <b>scale 因子</b>（$\mathrm{rsqrt}(\mathrm{mean}(x^2)+\epsilon)$，每行一个的缩放系数）：bf16 直算误差 0.4880%、fp32 纪律 0.0405%，差 12 倍——约一个 bf16 最低位（$2^{-8}$≈0.39%）。输出误差 0.321% vs 0.235% 看似接近，因为输出本身要回落成 bf16（量化地板约 0.2%，躲不掉）；纪律的价值是不在地板上再叠一层可避免的误差。CPU 复跑同脚本逐位相同——这条链的舍入行为在 torch 2.14 的 CPU/CUDA 内核上一致。</p>
+      <div class="callout tip">
+        <div class="co-title">💡 概念卡：敏感算子精度纪律（fp32 纪律）</div>
+        <p>
+          <b>存储用低精度，敏感计算升 fp32，算完回落。</b>"敏感"指做除法/开方/求和归约、输入可能是极小数的算子：
+          归一化、位置编码、attention 打分、对数概率。layers.py 模块注释的纪律原文：
+          <i>"norm、rotary 等半精度下易失稳的算子显式升 fp32 计算、算完 <code>type_as</code> 回落——写法固定在此处，
+          不依赖 autocast 内部行为"</i>（autocast：PyTorch 混合精度上下文，自动决定哪些算子降 bf16）。
+          这是本课程三次相遇的第一个：M07 的 attention 打分（attention.py:113 的 <code>.float()</code>）、
+          M17 的 DPO 对数概率——同一思想，三处复用。
+        </p>
+      </div>
+
+      <h2 id="rope">RoPE：用旋转角度编码位置</h2>
+
+      <h3 id="rope-why">直觉先行：模型天然不知道词序</h3>
+      <p>
+        embedding（M03 ②站：把 token id 变成向量的那张查找表）只认词本身，不认位置——
+        "我打他"和"他打我"送进去是<b>同一袋向量</b>。注意力打分又只看内积（dot product：两向量对应元素相乘再求和）。
+        没有位置信息，"我"和"他"谁在前，打分完全不知道。
+      </p>
+      <p>
+        RoPE（Rotary Position Embedding，旋转位置编码，<a href="https://arxiv.org/abs/2104.09864" target="_blank" rel="noopener">arXiv:2104.09864</a>）
+        的方案一句话：<b>按 token 的位置把 q、k 向量旋转一个角度——位置每走一步多转一点；
+        旋转后的内积只依赖两位置的差</b>。这里 q（query）和 k（key）是注意力里每个词自带的一对向量，
+        词与词的相关性打分就是 q·k——M07 的主角，本课只需要这一句。
+      </p>
+      <div class="callout tip">
+        <div class="co-title">💡 直觉：表盘上的指针</div>
+        <p>
+          把一对维度看成一个表盘上的指针，RoPE 就是"位置每 +1，指针多转固定角度"。两个词打分时，
+          先把各自的指针转到位再比对夹角——<b>夹角只取决于两针各转了多少的"差"</b>，与从几点开始转无关。
+          "我打他"里（我，他）距离 2 与"他打我"里（他，我）距离 −2 撞出两种不同夹角图案，词序就这样进了打分。
+          早期 GPT 的做法是把位置 id 变成向量<b>加进</b> embedding（绝对位置编码）；RoPE 不加参数、
+          只在 attention 内部旋转，长文本外推也更从容（见 YaRN 折叠深读）。
+        </p>
+      </div>
+
+      <h3 id="rope-freqs">精读 precompute_freqs_cis：把"位置×角度"提前算成表</h3>
+      <p>
+        旋转需要的 cos/sin 只依赖配置（维度、位置数、base），与输入无关——所以<b>预计算成表，前向只查表</b>
+        （M03 ⑤站见过的 <code>self.freqs_cos[cache_start : cache_start+seq]</code> 切片就是它）。核心骨架：
+      </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/layers.py.html">src/minimind_reborn/models/layers.py</a> · precompute_freqs_cis（YaRN 分支见折叠深读）</span><span class="lang">python</span></div><pre class="code"><code>def precompute_freqs_cis(dim, end=32768, rope_base=1e6, rope_scaling=None):
+    """预计算 RoPE 的 cos/sin 表，形状 (end, dim)，sin/cos 各重复一半以对齐 rotate_half。"""
+    # dim//2 个步进角 θ_i = base^(-2i/dim)：i=0 → 1 弧度/步，i 越大转得越慢
+    freqs = 1.0 / (rope_base ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+    ...                                    # ← rope_scaling 分支：YaRN 折叠深读
+    t = torch.arange(end)                  # 位置 0..end-1
+    angles = torch.outer(t, freqs).float() # (end, dim//2)：每个位置 × 每个步进角
+    # cos/sin 各自重复一半拼成 (end, dim)：前半 = 后半，为对齐下面的 rotate_half
+    freqs_cos = torch.cat([torch.cos(angles), torch.cos(angles)], dim=-1)  # (end, dim)
+    freqs_sin = torch.cat([torch.sin(angles), torch.sin(angles)], dim=-1)  # (end, dim)
+    return freqs_cos, freqs_sin</code></pre></div>
+      <p>
+        shape 链路第一步：<code>freqs</code> 是 <code>(dim/2,)</code> 的步进角，<code>torch.outer(位置, 步进角)</code> 摊成
+        <code>(end, dim/2)</code> 的角度矩阵，cos/sin 各重复一半后成为 <code>(end, dim)</code>。注意 <code>dim</code> 是
+        <b>head_dim=96</b>（旋转发生在每个注意力头内部，不是 768 整根向量），64M 模型即 48 个旋转对。
+        实测 dim=8 时的 4 个步进角：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "import torch; dim=8; print([round(v,6) for v in (1.0/(1e6**(torch.arange(0,dim,2)[:dim//2].float()/dim))).tolist()])"</span>
+<span class="out">[1.0, 0.031623, 0.001, 3.2e-05]</span></code></pre>
+      <p>
+        第 0 对每步转 1 弧度（约 6 步一圈——快指针，编码近距离），最后一对每步 0.000032 弧度
+        （约 20 万步一圈——慢指针，编码远距离）。48 个指针以 <code>rope_theta=1e6</code>（config.py:35）
+        为底按几何级数排开转速，不同距离的词对撞出不同"夹角图案"。cos/sin 为什么<b>重复一半</b>？
+        答案在下一个函数的 <code>rotate_half</code> 里。
+      </p>
+      <p>
+        这两张表住在模型里（model.py:64-73 用 <code>register_buffer("freqs_cos", …, persistent=False)</code> 注册）。
+        <b>buffer</b> 是"跟着模型走设备、但不参与训练"的张量；<b>非持久</b>（persistent=False）意味着不进
+        state_dict（torch.save 保存的参数字典，M02 加载权重时见过的那种）——因为它是<b>派生数据</b>，只依赖
+        config，加载时重算即可。64M 模型两张表各 (32768, 96) fp32、共 24.0 MiB，而 <code>pretrain_768.pth</code>
+        才 131.3 MiB——落盘则每个 checkpoint 白胖 18%。代价是：transformers ≥5.x 用 meta 设备（只建形状
+        不占内存的虚拟设备）初始化模型时会丢非持久 buffer，model.py:75-90 为此留了重建兜底——
+        M09 的猎场就从这里开挖。
+      </p>
+      <p class="prov"><b>[作者实测 · 2026-09-30]</b> 表形状/dtype 与字节数由 <code>precompute_freqs_cis(dim=96, end=32768, rope_base=1e6)</code> 实跑核对；checkpoint 大小来自 <code>os.path.getsize('out/pretrain_768.pth')</code>。</p>
+
+      <h3 id="rope-apply">精读 apply_rotary_pos_emb：rotate_half 的障眼法</h3>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/layers.py.html">src/minimind_reborn/models/layers.py</a> · apply_rotary_pos_emb 全文</span><span class="lang">python</span></div><pre class="code"><code>def apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim: int = 1):
+    """对 q/k 施加 RoPE。
+    q, k: (b, seq, heads, head_dim)；cos, sin: (seq, head_dim) → 在 head 维前 unsqueeze。"""
+
+    def rotate_half(x):
+        # (b, seq, heads, head_dim) 前后半交换符号拼接：(x1, x2) → (-x2, x1)
+        return torch.cat((-x[..., x.shape[-1] // 2:], x[..., : x.shape[-1] // 2]), dim=-1)
+
+    cos = cos.unsqueeze(unsqueeze_dim)  # (seq, head_dim) → (seq, 1, head_dim)：广播到所有头
+    sin = sin.unsqueeze(unsqueeze_dim)
+    q_embed = (q * cos) + (rotate_half(q) * sin)   # 2D 下即标准旋转 R(θ)·x
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed.to(q.dtype), k_embed.to(k.dtype)</code></pre></div>
+      <p>
+        拿一对维度 $(x_1, x_2)$ 展开最后一行：<code>q*cos + rotate_half(q)*sin</code> =
+        $(x_1\cos\theta - x_2\sin\theta,\ x_2\cos\theta + x_1\sin\theta)$——正是旋转矩阵 $R(\theta)$
+        乘向量的逐元素写法，一次广播完成 48 对的旋转。这也回答了上节的问题：<b>rotate_half 把后半维翻到前面，
+        cos/sin 必须"前半=后半"才能逐元素对齐</b>。顺带一句（不展开）：把每对 $(x_1, x_2)$ 看成复数
+        $x_1 + ix_2$，这套实数运算严格等价于<b>乘以 $e^{i\theta}$</b>——RoPE 论文的原视角就是复数旋转，
+        工程实现用实数避免复数内核。
+      </p>
+      <p>
+        shape 链路收尾：调用点在 attention.py:68，此时 q/k 是 <code>(B, T, H, D)</code>（batch、序列、头、head_dim）；
+        cos/sin 是 <code>(T, D)</code>，<code>unsqueeze(1)</code> 成 <code>(T, 1, D)</code> 广播到每个头；
+        随后 attention.py:78 的 <code>transpose(1, 2)</code> 才把头维提到前面变成 <code>(B, H, T, D)</code> 去打分。
+        末尾的 <code>.to(q.dtype)</code>——又是一处精度回落，与 <code>type_as</code> 同一纪律。
+      </p>
+
+      <h3 id="rope-inv">实验：同一对词，换个起点，内积不变？</h3>
+      <p>
+        RoPE 的招牌性质值得亲手验证一次。同一对 q/k 向量，放在三个不同起点（位置差都是 4），
+        旋转后的内积应当完全相等——用 reborn 的真实函数跑：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m05_exp_rope.py · 相对位置不变性验证</span><span class="lang">python</span></div><pre class="code"><code>import torch
+from minimind_reborn.models.layers import precompute_freqs_cis, apply_rotary_pos_emb
+
+torch.manual_seed(0)
+dim, end = 8, 64
+cos, sin = precompute_freqs_cis(dim, end=end)            # cos/sin: (end, dim)
+q, k = torch.randn(1, 1, 1, dim), torch.randn(1, 1, 1, dim)  # (b, seq, heads, head_dim)
+
+def qk_at(m, n):
+    """q 放在位置 m、k 放在位置 n，返回旋转后的内积"""
+    qr, _ = apply_rotary_pos_emb(q, k, cos[m:m+1], sin[m:m+1])  # 只转 q 那一格
+    _, kn = apply_rotary_pos_emb(k, k, cos[n:n+1], sin[n:n+1])  # 只转 k 那一格
+    return (qr * kn).sum().item()
+
+print("q·k（不旋转）= %.6f" % (q * k).sum().item())
+for m, n in [(2, 6), (30, 34), (57, 61)]:
+    print(f"q@{m:2d} k@{n:2d}（距离 {n-m}）: {qk_at(m, n):.6f}")</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m05_exp_rope.py</span>
+<span class="out">q·k（不旋转）= -0.526053</span>
+<span class="out">q@ 2 k@ 6（距离 4）: -1.706030</span>
+<span class="out">q@30 k@34（距离 4）: -1.706030</span>
+<span class="out">q@57 k@61（距离 4）: -1.706030</span></code></pre>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 同距离三组内积在小数点后 6 位完全一致（fp32 精度内相等）；对照组：不旋转的 q·k=-0.526 与三者皆不同——位置信息确实被编进来了。</p>
+      <p>
+        为什么"只依赖差"在数学上成立？推导折在下面——结论只有一行：
+        $\langle R(m\theta)q,\ R(n\theta)k\rangle = q^\top R((n-m)\theta)\,k$，绝对位置 $m$、$n$ 各自消失。
+      </p>
+
+      <details>
+        <summary>📐 折叠深读：旋转为什么带来"只看距离"的内积（2D 手算，可跳过，不影响主线）</summary>
+        <p>缩到最小：head_dim=2，只有一个旋转对、一个步进角 θ。二维旋转矩阵（逆时针转 α）与 RoPE 的用法（位置 m 的 q 转成 $R(m\theta)q$、位置 n 的 k 转成 $R(n\theta)k$）：</p>
+        $$ R(\alpha) = \begin{pmatrix}\cos\alpha &amp; -\sin\alpha \\ \sin\alpha &amp; \cos\alpha\end{pmatrix} $$
+        <p>推导只用旋转的两个恒等式：<b>转置即反转</b> $R(a)^\top = R(-a)$，<b>转角相加</b> $R(a)R(b) = R(a+b)$。于是：</p>
+        $$ \langle R(m\theta)q,\ R(n\theta)k \rangle = q^\top \underbrace{R(m\theta)^\top R(n\theta)}_{R((n-m)\theta)}\, k $$
+        <p><b>手算一遍</b>（θ=30°，q=k=(1,0)，m=2、n=5）：</p>
+        <ul>
+          <li>老老实实转：$R(60°)q = (\cos 60°, \sin 60°) = (0.5,\ 0.866)$；$R(150°)k = (\cos 150°, \sin 150°) = (-0.866,\ 0.5)$；
+            内积 $= 0.5 \times (-0.866) + 0.866 \times 0.5 = -0.433 + 0.433 = 0$；</li>
+          <li>走公式捷径：$q^\top R((n{-}m)\theta)k = (1,0)\cdot R(90°)(1,0) = \cos 90° = 0$ ✓ 两条路会合；</li>
+          <li>平移检验：m、n 同时 +10（变成 12 与 15），$(n-m)\theta$ 仍是 90°，内积仍是 0——<b>起点无关</b>，
+            正是上面实验三行相等的原因。</li>
+        </ul>
+        <p class="prov"><b>[作者实测 · 2026-09-30]</b> 此例已用脚本数值核对：直接转与公式捷径均输出 0.000000。</p>
+        <p>
+          <b>推广到 96 维</b>：head_dim=96 拆成 48 个互不干扰的 2D 平面，第 i 个平面用步进角 $\theta_i = \text{base}^{-2i/96}$，
+          转速各不相同。总内积是 48 个"不同频率余弦"的加和：同一距离同一图案，不同距离不同图案——
+          所以距离 4 → −1.706、距离 7 → +1.109（变式练习 1 的实测）<b>不是单调衰减，是多频率振荡</b>。
+        </p>
+      </details>
+
+      <details>
+        <summary>📐 折叠深读：YaRN——380 窗的模型，服务 2280 长的输入（可跳过，不影响主线）</summary>
+        <p>
+          64M 模型训练时的上下文窗口只有 380（config.py 注释原文："模型实际训练窗口"），
+          但推理侧要覆盖 2048 档评测——位置 2048 的角度组合模型从没见过，打分会乱。在训练见过的范围之外
+          使用模型叫<b>外推</b>（extrapolation），位置编码外推质量骤降是经典痛点。
+          <code>inference_rope_scaling=True</code>（config.py:37）开启的 YaRN（<a href="https://arxiv.org/abs/2309.00071" target="_blank" rel="noopener">arXiv:2309.00071</a>）
+          用<b>插值</b>（interpolation：把没见过的长角度范围压进见过的范围）补救——把步进角按因子压小，
+          相当于把 2280 步的旋转总量"匀"回训练尺度。
+        </p>
+        <p>关键在于<b>不搞一刀切</b>：高频对（快指针、管近距离）保持原样，低频对（慢指针、管远距离）压缩，中间线性过渡：</p>
+        <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/layers.py.html">src/minimind_reborn/models/layers.py</a> · YaRN 分支节选</span><span class="lang">python</span></div><pre class="code"><code>if end / orig_max &gt; 1.0:              # 只有位置数超过训练窗才插值；end ≤ 380 原样返回
+    # 由 beta 反解 ramp 的维度边界：inv_dim(b) = dim·ln(orig_max/(b·2π)) / (2·ln(base))
+    low, high = max(math.floor(inv_dim(beta_fast)), 0), min(math.ceil(inv_dim(beta_slow)), dim // 2 - 1)
+    ramp = torch.clamp((torch.arange(dim // 2).float() - low) / max(high - low, 0.001), 0, 1)
+    freqs = freqs * (1 - ramp + ramp / factor)   # 插值公式一行：γ=0 原样，γ=1 压 factor 倍</code></pre></div>
+        <p>
+          插值公式即 $f'(i) = f(i)\cdot\big((1-\gamma_i) + \gamma_i/s\big)$，$\gamma_i$ 就是 ramp、s 是 factor=6
+          （目标窗 = 380×6 = 2280，覆盖评测 2048 档）。实测边界（dim=96、base=1e6）：orig_max=380 时
+          ramp 区间 <b>[2, 15]</b>——48 对里 0..1 不动、2..15 过渡、16..47 全插值。
+        </p>
+        <p>
+          <b>常数曾是 2048 的 bug。</b>config.py:9-10 注释记录了这段历史：
+          <i>"orig_max 必须等于模型实际训练窗口（380），否则插值按错误的'训练窗'外推、质量被系统性低估"</i>；
+          test_rope_scaling.py 的模块 docstring 更直白：<i>"曾硬编码 2048 导致插值参数失真（报告 §6.1）"</i>。
+          实测两个后果：① ramp 边界错移——同参数下 2048 算出区间 <b>[8, 21]</b>（该插的没插够、
+          不该全插的被全插）；② 更致命的，<code>end=2048</code> 时 <code>end/orig_max = 1.00</code>，
+          <b>不大于 1.0，插值分支整个不触发</b>——评测窗恰好等于错误常数，等于裸奔外推。
+          修复：常数抽成 <code>YARN_ORIGINAL_MAX_POSITION_EMBEDDINGS = 380</code> 单一来源（config.py:11）+
+          6 个测试锁定。
+        </p>
+        <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> [2,15] 与 [8,21] 两组边界、end/orig_max 比值均由脚本按 inv_dim 公式实算；注释引文逐字来自 config.py:9-10 与 tests/test_models/test_rope_scaling.py:1-5。</p>
+      </details>
+
+      <h2 id="repeatkv">repeat_kv：只看一眼形状（M07 的主角）</h2>
+      <p>
+        layers.py 的第 4 个部件本课不深讲——它属于 GQA（分组查询注意力，多头注意力的省显存版，M07 主角）。
+        一句话：<b>64M 模型有 8 个 q 头却只有 4 个 KV 头，这个函数把每个 KV 头复制 n_rep=2 份对齐 q 头数</b>。
+        真跑看形状：
+      </p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+import torch
+from minimind_reborn.models.layers import repeat_kv
+x = torch.arange(8).float().reshape(1, 1, 2, 4)   # (b, seq, kv_heads, head_dim)
+print(tuple(x.shape), '-&gt;', tuple(repeat_kv(x, 2).shape))
+print(repeat_kv(x, 2)[0, 0].tolist())"</span>
+<span class="out">(1, 1, 2, 4) -&gt; (1, 1, 4, 4)</span>
+<span class="out">[[0.0, 1.0, 2.0, 3.0], [0.0, 1.0, 2.0, 3.0], [4.0, 5.0, 6.0, 7.0], [4.0, 5.0, 6.0, 7.0]]</span></code></pre>
+      <p>
+        每行被复制成相邻两行——2 个 KV 头变 4 个"看起来独立"的头。实现是
+        <code>[:, :, :, None, :].expand(...).reshape(...)</code> 三连：插一维、expand 广播出 n_rep 份（零拷贝视图）、
+        reshape 物理成形。为什么 KV 头要少一半、复制为何不浪费——M07 揭晓；这里只见其形。
+      </p>
+
+      <h2 id="pit">坑卡：bf16 直接归一化，坏得很安静</h2>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡：删掉那行 .float()，什么都不会发生——直到发生</div>
+        <ul class="pit-stages">
+          <li class="sym">
+            症状极其安静：全 bf16 模型里手写 RMSNorm 忘了升精度，<b>不报错、不 NaN、loss 照常下降</b>——
+            输出悄悄偏移（实测见上节），17 个 RMSNorm 层层叠加，你只会觉得"这模型有点难训"。
+          </li>
+          <li class="cause">
+            bf16 尾数只有 7 位显式——相对精度约 0.4%（一个最低位）。<code>平方 → 均值 → rsqrt → 乘回</code>
+            四步都在 bf16 里舍入，scale 因子就错掉整整一个最低位（实测 0.4880% vs 0.0405%）。更阴险的是
+            <b>这条链在什么精度里跑，取决于输入 dtype 与 autocast 策略这些"外部条件"</b>：作者实测 fp32 输入
+            进 autocast 时，无纪律版本恰好全程留在 fp32（误差 0.000%）——"碰巧准"不是契约，换上下文、
+            换全 bf16 推理就打回 0.49%。
+          </li>
+          <li class="fix">
+            一行：<code>(self.weight * self._norm(x.float())).type_as(x)</code>——layers.py 模块注释立的规矩
+            <i>"写法固定在此处，不依赖 autocast 内部行为"</i>：行为从"碰巧"变"必然"，代价只是这个算子的
+            中间态多占一点 fp32 寄存器。
+          </li>
+        </ul>
+      </div>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 坑卡数字来自本页 <a href="#fp32">fp32 纪律实验</a>的真跑（GPU 与 CPU 同值）；autocast 0.000% 出自 fp32 输入 + autocast 上下文的对照探针（该场景无纪律版本恰好全程 fp32）。</p>
+      <div class="callout industry">
+        <div class="co-title">🏭 工业对照：为什么手写 98 行，而不是用现成的</div>
+        <p>
+          RMSNorm 与 RoPE 是 LLaMA/Qwen/DeepSeek 系标配，现成实现到处有：PyTorch 2.4+ 内置
+          <code>torch.nn.functional.rms_norm</code>；HuggingFace transformers 把 RoPE 做成统一 utilities
+          （含 YaRN 的 <code>RoPEInitKwargs</code>，全部模型共享一份实现与缓存）。reborn 仍手写：一为<b>可读</b>
+          （逐行看见 rotate_half 与插值公式），二为<b>显式数值纪律</b>（<code>.float()/type_as</code> 不藏在框架分支里），
+          三为 6 个专属回归测试。工程判断：地基件值得亲手写一次，上层结构再谈复用。
+        </p>
+      </div>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · RMSNorm 比 LayerNorm 少算了什么？为什么敢少？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>少算<b>均值 μ</b>（不减均值），也去掉偏置 β——一次统计、一次减法、一组参数全省。敢少的原因：RMSNorm 论文的经验结论是效果几乎不掉；直觉上归一化的关键收益来自"压幅度、保方向"，整体平移可被下一层线性变换吸收。</p>
+            <p class="back">答错回看：<a href="#rmsnorm-why">它到底归一化了什么</a> 的公式对比与直觉卡。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · RoPE 的"内积不变性"指什么？q@30 k@34 和 q@2 k@6 的内积谁大？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>旋转后的 q·k 只依赖两位置的<b>差</b>（$R(m\theta)^\top R(n\theta)=R((n-m)\theta)$，绝对位置消失）。两对距离都是 4，内积<b>相等</b>（实测同为 −1.706030）——同一对词换到文本任何位置，相对关系不变，打分就不变。</p>
+            <p class="back">答错回看：<a href="#rope-inv">内积不变性实验</a> + <a href="#rope-why">直觉先行</a>。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · 归一化为什么要 .float() 再 type_as，而不是全程 bf16？为什么不干脆全模型 fp32？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>bf16 只有 7 位显式尾数（精度约 0.4%），归一化的统计链（平方→均值→rsqrt→乘回）在 bf16 里逐级舍入，实测 scale 因子误差 0.488%，fp32 路径 0.041%，差 12 倍。而"存储用 bf16、敏感计算升 fp32、算完回落"两头兼顾：显存与带宽省一半，数值安全不牺牲。全 fp32 当然更准，但训练/推理成本翻倍——纪律是性价比解。</p>
+            <p class="back">答错回看：<a href="#fp32">fp32 纪律</a> 的实验与概念卡。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 4 · 预计算表里 cos/sin 为什么要各自重复一半（前半=后半）？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>为了对齐 <code>rotate_half</code>。施转算式是 <code>q*cos + rotate_half(q)*sin</code>，而 rotate_half 把后半维翻到前面——前半的 $x_1$ 要配 sin 的后半值，后半的 $x_2$ 配前半值，cos/sin 必须"前半=后半"才能在 <code>(end, dim)</code> 上逐元素广播对齐。这是实现层的配合约定，不是数学要求。</p>
+            <p class="back">答错回看：<a href="#rope-apply">rotate_half 的障眼法</a> 与 <a href="#rope-freqs">precompute 精读</a> 的注释。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 1 · 距离越大，内积越小吗？</div>
+        <div class="ex-body">
+          <p>拿 <a href="#rope-inv">内积不变性脚本</a>，把三组位置改成 <code>[(2, 6), (2, 9), (2, 12)]</code>——起点不动，距离取 4、7、10。</p>
+          <div class="ex-predict"></div>
+          <p>写下预测：距离 4 的内积是 −1.706030。距离 7 和 10 会怎样——像"越远越不重要"那样单调衰减？同号变小？还是别的？先写下预期的三条数字形态再跑。</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>作者实测（同环境）：</p>
+            <pre class="term"><code><span class="out">q@ 2 k@ 6（距离 4）: -1.706030</span>
+<span class="out">q@ 2 k@ 9（距离 7）: 1.109269</span>
+<span class="out">q@ 2 k@12（距离 10）: -1.018312</span></code></pre>
+            <p>
+              <b>机制：</b>非但不是单调衰减，<b>连符号都翻了</b>。head_dim=8 有 4 个转速不同的旋转对，
+              总内积是 4 个不同频率余弦的叠加——它随距离<b>振荡</b>，不随距离衰减（96 维同理，48 个频率图案更密）。
+              "远 = 分低"是从词义借来的直觉；RoPE 编码的是"这个距离对应这组夹角图案"，区分度来自图案的<b>唯一性</b>。
+              真正压住远距离打分的是 softmax 归一化与因果 mask（M07），不是 RoPE 本身。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 2 · 把 eps 拿掉：全零行进去，什么出来？</div>
+        <div class="ex-body">
+          <p>构造一行全零的输入喂给 RMSNorm，分别在 eps=1e-5 与 eps=0 下跑（模型实际用的是 1e-6，量级同理）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
+import torch
+from minimind_reborn.models.layers import RMSNorm
+x = torch.zeros(1, 768)
+print('eps=1e-5:', RMSNorm(768, eps=1e-5)(x).abs().sum().item())
+print('eps=0   :', RMSNorm(768, eps=0.0)(x).abs().sum().item())"</span></code></pre>
+          <div class="ex-predict"></div>
+          <p>写下预测：eps=0 时输出是全零、inf、还是 NaN？想一下 <code>rsqrt(0)</code> 等于什么，以及 $0 \times \infty$ 在浮点里规定成什么。</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>作者实测（同环境）：</p>
+            <pre class="term"><code><span class="out">eps=1e-5: 0.0</span>
+<span class="out">eps=0   : nan</span></code></pre>
+            <p>
+              <b>机制：</b>全零行让 $\mathrm{mean}(x^2)=0$，<code>rsqrt(0) = inf</code>，再乘回全零的 $x$ 得
+              $0 \times \infty$——IEEE 754 浮点规定这个组合是 <b>NaN</b>，且 NaN 沿前向一路传染。
+              eps 的职责就是给分母兜底：有它时全零行干净地输出全零。全零 hidden 不是刁钻构造——
+              深层残差网络瞬时接近零、异常输入都可能触发。"归一化分母永不为零"是数值安全的底线。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M05 验收</div>
+        <div class="acc-body">
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下两步。第一步，RoPE/YaRN 的回归锚点：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_models/test_rope_scaling.py -q</span>
+<span class="ok">......                                                                   [100%]</span>
+<span class="ok">6 passed in 0.04s</span></code></pre>
+          <p>第二步，亲手复现内积不变性（脚本见 <a href="#rope-inv">实验小节</a>，存为 /tmp/m05_exp_rope.py）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m05_exp_rope.py</span>
+<span class="out">q·k（不旋转）= -0.526053</span>
+<span class="out">q@ 2 k@ 6（距离 4）: -1.706030</span>
+<span class="out">q@30 k@34（距离 4）: -1.706030</span>
+<span class="out">q@57 k@61（距离 4）: -1.706030</span></code></pre>
+          <ul class="pass-criteria">
+            <li><code>6 passed</code>——六个测试锁定：rope_scaling 字段值（380/6/yarn）、factor 可配、关闭时为 None、插值生效且形状不变、相邻位置角度差被压缩、训练窗内完全不插值；</li>
+            <li>不变性脚本三行距离 4 的内积<b>逐位一致</b>（你跑的具体数值会因随机向量不同而不同，"三行相等 + 与不旋转行不同"才是判据）；</li>
+            <li>完成两个变式练习的预测与观察。</li>
+          </ul>
+          <details>
+            <summary>失败了怎么办？（按症状分流）</summary>
+            <p>
+              <b>有 failed</b> → 读失败用例名定位：<code>test_yarn_no_interpolation_below_train_window</code> 失败多半是改动过
+              <code>YARN_ORIGINAL_MAX_POSITION_EMBEDDINGS</code> 或 <code>end/orig_max</code> 分支；<code>ModuleNotFoundError</code> →
+              在仓库根目录执行且 <code>uv sync --extra dev</code> 已跑；<b>三行内积不相等</b> → 检查是否把
+              <code>cos[m:m+1]</code> 写成了 <code>cos[m]</code>（少一维，广播语义就变了）；<b>出现 NaN</b> → 回看变式 2。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        两个地基件归位：⑤站图纸里的 RMSNorm 与 RoPE 已经从缩写变成你读过、跑过、验证过的代码。
+        下一课造④站的核心部件——KV cache（generator 预分配、⑤站的 model 逐层写入）。它和 RoPE 表是同宗的模式：
+        <b>预计算 + 按位置切片</b>，但要面对"每生成一个 token 写一格"的增量世界。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>RMSNorm <span class="en">root mean square normalization</span></dt><dd>只除均方根、不减均值、无偏置的归一化层；唯一可学习参数是逐维缩放 γ。比 LayerNorm 少一次统计，LLaMA/Qwen 系标配。</dd>
+          <dt>bf16 <span class="en">bfloat16</span></dt><dd>16 位浮点：8 位指数（与 fp32 同宽，动态范围不缩水）+ 7 位显式尾数（精度约 0.4%）。训练与 GPU 推理用它省一半存储与带宽。</dd>
+          <dt>fp32 纪律 <span class="en">敏感算子精度纪律</span></dt><dd>存储用低精度、敏感计算（除法/开方/归约）显式升 fp32、算完 type_as 回落。layers.py 模块注释定为成文纪律；M07 打分、M17 DPO 复用。</dd>
+          <dt>RoPE <span class="en">rotary position embedding</span></dt><dd>旋转位置编码：按位置把 q/k 向量旋转递增角度，旋转后的内积只依赖位置差。不引入参数，发生在 attention 内部。</dd>
+          <dt>rotate_half</dt><dd>把最后一维前后两半交换符号拼接 (x₁,x₂)→(−x₂,x₁) 的实现技巧；与"cos/sin 各重复一半"配套，使 (q·cos)+(rotate_half(q)·sin) 等价于复数乘 e^{iθ}。</dd>
+          <dt>非持久 buffer <span class="en">persistent=False</span></dt><dd>register_buffer 注册的"跟着模型走但不参与训练"张量；persistent=False 使其不进 state_dict/checkpoint。RoPE 的 cos/sin 表（64M 模型两张共 24.0 MiB）只依赖 config，属派生数据，不落盘。</dd>
+          <dt>YaRN</dt><dd>RoPE 长度外推（在训练窗口之外使用模型）方案：高频维度保持、低频维度按 factor 插值（把没见过的范围压进见过的范围）、中间 ramp 过渡。reborn 训练窗 380、factor=6 → 目标窗 2280；orig_max 必须等于真实训练窗（曾有硬编码 2048 的 bug）。</dd>
+          <dt>eps <span class="en">epsilon</span></dt><dd>归一化分母里的数值稳定小量（模型用 1e-6）；防 mean(x²)=0 时 rsqrt 爆 inf——0×∞ 规定为 NaN，会沿前向传染。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+  };
+</script>
+<script async src="assets/vendor/tex-svg.js"></script>
+<script src="assets/course.js?v=3"></script>
+</body>
+</html>
