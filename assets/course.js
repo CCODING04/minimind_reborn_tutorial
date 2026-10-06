@@ -67,6 +67,36 @@ function applyTheme() {
   if (mode === "auto") delete document.documentElement.dataset.mode;
   else document.documentElement.dataset.mode = mode;
 }
+/* —— 排版风格（经典 / 样章，localStorage）—— */
+const STYLE_KEY = "mrt-style-v1";
+function applyStyle() {
+  if (localStorage.getItem(STYLE_KEY) === "pilot") document.documentElement.dataset.style = "pilot";
+  else delete document.documentElement.dataset.style;
+}
+function mountStyleToggle() {
+  const bar = document.querySelector(".topbar, .cv-topbar");
+  if (!bar || bar.querySelector(".style-toggle")) return;
+  const btn = document.createElement("button");
+  btn.className = "style-toggle";
+  btn.type = "button";
+  btn.setAttribute("aria-label", "切换排版风格");
+  const refresh = () => {
+    const pilot = localStorage.getItem(STYLE_KEY) === "pilot";
+    btn.textContent = "Aa";
+    btn.title = `排版风格：${pilot ? "样章" : "经典"}（点击切换）`;
+  };
+  btn.addEventListener("click", () => {
+    const pilot = localStorage.getItem(STYLE_KEY) === "pilot";
+    if (pilot) localStorage.removeItem(STYLE_KEY);
+    else localStorage.setItem(STYLE_KEY, "pilot");
+    applyStyle();
+    refresh();
+  });
+  refresh();
+  const anchor = bar.querySelector(".theme-toggle");
+  if (anchor) anchor.before(btn); else bar.appendChild(btn);
+}
+
 function mountThemeToggle() {
   const bar = document.querySelector(".topbar, .cv-topbar");
   if (!bar || bar.querySelector(".theme-toggle")) return;
@@ -445,7 +475,9 @@ function initCopyButtons() {
 
 document.addEventListener("DOMContentLoaded", () => {
   applyTheme();
+  applyStyle();
   mountThemeToggle();
+  mountStyleToggle();
   initDrawer();
   renderSidebar();
   renderPager();        // 先创建按钮，再同步状态（syncProgressUI 会设置按钮文字）

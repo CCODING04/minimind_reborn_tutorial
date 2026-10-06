@@ -51,6 +51,8 @@
   --on-success:#ffffff;
   --page-bg:#f6f6f3;
   --panel-border:#1d2026;
+  --head-bg:#16181d;
+  --head-fg:#ffffff;
   --radius:0px;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Cascadia Code","Source Code Pro","Liberation Mono",monospace;
   --sans:-apple-system,"Segoe UI","Noto Sans","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
@@ -93,6 +95,8 @@ html[data-mode="dark"]{
   --on-success:#081322;
   --page-bg:#081322;
   --panel-border:#c9d6e8;
+  --head-bg:#e6edf7;
+  --head-fg:#081322;
 }
 @media (prefers-color-scheme:dark){
   html:not([data-mode="light"]){
@@ -131,6 +135,8 @@ html[data-mode="dark"]{
     --on-success:#081322;
     --page-bg:#081322;
     --panel-border:#c9d6e8;
+    --head-bg:#e6edf7;
+    --head-fg:#081322;
   }
 }
 *{box-sizing:border-box}
@@ -178,6 +184,12 @@ a:hover{text-decoration:underline}
   display:inline-flex;align-items:center;justify-content:center;padding:0;flex:none;
 }
 .topbar .theme-toggle:hover{border-color:var(--accent);color:var(--accent)}
+.topbar .style-toggle{
+  width:34px;height:32px;border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--canvas);color:var(--fg-muted);font:600 13px/1 var(--sans);cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;padding:0;flex:none;
+}
+.topbar .style-toggle:hover{border-color:var(--accent);color:var(--accent)}
 /* 窄屏顶栏：隐藏篇名、收窄进度，避免溢出（<768px 起阶梯收紧） */
 @media(max-width:900px){
   .topbar .brand .crumb{display:none}
@@ -707,6 +719,100 @@ mjx-container[jax="SVG"][display="true"]{display:block;margin:6px 0}
 }
 .cl:target{background:var(--attention-subtle);box-shadow:inset 3px 0 0 var(--attention-border)}
 .cl:target::before{color:var(--attention);font-weight:600}
+
+/* ═══════════════ 样章皮肤 html[data-style="pilot"]（对齐 redesign_pilot_m03，DESIGN §4.6）═══════════════
+   与经典风格共享 palette/panel 骨架；本层只覆盖排版节奏、字体栈与组件细节（am 映射：
+   panel 头→黑字母铭牌标题栏 · callout→中性细边+左色条(ok=蓝) · 代码→fill 底细边 · 表格→横线+mono 表头 ·
+   chips→head-meta · CSS 注入图标去 emoji）。industry 紫为课程第五态保留（样张无对应）。 */
+html[data-style="pilot"]{
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"JetBrains Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --success:var(--accent);
+  --success-subtle:var(--accent-subtle);
+  --success-border:var(--accent-border);
+  --attention:#a8620a;--attention-subtle:#fdf3e2;--attention-border:#a8620a;
+  --danger:#c62828;--danger-subtle:#fbeaea;--danger-border:#c62828;
+}
+html[data-style="pilot"][data-mode="dark"],
+html[data-style="pilot"][data-mode="dark"]{
+  --attention:#f0b14a;--attention-subtle:#3a2a10;--attention-border:#f0b14a;
+  --danger:#ff7070;--danger-subtle:#3b1620;--danger-border:#ff7070;
+}
+@media (prefers-color-scheme:dark){
+  html[data-style="pilot"]:not([data-mode="light"]){
+    --attention:#f0b14a;--attention-subtle:#3a2a10;--attention-border:#f0b14a;
+    --danger:#ff7070;--danger-subtle:#3b1620;--danger-border:#ff7070;
+  }
+}
+/* 排版节奏（am base 14px/1.55） */
+html[data-style="pilot"] body{font-size:14px;line-height:1.55}
+html[data-style="pilot"] p{margin:0 0 8px}
+html[data-style="pilot"] ul,html[data-style="pilot"] ol{margin:0 0 8px;padding-left:20px}
+html[data-style="pilot"] li+li{margin-top:3px}
+html[data-style="pilot"] .unit-head h1{font-size:24px;letter-spacing:-.01em}
+html[data-style="pilot"] .lede{font-size:15px}
+html[data-style="pilot"] h3{font-size:14px;font-weight:600;margin:14px 0 6px}
+/* panel：黑字母铭牌标题栏 */
+html[data-style="pilot"] .panel{padding:0 16px 6px;margin-bottom:14px}
+html[data-style="pilot"] .panel-head{padding:16px 16px 10px}
+html[data-style="pilot"] .panel.glossary-panel{padding:12px 16px}
+html[data-style="pilot"] .panel > h2:first-child{
+  display:flex;align-items:center;margin:0 -16px 14px;padding:7px 12px 7px 0;
+  font:600 15px/1.4 var(--sans);letter-spacing:0;
+  border-bottom:1.5px solid var(--panel-border);
+}
+html[data-style="pilot"] .panel > h2:first-child::before{
+  counter-increment:pnl;content:counter(pnl,upper-alpha);
+  align-self:stretch;display:flex;align-items:center;justify-content:center;
+  min-width:34px;margin:0 12px 0 0;padding:0 8px;
+  background:var(--head-bg);color:var(--head-fg);font-size:14px;font-weight:600;
+}
+html[data-style="pilot"] .content{counter-reset:pnl}
+html[data-style="pilot"] .panel > h2:first-child .h-anchor{font-size:.8em;color:var(--fg-faint)}
+/* 代码块：fill 底细边（am-code） */
+html[data-style="pilot"] pre.code,html[data-style="pilot"] pre.ascii{
+  background:var(--fill);border:1px solid var(--border);
+  font-size:12.5px;line-height:1.5;padding:12px 14px;
+}
+html[data-style="pilot"] .code-head{
+  background:var(--fill);border:1px solid var(--border);border-bottom:0;
+  font:11px/1.4 var(--mono);padding:6px 14px;
+}
+html[data-style="pilot"] :not(pre)>code{
+  background:var(--fill);border:0;border-radius:4px;font-size:.9em;padding:1px 5px;
+}
+/* 表格：横线 + mono 表头 + 偶数行 fill */
+html[data-style="pilot"] th{
+  font:11px/1.3 var(--mono);font-weight:400;color:var(--fg-muted);
+  border:0;border-bottom:1px solid var(--border);background:transparent;padding:6px 10px;
+}
+html[data-style="pilot"] td{border:0;border-bottom:1px solid var(--border);padding:7px 10px}
+html[data-style="pilot"] tbody tr:nth-child(2n){background:transparent}
+html[data-style="pilot"] tbody tr:nth-child(even){background:var(--fill)}
+/* callout：中性细边 + 左 3px 色条（ok=蓝） */
+html[data-style="pilot"] .callout{
+  border:1px solid var(--border);border-left:3px solid var(--accent);
+  background:var(--accent-subtle);padding:10px 14px;font-size:14px;
+}
+html[data-style="pilot"] .callout.tip,html[data-style="pilot"] .callout.note{
+  border-left-color:var(--accent);background:var(--accent-subtle);
+}
+html[data-style="pilot"] .callout .co-title{font-size:13.5px}
+/* 元数据 chips → am head-meta */
+html[data-style="pilot"] .meta .chip{border:0;background:transparent;padding:0;font-size:12px;color:var(--fg-muted)}
+html[data-style="pilot"] .meta .chip b{font-family:var(--mono);font-weight:400;color:var(--fg-faint);margin-right:4px}
+/* CSS 注入图标去 emoji（正文内容 emoji 属文字，保留） */
+html[data-style="pilot"] details.quiz summary::before{content:"▸";font-size:12px;color:var(--fg-faint)}
+html[data-style="pilot"] .ex-predict::before{content:"先写下你的预测："}
+/* 按钮 am-btn 化 */
+html[data-style="pilot"] .topbar .theme-toggle,html[data-style="pilot"] .topbar .style-toggle{
+  width:auto;height:30px;padding:0 10px;font-size:12px;border-color:var(--border);color:var(--fg);
+}
+/* toc / 词汇表 mono 小字节奏 */
+html[data-style="pilot"] .toc{font-size:11.5px}
+html[data-style="pilot"] .toc .toc-title{font-family:var(--mono)}
+html[data-style="pilot"] .glossary dl{font-size:13px}
+html[data-style="pilot"] .flowchart .fc-station{font-size:12px}
 
 /* 打印 */
 @media print{

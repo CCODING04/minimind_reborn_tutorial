@@ -163,6 +163,7 @@ v2 起，`course.css` 的 tokens 基底移植自 answer-me-with-html 的 bluepri
 - **写作约束不变**：页面禁止内联样式；改 tokens 后全量递增资源版本号并重跑 build_codeview.py（同步 codeview 页引用）。
 - **panel 面板化（v3 起）**：模块页 `.content` 内每个 h2 小节包进 `<section class="panel">`（首段为 panel-head，词汇表为 glossary-panel），纸面卡片浮于 `--page-bg` 画布之上、1.5px 深墨描边（`--panel-border`）、直角、节头去下划线。由 **`tools/panelize.py` 幂等生成**——新页成文或增删小节后重跑一次即可；不要手写 panel 包裹。
 - **flowchart 流程图**：关键流转图（如 M03 七站地图、M09 前向管线）用 `.flowchart`（fc-node/fc-arrow/fc-io/fc-loop/fc-note）CSS 绘制，明暗自适应；对齐型教学图（残差流逐位、移位示意）保留 `pre.ascii` 字符形态。
+- **双排版风格（v4 起）**：`<html data-style="pilot">` 启用「样章风格」皮肤（顶栏 `Aa` 按钮与经典风格互切，`localStorage["mrt-style-v1"]`，默认经典；与明暗三态正交）。皮肤与经典共享 palette/panel 骨架，仅覆盖：字体栈（mono 优先 JetBrains Mono、sans 含 Roboto/Helvetica Neue）、正文 14px/1.55 节奏、panel 头部**黑底白字字母铭牌**（CSS counter 注入，panel-head/词汇表不计号）、callout 中性细边+左 3px 色条（**ok=蓝=accent**，am 四态语义；attention #a8620a / err #c62828，暗色随动）、代码块 fill 底细边、表格横线化+mono 表头+偶数行 fill、chips 去 chip 化为 head-meta、CSS 注入图标（quiz ❓/练习 ✎）去 emoji。**有意偏离**：industry 紫保留为课程第五语义态（样张无对应）；正文内容中的 emoji（💡⚠️ 等）属文字不做剥离。
 
 ## 5. 工作流与 QA
 

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>critic.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../../../assets/course.css?v=7">
+<link rel="stylesheet" href="../../../../../assets/course.css?v=8">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -36,6 +36,6 @@ class CriticModel(MiniMindForCausalLM):
         hidden, _aux = self.model(input_ids, attention_mask, None)
         return self.value_head(hidden).squeeze(-1)  # (b, seq) 逐位置价值</code></pre></div>
 </main>
-<script src="../../../../../assets/course.js?v=7"></script>
+<script src="../../../../../assets/course.js?v=8"></script>
 </body>
 </html>
