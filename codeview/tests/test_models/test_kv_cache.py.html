@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>test_kv_cache.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../assets/course.css?v=10">
+<link rel="stylesheet" href="../../../assets/course.css?v=11">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -121,6 +121,6 @@ def test_sdpa_prefill_path_matches_manual(tiny_cfg):
         pb = b(x, attention_mask=mask).logits
     assert torch.allclose(pa, pb, atol=1e-5), &quot;padding mask 下 SDPA 与 manual 不一致&quot;</code></pre></div>
 </main>
-<script src="../../../assets/course.js?v=10"></script>
+<script src="../../../assets/course.js?v=11"></script>
 </body>
 </html>

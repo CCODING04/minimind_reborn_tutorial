@@ -73,7 +73,7 @@ function applyTheme() {
   if (mode === "auto") delete document.documentElement.dataset.mode;
   else document.documentElement.dataset.mode = mode;
 }
-/* —— 排版风格（经典 / 样章，localStorage）—— */
+/* —— 排版风格（经典 / 蓝图，localStorage）—— */
 const STYLE_KEY = "mrt-style-v1";
 function applyStyle() {
   if (localStorage.getItem(STYLE_KEY) === "pilot") document.documentElement.dataset.style = "pilot";
@@ -88,8 +88,8 @@ function mountStyleToggle() {
   btn.setAttribute("aria-label", "切换排版风格");
   const refresh = () => {
     const pilot = localStorage.getItem(STYLE_KEY) === "pilot";
-    btn.textContent = pilot ? "样章" : "经典";
-    btn.title = `排版风格：${pilot ? "样章" : "经典"}（点击切换）`;
+    btn.textContent = pilot ? "蓝图" : "经典";
+    btn.title = `排版风格：${pilot ? "蓝图" : "经典"}（点击切换）`;
   };
   btn.addEventListener("click", () => {
     const pilot = localStorage.getItem(STYLE_KEY) === "pilot";

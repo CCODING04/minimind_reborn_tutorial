@@ -727,7 +727,7 @@ mjx-container[jax="SVG"][display="true"]{display:block;margin:6px 0}
 .cl:target{background:var(--attention-subtle);box-shadow:inset 3px 0 0 var(--attention-border)}
 .cl:target::before{color:var(--attention);font-weight:600}
 
-/* ═══════════════ 样章皮肤 html[data-style="pilot"]（对齐 redesign_pilot_m03，DESIGN §4.6）═══════════════
+/* ═══════════════ 蓝图皮肤 html[data-style="pilot"]（对齐 redesign_pilot_m03，DESIGN §4.6）═══════════════
    与经典风格共享 palette/panel 骨架；本层只覆盖排版节奏、字体栈与组件细节（am 映射：
    panel 头→黑字母铭牌标题栏 · callout→中性细边+左色条(ok=蓝) · 代码→fill 底细边 · 表格→横线+mono 表头 ·
    chips→head-meta · CSS 注入图标去 emoji）。industry 紫为课程第五态保留（样张无对应）。 */

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>test_dpo_loss.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../assets/course.css?v=10">
+<link rel="stylesheet" href="../../../assets/course.css?v=11">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -70,6 +70,6 @@ def test_logits_to_log_probs_gathers_label_position():
     assert out.shape == (2, 3)
     assert torch.allclose(out, log_probs.gather(2, labels.unsqueeze(2)).squeeze(-1))</code></pre></div>
 </main>
-<script src="../../../assets/course.js?v=10"></script>
+<script src="../../../assets/course.js?v=11"></script>
 </body>
 </html>
