@@ -32,7 +32,8 @@
         <div class="kicker"><span class="badge-m">M02</span><span>第一篇 · 开箱：用</span></div>
         <h1>与 64M 模型对话</h1>
         <p class="lede">
-          M01 的冒烟给了你 3 个 tiny 权重，<code>out/</code> 里还躺着完整训练出的 64M 正主。这一课先不管模型内部长什么样——把模型叫醒，问它"你是谁"，转 temperature 旋钮看它换三种性格；然后猎一个真实 bug：官方对话入口 <code>tools/chat.py</code> 此刻根本跑不起来，而 49 个测试全绿（49 为 M01 时代口径，随仓库长上下文工作扩容为 85，演进说明见 M01）。为什么？
+          M01 的冒烟给了你 3 个 tiny 权重；完整训练出的官方 64M 正主则按
+          <a href="m01_get_started.html#weights">M01 §官方权重下载</a> 下载到 <code>out/official/</code>。这一课先不管模型内部长什么样——把模型叫醒，问它"你是谁"，转 temperature 旋钮看它换三种性格；然后猎一个真实 bug：官方对话入口 <code>tools/chat.py</code> 此刻根本跑不起来，而 49 个测试全绿（49 为 M01 时代口径，随仓库长上下文工作扩容为 85，演进说明见 M01）。为什么？
         </p>
         <div class="meta">
           <span class="chip">前置：<b>M01 课程导览与第一个绿灯</b></span>
@@ -57,9 +58,9 @@
         <table>
           <thead><tr><th class="u-w120">路线</th><th>怎么跑</th><th>你能看到什么</th></tr></thead>
           <tbody>
-            <tr><td><b>A · 64M 正主</b><br>（本页素材来源）</td><td><code>out/</code> 里已有 <code>full_sft_768.pth</code>（本工作区自带完整训练产物；若你从零复现，M16 会训出你自己的），直接 <code>MiniMindLLM.build('full_sft')</code></td><td>通顺的中文自我介绍、清晰的温度"性格"分档——本页所有表格与引文都出自它</td></tr>
+            <tr><td><b>A · 64M 正主</b><br>（本页素材来源）</td><td>若已按 <a href="m01_get_started.html#weights">M01 权重获取</a> 下载，<code>out/official/full_sft_768.pth</code> 就绪——<code>MiniMindLLM.build('full_sft', out_root='out/official')</code>，或把整个路径直接作为 weight 传入；若你从零复现，M16 会训出自己的 <code>out/full_sft_768.pth</code>；未下载 → 走路线 B/C</td><td>通顺的中文自我介绍、清晰的温度"性格"分档——本页所有表格与引文都出自它</td></tr>
             <tr><td><b>B · tiny 权重</b><br>（M01 冒烟产物）</td><td>6 行手动组装，见下方代码块</td><td><b>管线全通、旋钮可玩</b>，但 0.53M 参数只训了 6 步，输出是无意义词流（作者实测首句："的可以不技术提供在：为或者我而有通常……"）——温度对"乱度"的影响仍可观察，只是没有"性格"</td></tr>
-            <tr><td><b>C · 读档对照</b><br>（无 GPU/无权重）</td><td>精读本页 A 路线的实测表格与引文</td><td>观察结论是数据，读数据也是正式学习路径</td></tr>
+            <tr><td><b>C · 读档对照</b><br>（无 GPU/无权重）</td><td>精读本页 A 路线的实测表格与引文</td><td>观察结论是数据，读数据也是正式学习路径——读档分析也算完成：对照三档温度表填出 3 行"temperature → finish_reason → 性格速写"摘要，就是可核对的产物（验收的绿灯判据同等生效）</td></tr>
           </tbody>
         </table>
       </div>
@@ -178,7 +179,7 @@ return cls(model, tokenizer, device, target_dtype)</code></pre></div>
 out/dpo_768.pth             out/pretrain_768_best.pth   out/pretrain_64.pth
 out/full_sft_64_best.pth    out/full_sft_64.pth         out/pretrain_768.pth
 out/full_sft_768.pth</span></code></pre>
-      <p class="prov"><b>[作者实测 · 2026-09-29]</b> 共 10 个文件。命名即约定：<code>{阶段}_{hidden_size}[_best].pth</code>——64 是 M01 冒烟的 tiny 模型（约 0.53M 参数），768 是本课的 64M 正主（约 63.91M，账本见 M09）；<code>_best</code> 是验证集最优快照。</p>
+      <p class="prov"><b>[作者实测 · 2026-09-29]</b> 共 10 个文件。命名即约定：<code>{阶段}_{hidden_size}[_best].pth</code>——64 是 M01 冒烟的 tiny 模型（约 0.53M 参数），768 是本课的 64M 正主（约 63.91M，账本见 M09）；<code>_best</code> 是验证集最优快照。若你只完成了 M01 冒烟 + <a href="m01_get_started.html#weights">官方权重下载</a>，本地此刻应是 3 个 <code>_64</code> 文件加 <code>out/official/</code> 两件——清单随你的训练史增长，768 正主的位置见路线 A。</p>
 
       <h3 id="build-run">跑起来：一段 15 行脚本</h3>
       <p>这就是三档温度实验用的脚本（temperature 改成 0.1 / 0.85 / 1.5 各跑一次）：</p>
@@ -376,6 +377,7 @@ out = self.generate_fn(inputs["input_ids"], inputs["attention_mask"], self.gen)
       <div class="accept" id="accept">
         <div class="acc-head">✅ M02 验收</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>官方 full_sft_768 权重（<a href="m01_get_started.html#weights">M01 获取</a>）或 tiny 产物（路线 B）；CPU 可完成</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下执行（绕开有 bug 的 chat.py，直接走引擎门面，非交互可判定）：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
 import torch
@@ -396,7 +398,9 @@ print('[finish=%s tokens=%d latency=%sms]' % (out['finish_reason'], out['generat
           <details>
             <summary>失败了怎么办？（按报错第一行分流）</summary>
             <p>
-              <b>FileNotFoundError（权重文件不存在）</b> → <code>ls out/*.pth</code> 看清单；768 正主需按 README 完整训练，或退而用 <code>MiniMindLLM.build('full_sft', hidden_size=64, num_hidden_layers=2)</code> 验收 tiny 权重（finish/tokens 标准不变，通顺度会下降——tiny 模型没训够）；
+              <b>FileNotFoundError（权重文件不存在）</b> → <code>ls out/*.pth</code> 看清单；768 正主按
+              <a href="m01_get_started.html#weights">M01 权重获取</a> 下载（命令照抄后加 <code>out_root='out/official'</code>），
+              或完整训练（M16）；或退而用 <code>MiniMindLLM.build('full_sft', hidden_size=64, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2)</code> 验收 tiny 权重——后两个头参数不可省（省了会撞上文路线 B 的 size mismatch，build() 默认 8 头/4 KV 头，而 tiny 是 4 头/2 KV 头）；finish/tokens 标准不变，通顺度会下降——tiny 模型没训够；
               <b>ModuleNotFoundError</b> → 确认在仓库根目录且 <code>uv sync --extra dev</code> 跑完；
               <b>无 GPU</b> → build() 自动回退 CPU + fp32，命令照跑，延迟升到秒级，绿灯标准不变；
               <b>chat.py 的 TypeError</b> → 不是环境问题，那就是猎场本体，去<a href="#bug">对照</a>。

@@ -429,6 +429,7 @@ with torch.inference_mode():
       <div class="accept" id="accept">
         <div class="acc-head">✅ M03 验收</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>官方 pretrain_768 权重（<a href="m01_get_started.html#weights">M01 获取</a>）或 M01 冒烟的 tiny 产物回退；CPU 可完成</p>
           <p>把 <a href="#tour">巡游脚本</a>存为 <code>/tmp/tour.py</code>，在 <code>Reproduce/minimind_reborn/</code> 下执行：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/tour.py</span></code></pre>
           <ul class="pass-criteria">
@@ -441,8 +442,9 @@ with torch.inference_mode():
             <summary>失败了怎么办？（按报错第一行分流）</summary>
             <p>
               <b>FileNotFoundError（权重不存在：out/pretrain_768.pth）</b> → 跑过 M01 冒烟的用
-              <code>MiniMindLLM.build("pretrain", hidden_size=64)</code>（吃 <code>out/pretrain_64.pth</code>，
-              数字变小但结构不变）；或按 M02 取得 768 权重。
+              <code>MiniMindLLM.build("pretrain", hidden_size=64, num_attention_heads=4, num_key_value_heads=2)</code>（吃 <code>out/pretrain_64.pth</code>，
+              数字变小但结构不变——头参数不可省：build() 默认 8 头/4 KV 头，tiny 权重是 4 头/2 KV 头，省了会报 size mismatch，见 M02 路线 B）；
+              或按 <a href="m01_get_started.html#weights">M01 权重获取</a> 取得官方 768 权重（下载在 <code>out/official/</code>，把巡游脚本的 build 改为 <code>MiniMindLLM.build("pretrain", out_root="out/official")</code>）。
               <b>ModuleNotFoundError（minimind_reborn）</b> → 没在 reborn 目录下运行，<code>cd Reproduce/minimind_reborn</code> 或先 <code>uv sync --extra dev</code>。
               <b>CPU / 显存不足</b> → <code>MiniMindLLM.build("pretrain", device="cpu")</code>，
               ③行显示 dtype 回退为 fp32——③站知识点的现场演示。

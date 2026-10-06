@@ -314,7 +314,11 @@ train:
       <h2 id="archive">读档：64M 的完整曲线长什么样</h2>
       <p>
         tiny 是秒级玩具，64M 全程要 7 小时（双卡）。好在 M13 的四件套让每次训练都留下完整档案——
-        读真实日志是正式学习路径（M01 就这么说）。<b>[存档 runs/pretrain_full/20260925_005504 · 2×RTX 4090 DDP · bf16 · seed=42]</b>：
+        读真实日志是正式学习路径（M01 就这么说）。先交代档案在哪：下面两个 64M 存档
+        （pretrain_full / sft_full）都在作者环境——<code>runs/</code> 是运行时产物，不随仓库分发；
+        关键日志行与曲线已全文摘录在本节页面上，照页面数字即可完成读档分析，
+        仓库内随分发归档的实测产物在 <code>docs/results/</code>（评测产物索引，M21/M22 用到）。
+        <b>[存档 runs/pretrain_full/20260925_005504 · 2×RTX 4090 DDP · bf16 · seed=42]</b>：
         63.91M 参数、2 epoch、等效 batch 512（32 句 × 累积 8 × 双卡）、lr 5e-4。
         从 train.log 每 50 步一行的 5,418 行日志里摘关键点：
       </p>
@@ -508,7 +512,9 @@ print("生成:", out["content"], "| finish:", out["finish_reason"], "| tokens:",
               ——<b>达标线：val/loss ≤ 4.5</b>。<span class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · seed=42 · runs/pretrain_64m/20261001_101130]</b>
               500 optimizer step（4000 micro）后 train 3.45 / val 4.34，用时 11 分 21 秒，亮绿。</span>
               注意 <code>--set output_dir=...</code> 把产物引到独立目录，别覆盖 out/ 里的 768 存档正主。
-              无 GPU 就读 runs/pretrain_full 存档完成 ②（等效）。</li>
+              无 GPU 时 ③ 跳过（选做）；② 的对照表不依赖本地存档也能完成——存档在作者环境
+              （runs/ 不随分发），以<a href="#archive">读档</a>一节摘录的数字（pretrain_full 与 sft_full
+              关键行均已录在页面）为对照依据，等效判据。</li>
           </ul>
           <h3 id="retro">复盘三问（写在笔记里，比绿灯本身更重要）</h3>
           <ul>
@@ -607,6 +613,7 @@ print("生成:", out["content"], "| finish:", out["finish_reason"], "| tokens:",
       <div class="accept" id="accept">
         <div class="acc-head">✅ M16 验收：两棒命令 + 生成验证（= 里程碑 B 核心）</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>tiny 200 步 CPU 可完成（约 10 分钟；第一/二棒各需 pretrain_t2t_mini / sft_t2t_mini 数据，<code>uv run python tools/download_data.py --name sft_t2t_mini</code> 同体例，M01 已备则免）；64M 曲线走读档路线（见<a href="#archive">读档</a>一节声明，存档不随仓库分发）。</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下依次执行。第一棒，tiny pretrain 200 步（约 6 秒 GPU / 几分钟 CPU）：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.max_steps=200 --set train.resume=false --set train.log_interval=20 --set train.save_interval_steps=100</span>
 <span class="out">… | minimind.trainer | 已保存：pretrain_64.pth + best（epoch=1 step=200 best_val=8.31648874282837）</span>

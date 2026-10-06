@@ -536,6 +536,7 @@ for t in ['我爱北京天安门', 'The quick brown fox', '3.14159265358979', '�
       <div class="accept" id="accept">
         <div class="acc-head">✅ M10 验收</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>无外部依赖（词表 <code>assets/tokenizer</code> 随包自带）；🎮 选做自训词表用页内自造的迷你语料，同样无需下载。</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下两步。第一步，往返一致性与模板锚点断言（脚本全文）：</p>
           <div class="codeblock"><div class="code-head"><span>/tmp/m10_accept.py · 往返一致性 ×5 + 锚点扫描断言</span><span class="lang">python</span></div><pre class="code"><code>"""M10 验收：encode→decode 完全还原 + 模板锚点（与 test_loss_mask 同机制）。"""
 from minimind_reborn.data.loss_mask import pattern_ids, find_response_spans

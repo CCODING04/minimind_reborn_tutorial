@@ -596,6 +596,7 @@ pol[1, -1] -= 0.5; loss2 = dpo_loss(ref, pol, mask, beta=0.15)</code></pre></div
       <div class="accept" id="accept">
         <div class="acc-head">✅ M17 验收：smoke_dpo 20 步 + 偏好数据链路测试</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>dpo 数据（注册名 dpo_mini → dpo.jsonl，<code>uv run python tools/download_data.py --name dpo_mini</code>）+ M16 tiny 产物 out/pretrain_64.pth；64M 对照读页面存档数字即可。</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下（先确保 out/pretrain_64.pth 在场：跑过 M16 第一棒或 M01 的 make smoke 即有）。第一条，冒烟 20 步（约 5 秒 GPU / 几分钟 CPU）：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_dpo.yaml --set train.max_steps=20 --set train.resume=false --set train.log_interval=4</span>
 <span class="out">… | minimind.dpo | DPO 起点：pretrain_64.pth | beta=0.150</span>

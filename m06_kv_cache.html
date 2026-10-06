@@ -57,6 +57,16 @@
       </ul>
 
       <h2 id="exp">黑箱先行：先生成 50 个 token，亲眼看"慢"</h2>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 依赖声明：本实验读取 64M 官方权重</div>
+        <p>
+          脚本加载 <code>out/pretrain_768.pth</code>——若你跳过了 M02、还没有这份权重，请先按
+          <a href="m01_get_started.html#weights">M01 权重获取</a> 下载（落位 <code>out/official/</code>，把脚本里的路径改成
+          <code>out/official/pretrain_768.pth</code> 即可）；未下载也可改用 tiny 权重先行：配置换成
+          <code>MiniMindConfig(hidden_size=64, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2)</code>
+          加载 <code>out/pretrain_64.pth</code>（M01 冒烟产物）——耗时数字变小，但"无缓存平方级、有缓存线性"的结论方向不变。
+        </p>
+      </div>
       <p>
         先不管原理，跑一个对照实验。同一个 64M 基座（<code>out/pretrain_768.pth</code>）、同一个 64-token prompt、
         同样贪心解码（temperature=0，排除采样随机性），生成 50 个 token，只换一件事：
@@ -474,6 +484,7 @@ for cap in (2048, 4096):
       <div class="accept" id="accept">
         <div class="acc-head">✅ M06 验收</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>对照实验读取官方 pretrain_768 权重（<a href="m01_get_started.html#weights">M01 获取</a>；未下载可改用 tiny 权重先行，参数见开篇依赖声明）；验收测试用 tiny fixture，CPU 可完成</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下执行：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_models/test_kv_cache.py -q</span>
 <span class="ok">.....                                                                   [100%]</span>
@@ -488,6 +499,8 @@ for cap in (2048, 4096):
             <summary>失败了怎么办？（按报错分流）</summary>
             <p>
               <b>pytest 报 collected 0 items</b> → 确认在仓库根目录执行、<code>uv sync --extra dev</code> 补装 pytest；
+              <b>FileNotFoundError（权重不存在：out/pretrain_768.pth）</b> → 对照实验脚本读的是 64M 官方权重，
+              按 <a href="m01_get_started.html#weights">M01 权重获取</a> 下载（或按开篇依赖声明改用 tiny 权重先行）；
               <b>test_generation_cache_consistency 失败</b> → 断言信息会指向 "mask/cache 位置对齐被破坏"——不要改断言，
               对照 <a href="#contract">游标协议</a> 检查你有没有动过 advance 相关代码；
               <b>越界命令没报错</b> → 检查 <code>start</code> 与 <code>new_len</code> 的算术：6+4=10 必须大于容量 8 才触发；

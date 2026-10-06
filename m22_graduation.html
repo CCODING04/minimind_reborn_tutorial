@@ -470,7 +470,8 @@ for t in (0.7, 0.85):                        # 自变量：唯一的旋钮
           <p>
             从 <a href="#topics">选题清单</a>（或 M21 弱项清单）里挑一个不是②的选题，用四步模板跑完。
             最低配置：选题①/④在 tiny 上各约 10–20 分钟（CPU 亦可，只是更久）；选题③零运行——
-            读 M21 存档 <code>out/multiturn_eval_yarn.md</code> 与 <code>out/multiturn_eval.md</code> 对照即可，
+            读 M21 存档 <a href="codeview/docs/results/multiturn_eval_yarn.md.html">docs/results/multiturn_eval_yarn.md</a> 与
+            <a href="codeview/docs/results/multiturn_eval.md.html">docs/results/multiturn_eval.md</a> 对照即可，
             但"设计"一步要写清哪两份存档构成对照、控制了什么。
           </p>
           <div class="ex-predict"></div>
@@ -499,6 +500,7 @@ for t in (0.7, 0.85):                        # 自变量：唯一的旋钮
       <div class="accept" id="accept">
         <div class="acc-head">✅ M22 验收（= 里程碑 C 三条命令）</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>第一条 85 测试无外部权重依赖；第二条八范式冒烟需各阶段 mini 数据（RL 数据先 <code>make download-rl</code>，含 ppo/agent 段的 rlaif_mini 与 agent_rl_mini），全链路链脚本的 pretrain_t2t / sft_t2t 由脚本自下载（GB 级）。</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下依次执行。第一条，全量测试（约 14 秒）：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -m pytest tests/ -m "not slow" -q</span>
 <span class="ok">85 passed, 1 warning in 13.98s</span></code></pre>

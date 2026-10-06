@@ -481,8 +481,11 @@ runpy.run_path("tools/train.py", run_name="__main__")</code></pre></div>
         <b>单卡读者的存档分析路线</b>（无需 GPU，约 15 分钟）：
         ① 读 <a href="codeview/docs/pretrain_readiness.md.html">docs/pretrain_readiness.md</a>
         §3 的单双卡对照表——本文 §实测 引用的 67.6%→88.5% 就存档于此；
-        ② 打开 <code>runs/pretrain_full/20260925_005504/train.log</code>，grep
-        <code>tok/s</code> 看双卡长跑的合计吞吐（world=2 口径：首窗 237,039 → 稳态 253K 上下）；
+        ② 存档在作者环境（<code>runs/</code> 为运行时产物，不随仓库分发）：作者机上是
+        <code>runs/pretrain_full/20260925_005504/train.log</code>，grep <code>tok/s</code> 可看双卡长跑的
+        合计吞吐（world=2 口径：首窗 237,039 → 稳态 253K 上下）；本地无此文件时，回①中的
+        <a href="codeview/docs/pretrain_readiness.md.html">docs/pretrain_readiness.md</a> §5 对照同一口径
+        （双卡满载 5.5 分钟至热稳态，<code>tok/s=253822</code> 即该档数字）；
         ③ 跑本课猎场的 <code>git show fd9fdc8</code>，对照修复前后代码；
         ④ 想动手摸 DDP 语义，M08 的 gloo/CPU 玩具实验（单进程 world=1 也能演示"挂图"铁律）随时可跑——
         但注意 torchrun + NCCL 路线必须有 GPU，init_distributed 会显式报错而不是静默回退。
@@ -660,6 +663,7 @@ print("不等分片时最大差：", (((g_a2 + g_b2) / 2) - g_big).abs().max().i
       <div class="accept" id="accept">
         <div class="acc-head">✅ M15 验收：两进程冒烟全绿（单卡替代：全链路测试）</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>无 GPU 可完成（走"单卡/CPU 替代"的全链路测试 + 存档读档路线）；🎮 双卡路线需 2 GPU 与 pretrain_t2t_mini 数据，选做。</p>
           <p>双卡路线：在 <code>Reproduce/minimind_reborn/</code> 下用 torchrun 拉起两个进程（"单卡去掉 torchrun 前缀"是同一段代码）：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run torchrun --nproc-per-node 2 tools/train.py configs/smoke/smoke_pretrain.yaml --set train.resume=false</span>
 <span class="out">… | minimind.trainer | 训练启动 stage=pretrain recipe=smoke_pretrain | 0.53M 可训练参数 | dtype=bf16 device=cuda:0 world=2 | 数据=pretrain_t2t_mini</span>

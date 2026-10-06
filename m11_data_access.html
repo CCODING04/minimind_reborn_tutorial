@@ -515,6 +515,7 @@ print(f"重取(eval_ratio=0.5) {time.perf_counter()-t0:.2f}s  eval 占比 {m2.is
       <div class="accept" id="accept">
         <div class="acc-head">✅ M11 验收</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>pretrain_t2t_mini 数据（约 1.2GB，<code>uv run python tools/download_data.py --name pretrain_t2t_mini</code>）；无网时跳过基准实验，读正文数字完成对照。</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下两步。第一步，O(1) 取样等价性实验（脚本全文）：</p>
           <div class="codeblock"><div class="code-head"><span>/tmp/m11_accept.py · 同一行：索引 O(1) 取 vs 顺序扫描取，必须一致</span><span class="lang">python</span></div><pre class="code"><code>"""M11 验收：同一行，索引 O(1) 取 与 顺序扫描 取，必须逐字节等价。"""
 import json, time

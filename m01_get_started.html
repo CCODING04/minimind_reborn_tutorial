@@ -128,6 +128,50 @@
       </div>
       <p class="prov"><b>[事实核对]</b> 85 测试（2026-10-01 实测；课程早期记录为 49，随仓库长上下文工作扩容）· 8 冒烟配方 · 64M≈63.91M 参数 · 官方权重 strict 互通——均可在 <a href="codeview/README.md.html"><code>Reproduce/minimind_reborn/README.md</code></a> 与 <code>tests/</code> 目录核对。</p>
 
+      <h2 id="get-code">第 0 步：拿到代码与权重</h2>
+      <p>
+        课程真正的起点：把 reborn 仓库克隆到本地，再（可选但强烈建议）把官方训练好的 64M 权重请下来。
+        环境与数据是后面两节的事——代码与权重，现在就位：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>Shell · 在任意你存放课程的父目录执行</span><span class="lang">bash</span></div><pre class="code"><code>git clone https://github.com/CCODING04/minimind-reborn.git
+cd minimind-reborn</code></pre></div>
+      <div class="callout tip">
+        <div class="co-title">💡 路径对照：本课程怎么称呼这个目录</div>
+        <p>
+          <b>本课程正文里的 <code>Reproduce/minimind_reborn/</code> 前缀 = 你克隆的仓库根目录</b>——
+          克隆到哪、目录叫什么名字都行，后文所有"在 <code>Reproduce/minimind_reborn/</code> 下执行"指的都是仓库根；
+          站内 codeview 链接（如 <a href="codeview/README.md.html"><code>Reproduce/minimind_reborn/README.md</code></a>）
+          是该仓库的<b>只读镜像</b>，供你在页面内直接跟读源码。
+        </p>
+      </div>
+
+      <h3 id="weights">官方权重下载（可选但强烈建议）</h3>
+      <p>
+        上面目标对照表里有一条"权重：与官方 <b>state_dict 逐键兼容</b>"——它的意思是：
+        官方 minimind 训练好的权重可以<b>直接加载进 reborn 模型</b>（M09 🏁A 会用 <code>strict=True</code> 逐键验证这条声明）。
+        所以不必先训出 64M 模型就能对话、做实验：一条命令把官方的 pretrain 与 full_sft 两份 768 权重请到
+        <code>out/official/</code>（<code>uv</code> 环境在下一节安装——若还没装，先做下一节的
+        <code>uv sync --extra dev</code> 再回来执行）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>Shell · 在仓库根目录执行（下载约 138MB，CPU 即可，无需 GPU）</span><span class="lang">bash</span></div><pre class="code"><code>uv run huggingface-cli download jingyaogong/minimind-3-pytorch \
+    pretrain_768.pth full_sft_768.pth --local-dir out/official/</code></pre></div>
+      <p>
+        四件事说在前面：<b>工具哪来的</b>——<code>huggingface-cli</code> 由核心依赖 transformers 自带的
+        huggingface_hub 提供，<code>uv sync</code> 后即有，无需额外 extras；
+        <b>文件多大</b>——full_sft_768.pth 约 138MB（fp16）<span class="prov">[核对 · HF jingyaogong/minimind-3-pytorch 页面 · 2026-10-06；与 M09 变式"tied 模型 state_dict 逐值求和 68.83M × 2 字节 ≈ 138MB"对账一致]</span>；
+        <b>国内网络</b>——可先设镜像端点再下载：<code>set HF_ENDPOINT=https://hf-mirror.com</code>（Windows cmd）/ <code>export HF_ENDPOINT=https://hf-mirror.com</code>（bash）；
+        <b>不想用 hf 工具</b>——直链 curl 亦可（full_sft 示例，pretrain 同理换文件名）：
+        <code>curl -L -o out/official/full_sft_768.pth https://huggingface.co/jingyaogong/minimind-3-pytorch/resolve/main/full_sft_768.pth</code>。
+      </p>
+      <p>
+        下载完成后文件落位 <code>out/official/pretrain_768.pth</code> 与 <code>out/official/full_sft_768.pth</code>，
+        后续 M02（对话）、M06（KV cache 对照实验）、M09（🏁A strict 互通）、M20（推理栈）直接使用；
+        加载推理 <b>CPU 即可</b>，无需 GPU。
+      </p>
+      <p>
+        没有下载权重也能走完全课程主线（tiny 配方 CPU 可跑），但 M02 的对话体验与 🏁A 里程碑需要它们。
+      </p>
+
       <h2 id="env">环境准备：uv 与锁定环境</h2>
       <p>
         reborn 用 <a href="https://docs.astral.sh/uv/" target="_blank" rel="noopener noreferrer">uv</a> 管理依赖——
@@ -136,10 +180,14 @@
       <div class="codeblock"><div class="code-head"><span>Shell · 在仓库任意父目录执行</span><span class="lang">bash</span></div><pre class="code"><code><span class="c"># 1. 安装 uv（已装可跳过；Linux/macOS）</span>
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
+<span class="c">#    Windows 原生 PowerShell 用这条安装；Git Bash / WSL 里仍可用上面的 curl 方式</span>
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
 <span class="c"># 2. 进入 reborn 仓库，安装锁定环境（含开发工具）</span>
 <span class="c">#    首次会自动创建 .venv 并下载 torch 等依赖，约几分钟</span>
 cd Reproduce/minimind_reborn
 uv sync --extra dev</code></pre></div>
+      <p class="prov"><b>[核对]</b> 两条 uv 安装命令逐字来自官方文档（astral.sh/uv · 2026-10-06）；clone 地址即本课程实现目标仓库（codeview 镜像同源）。</p>
 
       <p>装完第一件事：验证 torch 与 CUDA 可用——</p>
       <pre class="term"><code><span class="p">$ </span><span class="cmd">make verify-env</span>

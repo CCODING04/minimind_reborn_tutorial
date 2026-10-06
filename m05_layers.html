@@ -496,6 +496,7 @@ print('eps=0   :', RMSNorm(768, eps=0.0)(x).abs().sum().item())"</span></code></
       <div class="accept" id="accept">
         <div class="acc-head">✅ M05 验收</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>无外部依赖（CPU 可完成）。</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下两步。第一步，RoPE/YaRN 的回归锚点：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_models/test_rope_scaling.py -q</span>
 <span class="ok">......                                                                   [100%]</span>

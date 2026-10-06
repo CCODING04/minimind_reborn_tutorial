@@ -627,6 +627,7 @@ for tag, cfg in [('tiny tied  ', MiniMindConfig(**base)),
       <div class="accept" id="accept">
         <div class="acc-head">✅ M09 验收（= 里程碑 A 核心两条）</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>官方 pretrain_768 权重（<a href="m01_get_started.html#weights">M01 获取</a>，第二条验收用）；strict 载入与账本 CPU 即可，无需 GPU</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下依次执行。第一条，模型全测试：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_models/ -q</span>
 <span class="out">...................                                                      [100%]</span>
@@ -658,7 +659,7 @@ print("参数量：%.2fM" % (sum(p.numel() for p in model.parameters()) / 1e6))<
               <b>pytest 有 failed</b> → 读用例名回对应课：<code>test_rope_buffer_rebuild_after_meta_init</code> 失败回
               <a href="#bughunt">猎场</a>，<code>test_tied_embeddings</code> 失败查 config 的
               <code>tie_word_embeddings</code>；<b>FileNotFoundError: out/official/pretrain_768.pth</b> →
-              权重未下载，回到 M02 的获取步骤。<code>NaN</code> 出现在自己改过模型代码后 → 先跑
+              权重未下载——获取入口在 <a href="m01_get_started.html#weights">M01 权重获取</a>（下载后即落位 <code>out/official/</code>）。<code>NaN</code> 出现在自己改过模型代码后 → 先跑
               <a href="#bughunt">猎场复现脚本</a> 确认 RoPE 表路径没被你碰坏。
             </p>
           </details>

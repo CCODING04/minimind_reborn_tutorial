@@ -665,6 +665,7 @@ response_old_logps.extend([0.0] * len(obs_delta))</code></pre></div>
       <div class="accept" id="accept">
         <div class="acc-head">✅ M19 验收：smoke_grpo 黑箱跑通 + RL 前三问自查</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>RL 数据（<code>make download-rl</code>，即 rlaif_mini + agent_rl_mini 两个注册名，需 <code>uv sync --extra download</code>）；smoke_grpo 全程约 3 秒，CPU 可跑。</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下两步。第一步，RL 数据就位（rlaif_mini 提示集 + agent 轨迹）：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">make download-rl</span>
 <span class="out">uv run python tools/download_data.py --name rlaif_mini</span>

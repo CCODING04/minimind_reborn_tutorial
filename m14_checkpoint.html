@@ -313,15 +313,22 @@ if "rng" in data:
 <span class="out">09:45:31 | INFO | minimind.trainer | Epoch[1/2](60/317242) loss=8.4850 lr=5.03e-05 …</span>
 <span class="ok">09:45:31 | INFO | minimind.trainer | 训练结束：best_val_loss=8.586801052093506 optimizer_steps=30</span></code></pre>
       <p>
-        第二步，中断 B：同样的命令再启动一份，用一个 12 行的 shell 脚本盯住新建的
+        第二步，中断 B：同样的命令再启动一份，用下面这段 shell 脚本（存为 /tmp/m14_kill9.sh）盯住新建的
         <code>runs/smoke_pretrain/&lt;时间戳&gt;/train.log</code>，看到 step 34 的日志（此刻 step 30 的
         checkpoint 已落盘、40 的还没来）就对<b>整个进程组</b> <code>kill -9</code>——
         杀进程组而不是单个 PID，否则 uv 包装死了、python 子进程还活着把余下步骤跑完
         （作者第一次就这么翻的车，进程组杀法：<code>kill -9 -&lt;PGID&gt;</code>）：
       </p>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">setsid uv run python tools/train.py …（同 A，resume=false）&amp;  # setsid：独立进程组</span>
-<span class="p">$ </span><span class="cmd">while ! grep -q "(34/" $NEW_RUN_DIR/train.log; do sleep 0.02; done</span>
-<span class="p">$ </span><span class="cmd">kill -9 -$(ps -o pgid= -p $TRAIN_PID | tr -d ' ')    # 对进程组发 SIGKILL</span>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m14_kill9.sh · 启动 → 盯日志 → 整组击杀（在仓库根目录跑）</span><span class="lang">bash</span></div><pre class="code"><code>setsid uv run python tools/train.py configs/smoke/smoke_pretrain.yaml \
+  --set train.max_steps=60 --set train.save_interval_steps=10 \
+  --set train.log_interval=2 --set train.resume=false &amp;
+TRAIN_PID=$!                                              # 脚本里 setsid 直接 exec：$! 即新会话的进程组长
+NEW_RUN_DIR=$(ls -td runs/smoke_pretrain/*/ | head -1)    # 比 A 晚几秒的新时间戳目录，取最新
+while ! grep -q "(34/" "$NEW_RUN_DIR/train.log"; do sleep 0.02; done   # 盯到 step 34 日志（30 档已落盘、40 未到）
+kill -9 -$(ps -o pgid= -p $TRAIN_PID | tr -d ' ')         # 对整个进程组发 SIGKILL（uv 与 python 同组，一锅端）
+echo "已击杀进程组，存档目录：$NEW_RUN_DIR"</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">bash /tmp/m14_kill9.sh</span>
+<span class="out">已击杀进程组，存档目录：runs/smoke_pretrain/20261001_094653/</span>
 <span class="out">（B 的 train.log 止于三行，没有"训练结束"——进程死在 step 34 与 40 之间）</span>
 <span class="out">09:46:55 | INFO | minimind.trainer | 已保存：pretrain_64.pth（epoch=1 step=30 best_val=None）</span>
 <span class="out">09:46:55 | INFO | minimind.trainer | Epoch[1/2](32/317242) loss=8.5677 lr=2.63e-04 grad_norm=0.73 …</span>
@@ -329,6 +336,12 @@ if "rng" in data:
 <span class="p">$ </span><span class="cmd">find checkpoints out -name "*.tmp" | wc -l</span>
 <span class="ok">0</span>
 <span class="dim">（kill -9 落在两次存档之间：原子写留下的最坏遗产是孤儿 .tmp，实测一个都没有；目标文件是完整的 step-30 档）</span></code></pre>
+      <p>
+        跨平台注：上面的 <code>setsid</code> 与 <code>kill -9 -&lt;PGID&gt;</code>（进程组信号）是 Linux 专属机制，
+        Windows/macOS 原生终端没有——建议在 WSL 里做本实验；不方便时跳过动手，直接读本节末尾的存档分析路线复盘同样的推理链。
+        另注：脚本里 setsid 直接 exec（$! 即组长）；若逐条粘贴进交互式终端，setsid 可能 fork 出新会话，
+        此时以 <code>ps -o pgid= -p &lt;训练进程PID&gt;</code> 从进程树任一成员反查 PGID 再杀。
+      </p>
       <p>
         第三步，续训 B2：不再传 <code>resume=false</code>，直接启动——resume 默认开，检测到
         <code>pretrain_64_resume.pth</code> 在场即恢复：
@@ -552,6 +565,7 @@ is_last = offset == start_step + iters - 1        # 循环终点：实际迭代�
       <div class="accept" id="accept">
         <div class="acc-head">✅ M14 验收：六件套测试全绿 + kill -9 实验闭环</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>无外部依赖（第一条测试与 tiny 60 步实验 CPU 即可）；kill -9 动手实验依赖 Linux 的 setsid/进程组——Windows/macOS 建议在 WSL 中做，或走第三条存档读档路线。</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下依次执行。第一条，训练基件测试（LR 纯函数、decay 分组、六件套往返与 step 换算、extra_states）：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_training/test_common.py -q</span>
 <span class="out">.....                                                                    [100%]</span>
@@ -559,7 +573,7 @@ is_last = offset == start_step + iters - 1        # 循环终点：实际迭代�
           <p>第二条（🎮 有跑训环境时），kill -9 实验三步闭环；无 GPU 走第三条：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.max_steps=60 --set train.save_interval_steps=10 --set train.log_interval=2 --set train.resume=false</span>
 <span class="ok">… | 训练结束：best_val_loss=8.586801052093506 optimizer_steps=30</span>
-<span class="p">$ </span><span class="cmd">setsid uv run python tools/train.py …（同命令）&amp;  # 盯 train.log 见 (34/ 后 kill -9 进程组</span>
+<span class="p">$ </span><span class="cmd">bash /tmp/m14_kill9.sh  # 脚本全文见 kill -9 实验一节：启动 → 盯 train.log 见 (34/ → kill -9 进程组</span>
 <span class="p">$ </span><span class="cmd">find checkpoints out -name "*.tmp" | wc -l</span>
 <span class="ok">0</span>
 <span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.max_steps=60 --set train.save_interval_steps=10 --set train.log_interval=2</span>

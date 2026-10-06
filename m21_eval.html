@@ -40,7 +40,7 @@
           <span class="chip">前置：<b>M20</b>（推理栈全通，本课给它装上仪表盘）</span>
           <span class="chip">时长：<b>约 65 分钟</b></span>
           <span class="chip">新概念：<b>评测指标（困惑度 / 固定题集）· 对照实验</b></span>
-          <span class="chip">对照：<code>tools/eval_llm.py</code> · <code>tools/eval_multiturn.py</code> · <code>tools/compare_official.py</code> · <code>tools/convert_model.py</code> · <code>out/official_compare.md</code></span>
+          <span class="chip">对照：<code>tools/eval_llm.py</code> · <code>tools/eval_multiturn.py</code> · <code>tools/compare_official.py</code> · <code>tools/convert_model.py</code> · <a href="codeview/out/official_compare.md.html"><code>out/official_compare.md</code></a></span>
         </div>
       </header>
 
@@ -220,8 +220,8 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
       </div>
       <p>
         这套件全量要跑三个权重 × 数百次生成（GPU 小时级），本课走<b>读档分析路线</b>——M01 就说过，
-        读真实评测报告是正式学习路径。存档 <a href="codeview/out/multiturn_eval.md.html">out/multiturn_eval.md</a>
-        （2026-09-26，era1 权重）的结论表摘录：
+        读真实评测报告是正式学习路径。存档 <a href="codeview/docs/results/multiturn_eval.md.html">docs/results/multiturn_eval.md</a>
+        （2026-09-26，era1 权重；仓库内归档于 docs/results/，评测产物索引地）的结论表摘录：
       </p>
       <div class="table-scroll">
         <table>
@@ -234,7 +234,7 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
           </tbody>
         </table>
       </div>
-      <p class="prov"><b>[存档 out/multiturn_eval.md · 2026-09-26 · 2×RTX 4090 · seed=42 · T=0.7 · era1 权重]</b>
+      <p class="prov"><b>[存档 docs/results/multiturn_eval.md · 2026-09-26 · 2×RTX 4090 · seed=42 · T=0.7 · era1 权重]</b>
       同份报告的归因：SFT 语料随机采样 10 万行中多轮样本仅 19.4%，且 768 截断会砍掉多轮对话的后半段；
       官方权重用同一套 sft_t2t 语料训练，缺陷 1/3 同样出现且更差——<b>缺陷随数据继承，不是 reborn
       推理实现引入</b>（实现侧唯一新增问题是 D 的守卫缺口）。</p>
@@ -261,12 +261,12 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
           </tbody>
         </table>
       </div>
-      <p class="prov"><b>[存档 out/multiturn_eval_v2.md · 2026-09-30 · 同 seed 42 同套件 · era2 = 数据修复 + 1536 窗口重训的 dpo_768]</b>
+      <p class="prov"><b>[存档 docs/results/multiturn_eval_v2.md · 2026-09-30 · 同 seed 42 同套件 · era2 = 数据修复 + 1536 窗口重训的 dpo_768]</b>
       同一套件、同一把尺、只换"数据 + 训练窗"两个变量——这正是下一节要正式命名的方法（对照实验）的活例子。</p>
       <p>
         长上下文还有一个"零训练成本"的对照实验值得一读：不重训，只开 YaRN 推理外推
         （M05 的折叠加深读，<code>--rope-scaling</code> 把训练窗 380 插值外推到 2280）重跑 Suite B——
-        <b>[存档 out/multiturn_eval_yarn.md · 2026-09-28]</b>：≤1024 tok 全部在题（重复率 0.000），
+        <b>[存档 docs/results/multiturn_eval_yarn.md · 2026-09-28]</b>：≤1024 tok 全部在题（重复率 0.000），
         但 1536 tok 重复率 <b>0.842</b>、2048 tok <b>0.980</b>（192 token 跑满纯复读）。
         结论很干净：<b>位置编码外推能买到"不报错"，买不到"会处理"</b>——长上下文能力的根在预训练
         底座见过多长的序列，这正是当前 sft_full_mt 之后还有长上下文底座续训计划的原因
@@ -278,7 +278,7 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
       </p>
       <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/eval_multiturn.py --suites A --weights ours_dpo --device cuda:0 --out /tmp/m21_mt.md</span></code></pre>
       <p class="prov"><b>[说明]</b> 权重名可选 ours_dpo / ours_full_sft / official_full_sft（后者需 out/official/ 的官方权重）；
-      无 GPU 就读 out/multiturn_eval*.md 完成同等分析——两条路都是验收块承认的正式路径。</p>
+      无 GPU 就读 <a href="codeview/docs/results/multiturn_eval.md.html">docs/results/multiturn_eval*.md</a> 完成同等分析——两条路都是验收块承认的正式路径。</p>
 
       <h2 id="official">官方对照：同题集、strict 载入、控制变量</h2>
       <p>
@@ -527,13 +527,14 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
       <div class="accept" id="accept">
         <div class="acc-head">✅ M21 验收：eval_llm 真跑 + 官方对照表完成</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>第一步 eval_llm 需 64M 权重（下载见 <a href="m01_get_started.html#weights">M01 官方权重</a>，缺权重时无存档路线可替——本步必须有权重在位）；第二步对照表无 GPU 走存档读档路线（见下）。</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下执行（GPU 忙时也跑得动，模型只有 ~140MB；纯 CPU 慢一个量级但仍可完成）：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/eval_llm.py --weight full_sft</span>
 <span class="out">💬: 你有什么特长？</span>
 <span class="out">🧠: 我是一个高效的小参数AI模型，专注于提供精准、快速的信息和帮助。……</span>
 <span class="dim">……（8 题逐题输出）……</span>
 <span class="ok">平均吞吐: 153.8 tokens/s</span></code></pre>
-          <p>第二步，官方对照表（无 GPU 走存档路线：打开 <code>out/official_compare.md</code>，摘 Phase A 两行 + Phase B 平均一致率；有 GPU 可 <code>uv run python tools/compare_official.py --device cuda:0</code> 重跑，需 reference/minimind 与 out/official/ 权重在位）。</p>
+          <p>第二步，官方对照表（无 GPU 走存档路线：打开 <a href="codeview/out/official_compare.md.html">out/official_compare.md</a> 快照——源文件不随仓库分发，codeview 快照是唯一副本——摘 Phase A 两行 + Phase B 平均一致率；有 GPU 可 <code>uv run python tools/compare_official.py --device cuda:0</code> 重跑，需 reference/minimind 与 out/official/ 权重在位）。</p>
           <ul class="pass-criteria">
             <li>eval_llm 输出含 <b>8 个 💬 题块</b>（每题带 [N tok | Xms | finish] 行）与末行 <code>平均吞吐: … tokens/s</code>；</li>
             <li>对照表至少填齐三格：官方 pretrain strict <b>通过</b>、官方 full_sft strict <b>通过</b>、fp16 贪心平均一致率 <b>47.3%</b>（存档值），并能为每格说出"它证明了什么"；</li>
@@ -548,7 +549,7 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
               <code>--hidden-size/--num-hidden-layers</code> 对上训练配方（64 系小权重常见，见 M16 坑卡）；
               <b>吞吐明显低于本页数字</b> → 正常，吞吐取决于显卡与当时负载（本页数字本身就是在被占用的卡上测的），
               只比相对值；<b>compare_official 找不到 reference/minimind</b> → 该对照依赖官方原版代码目录与
-              out/official/ 官方权重，缺任一就走存档路线（读 out/official_compare.md 是正式路径，不是降级）；
+              out/official/ 官方权重，缺任一就走存档路线（读 <a href="codeview/out/official_compare.md.html">out/official_compare.md</a> 快照是正式路径，不是降级）；
               <b>eval_multiturn 报 CUDA OOM</b> → 64M 模型很少 OOM，多为并行训练占满显存，等空闲或加
               <code>--device cpu</code>（慢）。
             </p>

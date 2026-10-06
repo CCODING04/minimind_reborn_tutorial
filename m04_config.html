@@ -384,6 +384,7 @@ m.moe_intermediate_size = m.moe_intermediate_size or m.intermediate_size
       <div class="accept" id="accept">
         <div class="acc-head">✅ M04 验收</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>验收两步（pytest 与守门人报错复现）无需数据——报错发生在任何数据访问之前；变式练习"真跑一次冒烟"需 pretrain_t2t_mini（约 1.2GB，<code>uv run python tools/download_data.py --name pretrain_t2t_mini</code>，M01/M11）。</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下执行两步：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_configuration/test_loader.py -q</span>
 <span class="ok">..........                                                               [100%]</span>

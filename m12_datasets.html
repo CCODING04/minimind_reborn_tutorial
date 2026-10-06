@@ -319,14 +319,19 @@ def post_processing_chat(prompt_content, empty_think_ratio=0.2, remove_empty_thi
       <p>空谈到此为止，拿真实语料第一条（14 条消息、7 轮问答，含一条真 reasoning）完整走一遍：</p>
       <div class="codeblock"><div class="code-head"><span>/tmp/m12_first.py · 第一条样本逐 token 着色（段内文本打印截短）</span><span class="lang">python</span></div><pre class="code"><code>"""M12 实验：sft_t2t_mini.jsonl 第一条 → 渲染 → encode → 逐段标注哪段 -100。"""
 import json
+import os
+from pathlib import Path
 
 from transformers import AutoTokenizer
 
 from minimind_reborn.data.datasets import encode_sft_sample, render_conversations
 from minimind_reborn.data.loss_mask import build_labels, pattern_ids, scan_response_spans
 
+# 数据根：export MINIMIND_REBORN_DATA_ROOT=你的数据目录（M01；本脚本缺省 ~/minimind-reproduce/dataset）
+DATA_ROOT = Path(os.environ.get("MINIMIND_REBORN_DATA_ROOT", str(Path.home() / "minimind-reproduce" / "dataset")))
+
 tok = AutoTokenizer.from_pretrained("assets/tokenizer")
-line = open("/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/sft_t2t_mini.jsonl", "rb").readline()
+line = open(DATA_ROOT / "sft_t2t_mini.jsonl", "rb").readline()
 convs = json.loads(line)["conversations"]
 
 text = render_conversations(tok, convs, remove_empty_think=False)  # 固定抽签：空 think 原样保留
@@ -444,12 +449,15 @@ return head + body</code></pre></div>
         <b>后缀锚点完整匹配才计入区间；残段只计数（dangling）不监督</b>。真跑一遍完整链路——预算压到 30（连末轮回复都装不下）：
       </p>
       <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
-import json
+import json, os
+from pathlib import Path
 from transformers import AutoTokenizer
 from minimind_reborn.data.datasets import encode_sft_sample
 from minimind_reborn.data.loss_mask import pattern_ids
 tok = AutoTokenizer.from_pretrained('assets/tokenizer')
-convs = json.loads(open('/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/sft_t2t_mini.jsonl','rb').readline())['conversations']
+# 数据根来自 MINIMIND_REBORN_DATA_ROOT（M01；本处缺省 ~/minimind-reproduce/dataset）
+DATA = Path(os.environ.get('MINIMIND_REBORN_DATA_ROOT', str(Path.home() / 'minimind-reproduce' / 'dataset')))
+convs = json.loads(open(DATA / 'sft_t2t_mini.jsonl','rb').readline())['conversations']
 out = encode_sft_sample(tok, *pattern_ids(tok), convs, 30, remove_empty_think=False)
 print(out['stats'])
 print('labels 全 -100：', all(l == -100 for l in out['labels']))"</span>
@@ -579,12 +587,18 @@ for i, h in enumerate(reply_hashes):
         labels 与 input_ids 逐位相同，唯一的 -100 是填充位。真跑一条短文档（64 窗口）：
       </p>
       <div class="codeblock"><div class="code-head"><span>/tmp/m12_pre.py · Pretrain 短样本：pad 位的 label 处理</span><span class="lang">python</span></div><pre class="code"><code>"""M12 · Pretrain 短样本：pad 位的 label 处理。"""
+import os
+from pathlib import Path
+
 from transformers import AutoTokenizer
 
 from minimind_reborn.data.datasets import PretrainDataset
 
+# 数据根：export MINIMIND_REBORN_DATA_ROOT=你的数据目录（M01；本脚本缺省 ~/minimind-reproduce/dataset）
+DATA_ROOT = Path(os.environ.get("MINIMIND_REBORN_DATA_ROOT", str(Path.home() / "minimind-reproduce" / "dataset")))
+
 tok = AutoTokenizer.from_pretrained("assets/tokenizer")
-pd = PretrainDataset("/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/pretrain_t2t_mini.jsonl", tok, max_length=64)
+pd = PretrainDataset(DATA_ROOT / "pretrain_t2t_mini.jsonl", tok, max_length=64)
 best = min(range(50), key=lambda i: len(tok(pd.load_line(i)["text"]).input_ids))  # 前 50 行里挑最短的
 it = pd[best]
 ids, labs = it["input_ids"].tolist(), it["labels"].tolist()
@@ -628,11 +642,13 @@ print("正文区 label==id：", labs[:n_real] == ids[:n_real], "；pad 区全 -1
         把同一行的一次抽签同时喂给两边，格式变量被钉死，剩下的差异才可归因为"内容好坏"。真跑验证：
       </p>
       <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
-import random
+import random, os
+from pathlib import Path
 from transformers import AutoTokenizer
 from minimind_reborn.data.datasets import DPODataset
 tok = AutoTokenizer.from_pretrained('assets/tokenizer')
-ds = DPODataset('/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/dpo.jsonl', tok, max_length=128)
+DATA = Path(os.environ.get('MINIMIND_REBORN_DATA_ROOT', str(Path.home() / 'minimind-reproduce' / 'dataset')))
+ds = DPODataset(DATA / 'dpo.jsonl', tok, max_length=128)
 random.seed(3)
 agree = keep = 0
 for _ in range(30):
@@ -698,12 +714,14 @@ print(f'30 次抽样：chosen/rejected think 处理同进退 {agree}/30；其中
         </ul>
       </div>
       <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "
-import json
+import json, os
+from pathlib import Path
 from transformers import AutoTokenizer
 from minimind_reborn.constants import ASSISTANT_PREFIX_TEXT
 from minimind_reborn.data.datasets import render_conversations
 tok = AutoTokenizer.from_pretrained('assets/tokenizer')
-convs = json.loads(open('/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/sft_t2t_mini.jsonl','rb').readline())['conversations']
+DATA = Path(os.environ.get('MINIMIND_REBORN_DATA_ROOT', str(Path.home() / 'minimind-reproduce' / 'dataset')))
+convs = json.loads(open(DATA / 'sft_t2t_mini.jsonl','rb').readline())['conversations']
 text = render_conversations(tok, convs, remove_empty_think=False)
 ids = tok(text).input_ids
 c = text.find(ASSISTANT_PREFIX_TEXT) + len(ASSISTANT_PREFIX_TEXT)
@@ -796,6 +814,7 @@ print(f"渲染变体 {len(texts)} 种；全长 {len(ids)} token；监督 {sum(1 
       <div class="accept" id="accept">
         <div class="acc-head">✅ M12 验收</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>无外部依赖（验收 pytest 用合成夹具）；页内实验需 sft_t2t_mini.jsonl 与 dpo.jsonl（注册名 sft_t2t_mini / dpo_mini，<code>uv run python tools/download_data.py --name sft_t2t_mini</code> 同体例补齐，体积以 data registry 为准）。</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下两步。第一步，数据侧两组测试全绿（作者真实输出）：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_data/test_loss_mask.py tests/test_data/test_sft_pipeline.py -q</span>
 <span class="ok">........................                                                 [100%]</span>

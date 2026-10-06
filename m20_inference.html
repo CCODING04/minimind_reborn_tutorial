@@ -50,7 +50,7 @@
         <li>用插桩计数复现<b>双重温度 bug</b>，量化它对采样分布的影响面，并解释"为什么不随手修"与"该怎么锁"；</li>
         <li>说出<b>停止三重</b>各防什么事故——prompt 里的 eos 为什么不算数、循环级全停为什么服务批处理、解码后为什么还要截一刀；</li>
         <li>对照 ChatSession 的 history_budget 滑窗与训练侧 C1 截断，复述"训练怎么截，推理就怎么忘"；</li>
-        <li>把 engine 四层分层对应到 serve.py 的 OpenAI 风格端点，真跑一次服务并读懂流式 delta 与 M02 签名 bug 的终章。
+        <li>把 engine 四层分层对应到 serve.py 的 OpenAI 风格端点，真跑一次服务并读懂流式 delta 与 M02 签名 bug 的终章。</li>
       </ul>
 
       <h2 id="map">开工地图：M03 的②③④⑥站，今天拆到螺钉级</h2>
@@ -548,7 +548,8 @@ if eos_token_id is not None:
           <p>
             重复惩罚默认关闭（1.0）。贪心解码下小模型常出现短语级复读——正是这个旋钮的目标场景。
             脚本对同一 prompt 各生成 128 token（temperature=0 排除采样随机性），
-            统计字符级重复 5-gram 率（5-gram：连续 5 个字符的片段；重复率 = 出现多于一次的片段占比）：
+            统计字符级重复 5-gram 率（5-gram：连续 5 个字符的片段；重复率 = 出现多于一次的片段占比）。
+            注意 <code>build("full_sft")</code> 依赖 full_sft 权重——按 <a href="m01_get_started.html#weights">M01 权重获取</a> 下载的官方权重（需把 build 改传 <code>out_root="out/official"</code>）或 M16 自己训出的 <code>out/full_sft_768.pth</code> 均可；两手皆空时见验收排查的 tiny 回退：
           </p>
           <div class="codeblock"><div class="code-head"><span>/tmp/m20_rep_variant.py · 核心循环</span><span class="lang">python</span></div><pre class="code"><code>llm = MiniMindLLM.build("full_sft")
 msgs = [{"role": "user", "content": "介绍一下大语言模型"}]
@@ -584,6 +585,7 @@ for rp in (1.0, 1.5):
       <div class="accept" id="accept">
         <div class="acc-head">✅ M20 验收</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>full_sft 权重（<a href="m01_get_started.html#weights">M01 获取</a> 或 M16 产物；变式练习用，tiny 可回退）；serve 部分需 <code>uv sync --extra serving</code></p>
           <p>推理栈全家测试（generator 7 + chat_budget 7）：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_inference/ -q</span>
 <span class="out">..............                                                           [100%]</span>
@@ -608,6 +610,10 @@ for rp in (1.0, 1.5):
               <a href="#fn-rep">惩罚语义</a>，<code>test_stop_triple_batch_short_and_long</code> 回
               <a href="#stops">停止三重</a>，滑窗三兄弟回 <a href="#chatwin">chat 滑窗</a>；
               <b>插桩计数不是 4</b> → 检查两处钩子都打上了（只钩 sampling 或只钩 generator 会得 2）；
+              <b>FileNotFoundError（full_sft 权重不存在）</b> → 变式练习读 <code>out/full_sft_768.pth</code>：权重未下载 →
+              <a href="m01_get_started.html#weights">M01 权重获取</a>（下载后 build 改传 <code>out_root="out/official"</code>）；
+              或改用 tiny 权重——<code>build("full_sft", hidden_size=64, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2)</code>
+              吃 M01 冒烟的 <code>out/full_sft_64.pth</code>（复读更碎，但"惩罚压重复"的对比方向仍在）；
               <b>serve 起不来（SystemExit: 缺少服务依赖）</b> → <code>uv sync --extra serving</code>；
               <b>端口占用</b> → 换 <code>--port</code>；<b>tools/chat.py 的 TypeError</b> → 不是环境问题，
               那是<b>终章</b>猎场本体，去 <a href="#bug-chat">核对</a>；

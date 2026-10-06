@@ -585,6 +585,7 @@ for r in (4, 64):
       <div class="accept" id="accept">
         <div class="acc-head">✅ M18 验收：两条冒烟 + 参数占比断言</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>M16 tiny 产物（教师 out/pretrain_64.pth）+ sft_t2t_mini 数据（蒸馏/LoRA 冒烟均用 SFT 配方）；64M 🎮 配方需 GPU。第三步断言脚本纯 CPU 秒级。</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下三步。第一步，蒸馏 20 步（tiny 约 8 分钟，SFT 数据侧慢）：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_distill.yaml --set train.max_steps=20 --set train.resume=false</span>
 <span class="out">… | minimind.distill | 教师权重：pretrain_64.pth（0.53M）</span>
@@ -594,7 +595,27 @@ for r in (4, 64):
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_lora.yaml --set train.max_steps=20 --set train.resume=false</span>
 <span class="out">… | minimind.lora | LoRA rank=8：0.004M/0.537M（0.76%）</span>
 <span class="ok">… | minimind.trainer | 训练结束：best_val_loss=8.773457527160645 optimizer_steps=20</span></code></pre>
-          <p>第三步，参数占比断言脚本（/tmp/m18_ratio_assert.py，正文实测一的同款加断言）：</p>
+          <p>第三步，参数占比断言脚本——正文<a href="#lora-ratio">实测一</a>的同款加三条断言，全文如下（存为 /tmp/m18_ratio_assert.py）：</p>
+          <div class="codeblock"><div class="code-head"><span>/tmp/m18_ratio_assert.py · 64M rank=16 参数账三断言</span><span class="lang">python</span></div><pre class="code"><code>"""M18 验收第三步：LoRA 参数账三断言（64M 默认配方、rank=16，与 lora_64m.yaml 同款）。"""
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.lora import apply_lora
+from minimind_reborn.models.model import MiniMindForCausalLM
+
+m = MiniMindForCausalLM(MiniMindConfig())
+base = sum(p.numel() for p in m.parameters())             # 挂载前：基座参数
+apply_lora(m, rank=16)
+
+hooked = [n for n, mod in m.named_modules() if hasattr(mod, "lora") and n]
+lora_n = sum(p.numel() for n, p in m.named_parameters() if "lora" in n)
+names = sorted(set(h.rsplit(".", 1)[1] for h in hooked))  # 挂载点叶子名
+ratio = lora_n / base
+
+assert lora_n == 16 * (16 * 768 + 768 * 16) == 393_216    # 断言①：参数账 = 挂点 ×（A: r×768 + B: 768×r）
+assert len(hooked) == 16 and names == ["o_proj", "q_proj"]  # 断言②：恰 16 个挂点——方形 q/o 中选，非方阵 k/v 落选
+assert ratio &lt; 0.01                                       # 断言③："只训 &lt;1% 参数"兑现（实测 0.615%）
+
+print(f"LoRA rank=16: {lora_n:,}/{base:,} = {ratio:.3%}（挂载点 {len(hooked)} 个：q/o_proj × 8 层）")
+print("3 checks passed")</code></pre></div>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m18_ratio_assert.py</span>
 <span class="out">LoRA rank=16: 393,216/63,912,192 = 0.615%（挂载点 16 个：q/o_proj × 8 层）</span>
 <span class="ok">3 checks passed</span></code></pre>

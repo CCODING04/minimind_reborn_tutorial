@@ -669,6 +669,7 @@ for step in range(6):
       <div class="accept" id="accept">
         <div class="acc-head">✅ M13 验收：12 个测试 + 一个真实的 runs 目录</div>
         <div class="acc-body">
+          <p><b>本课需要：</b>第一条测试无外部依赖（纯 CPU）；第二条冒烟需 pretrain_t2t_mini 数据（约 1.2GB，<code>uv run python tools/download_data.py --name pretrain_t2t_mini</code>，M04/M11）。无 GPU 时同一命令自动以 device=cpu 运行（见下注），不必改任何参数。</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下依次执行。第一条，训练基件三件测试（LR 纯函数与官方语义、decay 分组、checkpoint 六件套、DDP 分母口径、ETA/指标口径）：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_training/test_common.py tests/test_training/test_lr_schedule.py tests/test_training/test_observability.py -q</span>
 <span class="out">............                                                             [100%]</span>
@@ -688,6 +689,13 @@ for step in range(6):
             <li>runs 目录四件套齐全，<code>metrics.jsonl</code> 非空且 <code>head</code> 可见 <code>train/loss</code>、<code>train/lr</code>、<code>train/grad_norm</code> 三类键，
               <code>env.json</code> 含你的 git commit 与 GPU 型号。</li>
           </ul>
+          <p>
+            无 GPU 替代：不需要任何参数——device 由 Trainer 自动探测（<code>cuda</code> 不可用即 <code>cpu</code>），
+            纯 CPU 机器上原样跑第二条命令即可，启动行相应变为 <code>dtype=bf16 device=cpu world=1</code>
+            （AMP 在 CPU 上退为空上下文，amp.py 的 nullcontext 分支），tok/s/mfu 数字与页面不同属正常。
+            核对字段时按 CPU 口径判：启动行三要素在、Epoch 进度与 optimizer_steps=3 同款、四件套齐全、
+            env.json 里 GPU 型号为空（只核对 git commit 与 torch 版本）即算通过。
+          </p>
           <details>
             <summary>失败了怎么办？（按症状分流）</summary>
             <p>
