@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M18 · 蒸馏与 LoRA：小成本改造 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m18">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M18</span><span>第四篇 · 训练</span></div>
         <h1>蒸馏与 LoRA：小成本改造</h1>
         <p class="lede">
@@ -43,8 +42,10 @@
           <span class="chip">对照：<code>training/distill/</code> · <code>models/lora.py</code> · <code>training/lora/</code> · <code>configs/{distill,lora}_64m.yaml</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>说出软标签比硬标签多出的"暗知识"，并回收 M02 伏笔：复述"模型自称 Qwen"背后的完整蒸馏链条；</li>
         <li>写出蒸馏损失 $\alpha\cdot\mathrm{CE} + (1-\alpha)\cdot T^2\cdot\mathrm{KL}$，解释温度为什么软化分布、KL 项为什么乘 $T^2$；</li>
@@ -53,8 +54,10 @@
         <li>用 merge 把 $W' = W + B\cdot A$ 写回主权重，实测合并前后输出一致（fp16 舍入级），说出 LoRA 推理零额外延迟的原因。
         </li>
       </ul>
+</section>
 
-      <h2 id="distill">蒸馏：抄答案，不如抄老师的思路</h2>
+<section class="panel">
+<h2 id="distill">蒸馏：抄答案，不如抄老师的思路</h2>
 
       <h3 id="soft-label">硬标签 vs 软标签：暗知识</h3>
       <p>
@@ -252,8 +255,10 @@ distill:
         1.25 意味着教师自己的熵还有 7.5 nat——这位教师也只学了些词频（毕竟它就是 tiny pretrain 存档）。
         冒烟的意义在于<b>链路通了、分项对账了</b>；真要尝到暗知识的甜头，得请大教师（64M 配方改 teacher 拓扑，🎮 需 GPU）。
       </p>
+</section>
 
-      <h2 id="lora">LoRA：只训 0.6% 的参数</h2>
+<section class="panel">
+<h2 id="lora">LoRA：只训 0.6% 的参数</h2>
 
       <h3 id="lora-idea">直觉：微调的增量是低秩的</h3>
       <p>
@@ -438,8 +443,10 @@ trainer.run()</code></pre></div>
       残差 0.0027 来自两处半精度：适配器按 fp16 存档（save_lora_only 的 <code>.half()</code>），
       合并也在 fp16 里做加法——部署视角这点误差换"结构与基座完全相同"。另实测 merge 后再
       <code>apply_lora</code>（在合并版上开新适配器）：新 B 全零，输出与合并版逐位一致——这是<b>正确</b>的叠层姿势，不是坑。</p>
+</section>
 
-      <h2 id="compare">四种改造方式对账</h2>
+<section class="panel">
+<h2 id="compare">四种改造方式对账</h2>
       <p>
         到这里，你手里有四种"改模型"的方式了。放进一张表（64M 口径，"改什么/花多少/适合什么"）：
       </p>
@@ -459,8 +466,10 @@ trainer.run()</code></pre></div>
         偏好数据 DPO"。<b>共同的经济逻辑</b>：训练要动的东西越少，同样 GPU 预算能养的模型/任务越多——
         蒸馏省的是<b>数据与教师算力的一次性成本</b>（换来学生更快的收敛），LoRA 省的是<b>每次微调的常驻成本</b>。
       </p>
+</section>
 
-      <h2 id="pit">坑卡：静默失败的两张面孔</h2>
+<section class="panel">
+<h2 id="pit">坑卡：静默失败的两张面孔</h2>
       <div class="callout warn">
         <div class="co-title">⚠️ 坑卡：merge 前忘了 apply_lora——不报错，存出来的还是基座</div>
         <ul class="pit-stages">
@@ -503,8 +512,10 @@ trainer.run()</code></pre></div>
           </li>
         </ul>
       </div>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · 软标签比硬标签多了什么信息？为什么同一批数据软标签"更稠密"？</summary>
@@ -545,8 +556,10 @@ trainer.run()</code></pre></div>
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">✏️ 变式 · rank=4 vs rank=64：可训参数量差多少？1% 门槛谁失守？</div>
         <div class="ex-body">
@@ -651,7 +664,10 @@ print("3 checks passed")</code></pre></div>
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>知识蒸馏 <span class="en">knowledge distillation</span></dt><dd>用教师模型的输出训练学生模型。软标签版直接对齐教师的完整概率分布（KL 项），保留暗知识；M02 的 SFT 语料（Qwen 生成）是其"采样成文本"的硬标签版。α=0 时不需要标注数据。</dd>
           <dt>软标签 / 硬标签 <span class="en">soft / hard label</span></dt><dd>硬标签 = one-hot 编号（只有一个 1）；软标签 = 完整概率分布。软标签多出的信息是错误答案之间的相对结构，每个位置的监督信号从 1 个数变成整个词表的 6400 个。</dd>
@@ -665,9 +681,12 @@ print("3 checks passed")</code></pre></div>
           <dt>merge <span class="en">权重合并</span></dt><dd>W'=W+B·A 写回主权重并剔除所有 .lora. 键：输出与"基座+旁路"恒等（fp16 舍入级，实测 max|Δ|≈0.003），推理结构与基座完全相同。坑：merge 前没 apply_lora 会静默存出纯基座。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
   <aside class="toc" id="toc"></aside>
 </div>
@@ -679,6 +698,6 @@ print("3 checks passed")</code></pre></div>
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

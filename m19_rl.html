@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M19 · RL 一览：rollout 的世界 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m19">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M19</span><span>第四篇 · 训练</span></div>
         <h1>RL 一览：rollout 的世界</h1>
         <p class="lede">
@@ -43,8 +42,10 @@
           <span class="chip">对照：<code>training/rollout.py</code> · <code>training/grpo/workflow.py</code> · <code>training/{ppo,agent}/</code> · <code>training/common/{rl_utils,rewards}.py</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>画出 GRPO 一步的五个阶段（prompt → N 条 completion → 打分 → 组内优势 → 更新），说出它与监督训练"逐 batch 前向"的形态差别；</li>
         <li>逐行读 <code>RolloutEngine</code> 协议与 torch/SGLang 两个实现，解释"推理引擎可插拔"为什么用 Protocol（协议）而不是继承；</li>
@@ -52,8 +53,10 @@
         <li>一句话讲清 PPO 的 actor-critic 分工与 Agent 的 observation 掩码（回收 M12 的 loss mask 思想），复述 mypy 在 f8af44d 里揪出的两个真 bug 的机制；</li>
         <li>真跑 <code>smoke_grpo</code> 冒烟，从日志里读出"一行 = 一次完整 rollout+更新"的节奏与 <code>adv_std</code> 的平局信号。</li>
       </ul>
+</section>
 
-      <h2 id="phenomenon">最后一族范式：从"给定的答案"到"试出来的后果"</h2>
+<section class="panel">
+<h2 id="phenomenon">最后一族范式：从"给定的答案"到"试出来的后果"</h2>
       <p>
         第四篇走过的四种范式有个共同点：训练信号都是<b>数据集里写好的</b>——SFT 给标准回答、
         DPO 给偏好对（哪个回答更好）、蒸馏给老师的分布、LoRA 只是换了参数化的 SFT。
@@ -78,8 +81,10 @@ RL 家族（本课）   ：grpo · ppo · agent                        ← 学"�
         （按格式打分，不判断答对与否）在 tiny 模型上产生不了可观测的学习曲线，后半课你会从日志里亲眼看到"无信号"长什么样。
         所以本课是<b>概念精读单元</b>：目标是看懂结构、跑通冒烟，不是调参炼丹——PPO 与 Agent 的深潜属于番外。
       </p>
+</section>
 
-      <h2 id="rollout">概念卡：rollout</h2>
+<section class="panel">
+<h2 id="rollout">概念卡：rollout</h2>
       <div class="callout tip">
         <div class="co-title">💡 概念卡：rollout（试走一局）</div>
         <p>
@@ -240,8 +245,10 @@ def create_rollout_engine(cfg, policy_model, tokenizer, device) -&gt; RolloutEng
         对比一下分界线——Trainer 收走的是"监督循环的全部机械动作"；RLSession 收走的是
         "任何训练都要的账本与落盘"，循环本身留给各 workflow（GRPO 的循环里要插 rollout 与打分，插不进 Trainer 的骨架）。
       </p>
+</section>
 
-      <h2 id="grpo">GRPO 精读：同题竞标</h2>
+<section class="panel">
+<h2 id="grpo">GRPO 精读：同题竞标</h2>
       <p>
         GRPO（Group Relative Policy Optimization，组相对策略优化）是 reborn 三个 RL 范式的中心，
         也是本课主体。先看 64M 配方全文——它比任何解释都短：
@@ -445,8 +452,10 @@ else:                                         # 分支 B：grpo 双面 clip（PP
         <li><b>kl_ref 的绝对值不超过 0.06。</b>策略几乎没离参考模型——平局为主 + 随机基座本来也没什么可保护，KL 锚很闲。
           真正的 RL 运行里这个数持续上涨时要警惕（奖励钻空子或崩坏前兆）。</li>
       </ul>
+</section>
 
-      <h2 id="ppo-agent">PPO 与 Agent 速览</h2>
+<section class="panel">
+<h2 id="ppo-agent">PPO 与 Agent 速览</h2>
       <p>
         同一个 rollout 引擎、同一份规则奖励、同一个 KL 锚——PPO 与 Agent 是在 GRPO 骨架上换零件。
         PPO（Proximal Policy Optimization）比 GRPO 老得多（2017，OpenAI），核心差异一张表：
@@ -538,8 +547,10 @@ response_old_logps.extend([0.0] * len(obs_delta))</code></pre></div>
           它会找到你能给的一切。
         </p>
       </div>
+</section>
 
-      <h2 id="hunt">🔍 猎场：mypy 揪出 PPO 两个真 bug</h2>
+<section class="panel">
+<h2 id="hunt">🔍 猎场：mypy 揪出 PPO 两个真 bug</h2>
       <p>
         本课最特别的一次修复：两个 bug 都不是人发现、也不是测试发现，是被<b>静态检查</b>发现的。
         f8af44d 的提交信息原话："mypy 接入（68→0，顺带修复 PPO all_reduce 透传与 rollout
@@ -594,8 +605,10 @@ response_old_logps.extend([0.0] * len(obs_delta))</code></pre></div>
         求全卡平均，让"停不停"的决定在所有卡上一致。修复前这一行根本执行不到，等于双卡 PPO
         从未真正可用，而没有任何测试知道这件事。
       </p>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · GRPO 为什么不需要价值网络（critic）？代价是什么？</summary>
@@ -636,8 +649,10 @@ response_old_logps.extend([0.0] * len(obs_delta))</code></pre></div>
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 · 预测：采样温度越高，组内方差越大，优势信号就越强吗？</div>
         <div class="ex-body">
@@ -735,7 +750,10 @@ response_old_logps.extend([0.0] * len(obs_delta))</code></pre></div>
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>rollout <span class="en">试走一局</span></dt><dd>让当前策略对 prompt 采样出 N 条完整回答再训练的循环：生成 → 打分 → 算优势 → 更新，用刚更新的模型继续采（on-policy：采样者即受训者）。与监督训练的区别：batch 是模型现场生成的，信号来自后果而非标准答案。</dd>
           <dt>RolloutEngine <span class="en">rollout 引擎协议</span></dt><dd>rollout()/update_policy() 两个方法的结构化接口（Protocol：同签名即可互换，不要求继承）。torch 实现直调推理栈（M20 地基），SGLang 实现走 HTTP + 磁盘热更新；配方 rollout_engine 一个键切换。update_policy 是"采样引擎拿到最新权重"的契约。</dd>
@@ -749,9 +767,12 @@ response_old_logps.extend([0.0] * len(obs_delta))</code></pre></div>
           <dt>AST 白名单求值 <span class="en">safe_math_eval</span></dt><dd>把表达式解析成 Python 语法树（AST），只放行白名单算子与 math 函数、幂运算防爆炸——模型生成的字符串永远不进 eval()。对不可信输入的静态防线（tools.py）。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
   <aside class="toc" id="toc"></aside>
 </div>
@@ -763,6 +784,6 @@ response_old_logps.extend([0.0] * len(obs_delta))</code></pre></div>
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

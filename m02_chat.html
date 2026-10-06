@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M02 · 与 64M 模型对话 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m02">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M02</span><span>第一篇 · 开箱：用</span></div>
         <h1>与 64M 模型对话</h1>
         <p class="lede">
@@ -42,8 +41,10 @@
           <span class="chip">对照：<code>tools/chat.py</code> · <code>inference/engine.py</code> · <code>out/*.pth</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>用 <code>MiniMindLLM.build()</code> 一次调用把<b>权重名</b>变成<b>可对话模型</b>，说清它替你收拢了哪几件脏活；</li>
         <li>转动 <b>temperature / top_p</b> 旋钮，观察输出"性格"的规律变化，并用概率重分配解释它；</li>
@@ -51,8 +52,10 @@
         <li>从一条 <code>TypeError</code> 回溯出发，定位<b>测试桩与真实入口的签名缝隙</b>，写出精确的一行修复；</li>
         <li>说出模型自称"Qwen / 通义千问"背后的数据来源真相。</li>
       </ul>
+</section>
 
-      <h2 id="weights-where">开跑之前：你的权重从哪来</h2>
+<section class="panel">
+<h2 id="weights-where">开跑之前：你的权重从哪来</h2>
       <p>本课的实验对象是 <b>SFT 后的对话模型</b>，但不是每个环境里都恰好有它。三条路线任选其一，都能走完本课：</p>
       <div class="table-scroll">
         <table>
@@ -77,8 +80,10 @@ load_inference_weights(model, 'out/full_sft_64.pth', strict=True)
 dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 llm = MiniMindLLM(model.to(dev).to(torch.float32), _load_tokenizer(), dev, torch.float32)</code></pre></div>
       <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> build() 直连报 <code>size mismatch for model.layers.0.self_attn.q_norm.weight ... [16] vs [8]</code>；手动组装后正常生成（64 token 词流）。build() 不含头数参数是当前引擎的设计取舍——🏭 工业界的 <code>from_pretrained</code> 从权重自带的 config.json 读全部形状，就没有这类缝。</p>
+</section>
 
-      <h2 id="temps">黑箱先行：三档温度，三种性格</h2>
+<section class="panel">
+<h2 id="temps">黑箱先行：三档温度，三种性格</h2>
       <p>
         这一节把模型当黑箱。同一个问题「你好，请介绍一下你自己」，同一份权重 <code>full_sft_768.pth</code>（SFT 后的 64M 模型），只动一个旋钮：temperature。三组输出全部来自作者实测，先看对照表：
       </p>
@@ -138,8 +143,10 @@ llm = MiniMindLLM(model.to(dev).to(torch.float32), _load_tokenizer(), dev, torch
       <p>
         最后是最有趣的一条：模型为什么自称 <b>Qwen / 通义千问</b>？因为它没说谎——SFT 训练数据正是从 Qwen 系列<b>蒸馏</b>来的（用大模型的回答训练小模型）。语料里充满"我是通义千问"式的自我介绍，模型把"自报家门"这个模式连同门牌号一起学了进来。一个模型的"自我认知"，就是它训练数据的一面镜子——M16 训你自己的 SFT、M18 讲蒸馏时，这条线会再接上。
       </p>
+</section>
 
-      <h2 id="build">让权重开口：MiniMindLLM.build()</h2>
+<section class="panel">
+<h2 id="build">让权重开口：MiniMindLLM.build()</h2>
       <p>
         上面那些输出是怎么跑出来的？只有一个入口：
         <a href="codeview/src/minimind_reborn/inference/engine.py.html"><code>inference/engine.py</code></a>
@@ -206,8 +213,10 @@ print("[finish=%s tokens=%d latency=%sms]" % (out["finish_reason"], out["generat
       <p>
         注意 <code>generate_text()</code> 返回的不是字符串而是<b>结构化 dict</b>：<code>content</code>、<code>reasoning_content</code>（思考段，无则 None）、<code>finish_reason</code>、<code>generated_tokens</code>、<code>latency_ms</code>，外加 <code>request_id</code> 追溯字段——对照表里那些数字的来源，不用拿秒表掐。
       </p>
+</section>
 
-      <h2 id="base-vs-sft">基座 vs SFT：只会文字接龙的模型</h2>
+<section class="panel">
+<h2 id="base-vs-sft">基座 vs SFT：只会文字接龙的模型</h2>
       <p>
         <code>out/</code> 里还有一位重要角色：<code>pretrain_768.pth</code>——只做过 pretrain 的<b>基座</b>。同一句「春天来了，」（seed=7，temperature=0.8，48 token），三个组合的实测：
       </p>
@@ -234,8 +243,10 @@ print("[finish=%s tokens=%d latency=%sms]" % (out["finish_reason"], out["generat
       <p>
         基座的训练目标只有一件事：<b>给定前文预测下一 token</b>（文字接龙）。它没学过"对话"这个游戏——pretrain 语料里混着大量 chat 格式文本，所以它"见过"模板词、堆得出来，但没学过"在 assistant 标记后以助手身份回答"。用对话模板问基座，等于递给它一张对话表格让它续写，它只会把见过的表格词一个个填下去；而 <code>pretrain_mode=True</code> 的直拼路径（拼 <code>bos + 文本</code>，不套模板）只要求续写——基座唯一会玩的游戏——反而通顺。SFT 的意义就在第三行：同一张模板，full_sft 知道怎么接。<code>tools/chat.py</code> 里 <code>pretrain_mode = "pretrain" in args.weight</code> 就是在自动做这个降级。M16 你会亲手训出这两类权重再对照——这张表将从"现象"变成你自己的结论。
       </p>
+</section>
 
-      <h2 id="bug">🔍 bug 猎场：过测的桩，跑不起来的入口</h2>
+<section class="panel">
+<h2 id="bug">🔍 bug 猎场：过测的桩，跑不起来的入口</h2>
       <p>
         本课高潮。README 的 quick start 里写着 <code>uv run python tools/chat.py --weight full_sft</code>，
         我们照做——用管道喂一句话（免交互）：
@@ -297,8 +308,10 @@ out = self.generate_fn(inputs["input_ids"], inputs["attention_mask"], self.gen)
           依赖注入（把 generate_fn 传给 ChatSession）换来可测性，也给了"桩可以为所欲为"的自由。契约不锁定，桩会漂离真实接口——测试照绿，线上照崩。两种低成本锁定：① <b>契约测试</b>——断言 <code>inspect.signature(MiniMindLLM.generate_tokens)</code> 与 ChatSession 的调用形式匹配；② <b>加一条真实（tiny）引擎 + ChatSession 的接线测试</b>，让缝隙每次都被踩到。M01 的 make smoke 给训练链做了接线冒烟，推理链没有对应物——此 bug 在 M02 呈现、M20 回收修复。
         </p>
       </div>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · 模型为什么自称 Qwen / 通义千问？温度调到 1.5 又自称小明，说明什么？</summary>
@@ -331,8 +344,10 @@ out = self.generate_fn(inputs["input_ids"], inputs["attention_mask"], self.gen)
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 · 同一问题跑两次，输出会完全一样吗？</div>
         <div class="ex-body">
@@ -414,7 +429,10 @@ print('[finish=%s tokens=%d latency=%sms]' % (out['finish_reason'], out['generat
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>logits</dt><dd>模型对词表每个候选 token 的原始打分（softmax 归一化之前的分数）；采样旋钮全部作用在它身上。</dd>
           <dt>采样 <span class="en">sampling</span></dt><dd>从下一个 token 的概率分布中随机抽取一个 token；temperature/top_k/top_p 都是重塑这个分布的旋钮。</dd>
@@ -428,9 +446,12 @@ print('[finish=%s tokens=%d latency=%sms]' % (out['finish_reason'], out['generat
           <dt>测试桩 <span class="en">test stub</span></dt><dd>测试中替身被注入依赖的简化实现；桩与真实接口的契约不锁定，就会产生"测试绿、线上崩"的缝隙。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
 
   <aside class="toc" id="toc"></aside>
@@ -443,6 +464,6 @@ print('[finish=%s tokens=%d latency=%sms]' % (out['finish_reason'], out['generat
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

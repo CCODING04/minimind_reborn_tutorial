@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M22 · 全链路与毕业实验：从一条命令到一个结论 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m22">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M22</span><span>第六篇 · 毕业</span><span class="badge-ms">🏁C</span></div>
         <h1>全链路与毕业实验：从一条命令到一个结论</h1>
         <p class="lede">
@@ -43,8 +42,10 @@
           <span class="chip">对照：<code>tools/run_full.sh</code> · <code>configs/smoke/</code> · <code>Makefile</code> · <code>tests/</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>逐段精读 run_full.sh，画出"数据下载→pretrain→SFT→DPO"四段的产物衔接图，说出每段递给下一棒的接力棒是什么；</li>
         <li>按依赖顺序真跑 8 个 smoke 配方，为每个范式写一句"验证了什么"，并区分"管道通"与"学到东西"两种绿灯；</li>
@@ -63,8 +64,10 @@
   │  弱项清单 → 假设 → 设计（单变量）→ 数据 → 结论 → 新弱项   │
   └────────────────────────────────┬───────────────────────┘
                                    └─→ 回到起点，跑下一圈</code></pre>
+</section>
 
-      <h2 id="runfull">run_full.sh 精读：一条命令的全链路</h2>
+<section class="panel">
+<h2 id="runfull">run_full.sh 精读：一条命令的全链路</h2>
       <p>
         M16 用接力赛讲过两棒的交接（<code>init_from: pretrain</code> 严格加载上一棒产物）。
         <a href="codeview/tools/run_full.sh.html">tools/run_full.sh</a> 把整场接力赛写成 20 行 shell——
@@ -145,8 +148,10 @@ echo "[chain] all done $(date)" >> "$MARKER"</code></pre></div>
         单 epoch：对齐（alignment）阶段在工业界同样是三段里最便宜的一段，贵的是教它说话（pretrain）
         和教它好好说话（SFT）。主线不追这个量级：八范式冒烟用同一形状的 tiny 配方，几分钟跑完全部八段。
       </p>
+</section>
 
-      <h2 id="smoke8">八范式冒烟：几分钟跑完八种训练</h2>
+<section class="panel">
+<h2 id="smoke8">八范式冒烟：几分钟跑完八种训练</h2>
       <p>
         冒烟测试（smoke test，M01 定义的"通电检查"：不验证效果，验证链路没断）在 reborn 里有 8 个配方，
         全在 <code>configs/smoke/</code>。你在课程里已点亮过六盏灯——M16 的 pretrain/sft、M17 的 dpo、
@@ -198,8 +203,10 @@ done</span>
         这正是"管道通"与"学到东西"的分界：冒烟的绿灯只担保前者。诚实地知道每个绿灯担保什么、
         不担保什么——这本身就是毕业要求。
       </p>
+</section>
 
-      <h2 id="tests">全量测试：85 个绿灯，和一个新坑</h2>
+<section class="panel">
+<h2 id="tests">全量测试：85 个绿灯，和一个新坑</h2>
       <p>
         M01 的第一条绿灯是 <code>make smoke</code> 三段全绿；当时课程按 DESIGN 口径说仓库有 49 个单元测试。
         课程写作期间仓库在继续生长（M14 的 checkpoint 回归、M17–M21 期间工程化的每一课都往 tests/ 里加锚点），
@@ -247,8 +254,10 @@ done</span>
         这个坑与本课主题严丝合缝：被测系统会读环境开关时，<b>环境本身就是变量</b>——
         单变量对照的控制清单里必须包含它。你在毕业实验里会再遇到这句话。
       </p>
+</section>
 
-      <h2 id="gradexp">毕业实验：从弱项清单到一个结论</h2>
+<section class="panel">
+<h2 id="gradexp">毕业实验：从弱项清单到一个结论</h2>
       <p>
         全课唯一的新概念，也是最后一件行李。<b>研究迭代闭环</b>：
       </p>
@@ -370,8 +379,10 @@ for t in (0.7, 0.85):                        # 自变量：唯一的旋钮
           这条纪律对训练实验同样成立——选题④若同时改 rank 与 lr，得出的任何 loss 差异都没有主人。
         </p>
       </div>
+</section>
 
-      <h2 id="milestone-c">🏁 里程碑 C</h2>
+<section class="panel">
+<h2 id="milestone-c">🏁 里程碑 C</h2>
       <div class="milestone">
         <div class="ms-head"><span class="flag">🏁</span>
           <div>
@@ -410,8 +421,10 @@ for t in (0.7, 0.85):                        # 自变量：唯一的旋钮
           </p>
         </div>
       </div>
+</section>
 
-      <h2 id="next">下一步地图</h2>
+<section class="panel">
+<h2 id="next">下一步地图</h2>
       <ul>
         <li><b>官方 minimind 生态</b>：reborn 的上游 jingyaogong/minimind 提供不同规模的模型与更多语料、
           任务——你的 reborn 经验可以整套平移去读官方源码；仓库里也有现成的下一档练手素材：
@@ -425,8 +438,10 @@ for t in (0.7, 0.85):                        # 自变量：唯一的旋钮
         <li><b>番外线</b>：PPO 深潜（M19 只到冒烟——critic 训练动力学与 KL 惩罚值得一个完整项目）；
           或把 M21 弱项清单最后一条还掉（给 eval_llm 补种子与贪心模式——它本身就是一次漂亮的毕业实验）。</li>
       </ul>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · 全链路为什么要一条命令？run_full.sh 为什么对数据下载 fail-fast，对三个训练段却只记 exit 码不停链？</summary>
@@ -471,8 +486,10 @@ for t in (0.7, 0.85):                        # 自变量：唯一的旋钮
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 · 毕业实验：这就是练习本身</div>
         <div class="ex-body">
@@ -554,7 +571,10 @@ done</span>
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>研究迭代闭环 <span class="en">research iteration loop</span></dt><dd>弱项清单 → 假设 → 单变量对照设计 → 数据 → 结论（含边界）→ 新弱项，回到起点再跑一圈。本课唯一新概念，也是全课程的方法论收束：评测的终点不是分数，是下一圈的假设（M21）。</dd>
           <dt>单变量对照实验 <span class="en">controlled experiment</span></dt><dd>只动一个旋钮（自变量）、只量约定的指标（因变量）、冻结其余一切（控制变量——含随机种子与环境变量）的实验设计。多变量同时动得到的只是混合效应，无法归因。</dd>
@@ -566,13 +586,16 @@ done</span>
           <dt>全链路脚本 <span class="en">run_full.sh</span></dt><dd>20 行 shell 串起 download→pretrain→SFT→DPO：nohup 无人值守、各段独立日志、MARKER 记 exit 码、resume 默认开断点重跑。工业界同构物是训练平台的 DAG 流水线。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

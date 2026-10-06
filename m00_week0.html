@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M00 · Week-0 准备：环境与前置自测 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m00">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M00</span><span>第 0 篇 · 准备</span></div>
         <h1>Week-0 准备：环境与前置自测</h1>
         <p class="lede">
@@ -43,8 +42,10 @@
           <span class="chip">对照：<code>uv</code> · <code>git</code> · <code>python</code> 三件工具的版本自检</span>
         </div>
       </header>
+</section>
 
-      <h2 id="self">三档受众与自测</h2>
+<section class="panel">
+<h2 id="self">三档受众与自测</h2>
       <p>
         这门课的门槛不在数学、不在硬件，在<b>你从哪一档起步</b>。先诚实回答一个问题：
         下面三行描述里，哪一行是你？
@@ -84,8 +85,10 @@
         如果你想要更狠的版本——先自己写、再与 reborn 对拍——那条路叫
         <a href="btrack.html">B 轨 · 自写挑战</a>，总纲立在那里，随时可加入，不急于今天决定。
       </p>
+</section>
 
-      <h2 id="toolbox">最小工具箱</h2>
+<section class="panel">
+<h2 id="toolbox">最小工具箱</h2>
       <p>
         这门课只需要一件"武器"：一个终端。下面三组技能是<b>最小集</b>——
         每组都给出"你会用它做什么"，对照判断自己是否已具备：
@@ -150,8 +153,10 @@ pairs = [(cur, nxt) <span class="k">for</span> cur, nxt <span class="k">in</span
         <b>3</b> 没有输出，但你知道 <code>text</code> 里是文件全文、文件已经关好。
         三题全通，你就是第②档以上。
       </p>
+</section>
 
-      <h2 id="resources">资源清单（按档取用）</h2>
+<section class="panel">
+<h2 id="resources">资源清单（按档取用）</h2>
       <p>
         只列<b>官方或事实标准</b>的中性资源，每档 2-3 个，全部免费。
         原则：<b>用到什么读什么，不必通读</b>——先修的目标是"回到主线"，不是"学完另一门课"。
@@ -234,8 +239,10 @@ pairs = [(cur, nxt) <span class="k">for</span> cur, nxt <span class="k">in</span
         </div>
       </div>
       <p class="prov"><b>[说明]</b> 版本号仅为作者环境示意（uv 0.12.5 · 2026-10-06），你机器上的数字不同不影响验收；三盏绿灯的判定标准只有"命令存在且不报错"。</p>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · 为什么 <code>python -c "import json"</code> 一点输出都没有？</summary>
@@ -268,8 +275,10 @@ pairs = [(cur, nxt) <span class="k">for</span> cur, nxt <span class="k">in</span
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 · <code>uv run python -c "print(1)"</code> 和裸 <code>python -c "print(1)"</code> 有什么差别？</div>
         <div class="ex-body">
@@ -307,7 +316,10 @@ pairs = [(cur, nxt) <span class="k">for</span> cur, nxt <span class="k">in</span
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>终端 <span class="en">terminal</span></dt><dd>敲命令、看输出的文本界面；这门课的"驾驶舱"，每节课都在这里度过。</dd>
           <dt>环境变量 <span class="en">environment variable</span></dt><dd>整个终端会话里所有程序都能读到的全局配置值，把配置写在代码外面（如 <code>MINIMIND_REBORN_DATA_ROOT</code>）。</dd>
@@ -315,14 +327,17 @@ pairs = [(cur, nxt) <span class="k">for</span> cur, nxt <span class="k">in</span
           <dt>PATH</dt><dd>一个环境变量：终端按它列出的目录顺序查找你敲的命令——裸 <code>python</code> 用谁的，由它决定。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
 
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

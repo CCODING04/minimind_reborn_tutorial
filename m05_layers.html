@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M05 · 地基件：RMSNorm 与 RoPE | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m05">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M05</span><span>第二篇 · 模型：造</span></div>
         <h1>地基件：RMSNorm 与 RoPE</h1>
         <p class="lede">
@@ -43,8 +42,10 @@
           <span class="chip">对照：<code>models/layers.py</code> · <code>tests/test_models/test_rope_scaling.py</code> · <code>models/config.py</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>说出 RMSNorm 与 LayerNorm 的两点差异（去均值、去偏置），解释为什么现代 LLM 甘愿"少一次统计"；</li>
         <li>复现 bf16 直算 vs fp32 纪律的误差实验，用实测数字辩护"<b>敏感算子精度纪律</b>"（M07/M17 复用）；</li>
@@ -53,8 +54,10 @@
         <li>讲清 YaRN 折叠深读里"常数曾是 2048"为什么是 bug（真实训练窗 380），把 <code>test_rope_scaling.py</code> 的 6 个测试当回归锚点。</li>
       </ul>
       <p><b>配套阅读：</b>本课的 mean(-1, keepdim=True)、x.float() 精度纪律、零拷贝切片——逐条详解（直觉/为什么/坑/最小示例）见 <a href="pytorch_guide.html">附录 · PyTorch 特殊用法指南</a>，档 A 学员随查随练。</p>
+</section>
 
-      <h2 id="map">从尺寸到零件：⑤站的第一块砖</h2>
+<section class="panel">
+<h2 id="map">从尺寸到零件：⑤站的第一块砖</h2>
       <p>
         造零件的原料已在手：M04 的守门人把 <code>ModelConfig</code> 换算成 <code>MiniMindConfig</code>（768 宽、8 层、
         8 个 query 头 / 4 个 KV 头、head_dim=96、词表 6400）。M03 ⑤站画过 Block 图纸——<b>先归一化再进子层的
@@ -77,8 +80,10 @@ x₁ ──┬──────────────────────
         （KV 头扩张，M07 的主角，本课只看一眼形状）。
       </p>
       <p class="prov"><b>[事实核对]</b> 行数与行号来自 <code>wc -l</code> 与源码逐行核对（layers.py 98 行；17 个 RMSNorm = 每层 2 个（model.py:28-29）× 8 层 + 出口 1 个（model.py:63））。</p>
+</section>
 
-      <h2 id="rmsnorm">RMSNorm：少一次统计的归一化</h2>
+<section class="panel">
+<h2 id="rmsnorm">RMSNorm：少一次统计的归一化</h2>
 
       <h3 id="rmsnorm-why">它到底归一化了什么</h3>
       <p>
@@ -166,8 +171,10 @@ print("scale 因子误差: bf16 %.4f%%  fp32 %.4f%%" % (
           M17 的 DPO 对数概率——同一思想，三处复用。
         </p>
       </div>
+</section>
 
-      <h2 id="rope">RoPE：用旋转角度编码位置</h2>
+<section class="panel">
+<h2 id="rope">RoPE：用旋转角度编码位置</h2>
 
       <h3 id="rope-why">直觉先行：模型天然不知道词序</h3>
       <p>
@@ -347,8 +354,10 @@ for m, n in [(2, 6), (30, 34), (57, 61)]:
         </p>
         <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> [2,15] 与 [8,21] 两组边界、end/orig_max 比值均由脚本按 inv_dim 公式实算；注释引文逐字来自 config.py:9-10 与 tests/test_models/test_rope_scaling.py:1-5。</p>
       </details>
+</section>
 
-      <h2 id="repeatkv">repeat_kv：只看一眼形状（M07 的主角）</h2>
+<section class="panel">
+<h2 id="repeatkv">repeat_kv：只看一眼形状（M07 的主角）</h2>
       <p>
         layers.py 的第 4 个部件本课不深讲——它属于 GQA（分组查询注意力，多头注意力的省显存版，M07 主角）。
         一句话：<b>64M 模型有 8 个 q 头却只有 4 个 KV 头，这个函数把每个 KV 头复制 n_rep=2 份对齐 q 头数</b>。
@@ -367,8 +376,10 @@ print(repeat_kv(x, 2)[0, 0].tolist())"</span>
         <code>[:, :, :, None, :].expand(...).reshape(...)</code> 三连：插一维、expand 广播出 n_rep 份（零拷贝视图）、
         reshape 物理成形。为什么 KV 头要少一半、复制为何不浪费——M07 揭晓；这里只见其形。
       </p>
+</section>
 
-      <h2 id="pit">坑卡：bf16 直接归一化，坏得很安静</h2>
+<section class="panel">
+<h2 id="pit">坑卡：bf16 直接归一化，坏得很安静</h2>
       <div class="callout warn">
         <div class="co-title">⚠️ 坑卡：删掉那行 .float()，什么都不会发生——直到发生</div>
         <ul class="pit-stages">
@@ -401,8 +412,10 @@ print(repeat_kv(x, 2)[0, 0].tolist())"</span>
           三为 6 个专属回归测试。工程判断：地基件值得亲手写一次，上层结构再谈复用。
         </p>
       </div>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · RMSNorm 比 LayerNorm 少算了什么？为什么敢少？</summary>
@@ -443,8 +456,10 @@ print(repeat_kv(x, 2)[0, 0].tolist())"</span>
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 1 · 距离越大，内积越小吗？</div>
         <div class="ex-body">
@@ -561,7 +576,10 @@ print('eps=0   :', RMSNorm(768, eps=0.0)(x).abs().sum().item())"</span></code></
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>RMSNorm <span class="en">root mean square normalization</span></dt><dd>只除均方根、不减均值、无偏置的归一化层；唯一可学习参数是逐维缩放 γ。比 LayerNorm 少一次统计，LLaMA/Qwen 系标配。</dd>
           <dt>bf16 <span class="en">bfloat16</span></dt><dd>16 位浮点：8 位指数（与 fp32 同宽，动态范围不缩水）+ 7 位显式尾数（精度约 0.4%）。训练与 GPU 推理用它省一半存储与带宽。</dd>
@@ -573,9 +591,12 @@ print('eps=0   :', RMSNorm(768, eps=0.0)(x).abs().sum().item())"</span></code></
           <dt>eps <span class="en">epsilon</span></dt><dd>归一化分母里的数值稳定小量（模型用 1e-6）；防 mean(x²)=0 时 rsqrt 爆 inf——0×∞ 规定为 NaN，会沿前向传染。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
 
   <aside class="toc" id="toc"></aside>
@@ -588,6 +609,6 @@ print('eps=0   :', RMSNorm(768, eps=0.0)(x).abs().sum().item())"</span></code></
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

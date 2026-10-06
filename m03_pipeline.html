@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M03 · 全链路地图：一次请求的一生 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m03">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M03</span><span>第一篇 · 开箱：用</span></div>
         <h1>全链路地图：一次请求的一生</h1>
         <p class="lede">
@@ -43,26 +42,49 @@
           <span class="chip">对照：<code>inference/</code> 全目录 + <code>models/</code> 总览</span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li><b>默画</b>七站地图：每站的名字、职责与对应源码文件；</li>
         <li>解释<b>自回归解码</b>循环——为什么每步只喂一个新 token、为什么 decode 只解码生成段；</li>
         <li>说出推理栈四层（sampling → generator → chat → engine）的边界与"内核只认 token"的含义；</li>
         <li>跑一次<b>七站巡游</b>拿到七行证据，并预测 + 验证 <code>temperature=0</code> 的行为变化。</li>
       </ul>
+</section>
 
-      <h2 id="map">开篇地图：七站巡游</h2>
+<section class="panel">
+<h2 id="map">开篇地图：七站巡游</h2>
       <p>先全景后细节。一次请求依次经过七站，右边标了 reborn 里真正干活的文件：</p>
-      <pre class="ascii"><code>你输入「你好」
-  ↓ ① tokenizer 编码     assets/tokenizer + HF tokenizers       「你好，世界」→ [1968, 294, 1950]
-  ↓ ② chat 模板渲染       inference/chat.py  render_chat         消息→&lt;|im_start|&gt;user\n你好&lt;|im_end|&gt;…
-  ↓ ③ engine 门面         inference/engine.py build/generate_tokens   权重 · dtype 回退 · 设备
-  ↓ ④ generator 内核      inference/generator.py generate       预分配 KV cache · 增量喂入 · 停止三重
-  ↓ ⑤ model 前向          models/model.py + attention/layers    RoPE · GQA · SwiGLU 逐层
-  ↓ ⑥ sampling 采样       inference/sampling.py 纯函数链        logits → 下一个 token id
-  ↓ ⑦ decode + 后处理     tokenizer.decode + split_reasoning    token → 文本（拆 &lt;think&gt;）
-模型输出「你好！有什么…」</code></pre>
+      <div class="flowchart" aria-label="七站地图">
+    <div class="fc-node fc-io"><span class="fc-station">你输入「你好」</span></div>
+    <div class="fc-arrow">↓</div>
+    <div class="fc-node"><span class="fc-station">① tokenizer 编码</span><span class="fc-file">assets/tokenizer + HF tokenizers</span>
+      <span class="fc-desc">「你好，世界」→ [1968, 294, 1950]</span></div>
+    <div class="fc-arrow">↓</div>
+    <div class="fc-node"><span class="fc-station">② chat 模板渲染</span><span class="fc-file">inference/chat.py · render_chat</span>
+      <span class="fc-desc">消息 → &lt;|im_start|&gt;user
+你好&lt;|im_end|&gt;…</span></div>
+    <div class="fc-arrow">↓</div>
+    <div class="fc-node"><span class="fc-station">③ engine 门面</span><span class="fc-file">inference/engine.py · build / generate_tokens</span>
+      <span class="fc-desc">权重加载 · dtype 回退 · 设备搬运</span></div>
+    <div class="fc-arrow">↓</div>
+    <div class="fc-node fc-loop"><span class="fc-station">④ generator 内核</span><span class="fc-file">inference/generator.py · generate</span>
+      <span class="fc-desc">预分配 KV cache · 增量喂入 · 停止三重</span></div>
+    <div class="fc-arrow">↓</div>
+    <div class="fc-node fc-loop"><span class="fc-station">⑤ model 前向</span><span class="fc-file">models/model.py + attention / layers</span>
+      <span class="fc-desc">RoPE · GQA · SwiGLU 逐层（8 × Block）</span></div>
+    <div class="fc-arrow">↓</div>
+    <div class="fc-node fc-loop"><span class="fc-station">⑥ sampling 采样</span><span class="fc-file">inference/sampling.py · 纯函数链</span>
+      <span class="fc-desc">logits → 下一个 token id</span></div>
+    <div class="fc-arrow">↓</div>
+    <div class="fc-node"><span class="fc-station">⑦ decode + 后处理</span><span class="fc-file">tokenizer.decode + split_reasoning</span>
+      <span class="fc-desc">token → 文本（拆 &lt;think&gt; 块）</span></div>
+    <div class="fc-arrow">↓</div>
+    <div class="fc-node fc-io"><span class="fc-station">模型输出「你好！有什么…」</span></div>
+    <p class="fc-note">实线框 = 处理站；④⑤⑥（左侧蓝条）组成自回归循环——每生成一个 token 转一圈；①②③只在请求开始跑一次，⑦收尾。</p>
+  </div>
       <p>
         注意方向性：①②③只在<b>请求开始时跑一次</b>；④⑤⑥组成的循环每生成一个 token 转一圈，⑦收尾。
         tokenizer 往返可以放心依赖——「你好，世界」→ <code>[1968, 294, 1950]</code>，decode 完全还原，词表 6400
@@ -80,8 +102,10 @@
           这正是 KV cache（M06）存在的原因：历史算过的，不必每步重算。
         </p>
       </div>
+</section>
 
-      <h2 id="stations">逐站讲解</h2>
+<section class="panel">
+<h2 id="stations">逐站讲解</h2>
       <p>每站三样：职责一句话、精选代码、一个"停一下"观察点。</p>
 
       <h3 id="st1">① tokenizer：把字变成 id</h3>
@@ -261,8 +285,10 @@ def split_reasoning(text):                      <span class="c"># chat.py:28</sp
         <code>(None, 原文)</code>——对"没有的东西"保持无操作；decode 用 <code>skip_special_tokens=True</code>，
         模板标记不漏进答案。
       </p>
+</section>
 
-      <h2 id="layers">分层思想：内核只认 token，文本层才认字</h2>
+<section class="panel">
+<h2 id="layers">分层思想：内核只认 token，文本层才认字</h2>
       <p>七站收拢成四层，每层只对上一层负责：</p>
       <div class="table-scroll">
         <table>
@@ -308,8 +334,10 @@ def split_reasoning(text):                      <span class="c"># chat.py:28</sp
 <span class="ok">pretrain_mode  → '，我有一个问题想问。你好，欢迎来到这里。请问有什么问题需要我的帮助吗？我最近'</span></code></pre>
         <p class="prov">[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130 · pretrain_768.pth · max_new_tokens=24]</p>
       </div>
+</section>
 
-      <h2 id="tour">动手巡游：七行证据</h2>
+<section class="panel">
+<h2 id="tour">动手巡游：七行证据</h2>
       <p>
         把脚本存到仓库<b>外</b>（如 <code>/tmp/tour.py</code>，临时文件不进 reborn 仓库），在
         <code>Reproduce/minimind_reborn/</code> 下运行。权重用 <code>out/pretrain_768.pth</code>
@@ -364,8 +392,10 @@ with torch.inference_mode():
         <li><b>⑥行数字</b>：链前 top1 是 <code>294</code>——①站「你好<b>，</b>世界」的那个逗号；截断重归一化后 top5 概率几乎翻倍（0.080→0.157），但<b>排名不变</b>——截尾改变概率质量，不改变次序。</li>
         <li><b>⑦行 finish=length</b>：6 步没抽中 eos，按步数上限停——停止三重"前两条都没触发"的常态分支（④行形状解读见 <a href="#st4">st4 停一下</a>）。</li>
       </ul>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · 为什么 decode 只解码 sequences[0, prompt_len:]，而不是整个序列？</summary>
@@ -399,8 +429,10 @@ with torch.inference_mode():
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 · 把巡游脚本的 temperature 改成 0</div>
         <div class="ex-body">
@@ -458,7 +490,10 @@ with torch.inference_mode():
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>自回归解码 <span class="en">autoregressive decoding</span></dt><dd>用已生成输出作为下一步输入、一次一个 token 滚动生成：第 N 个依赖前 N−1 个。</dd>
           <dt>token</dt><dd>模型眼里的最小文本单元：0~6399 的整数 id；由 BPE 词表双向翻译（M10 专讲）。</dd>
@@ -468,14 +503,17 @@ with torch.inference_mode():
           <dt>dtype 回退链</dt><dd>精度逐级降级：首选 bf16，不支持时回退并只警告一次（CPU → fp32）。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
 
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

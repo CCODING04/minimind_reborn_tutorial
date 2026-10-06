@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M12 · Dataset 家族与 loss_mask | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m12">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M12</span><span>第三篇 · 数据</span></div>
         <h1>Dataset 家族与 loss_mask</h1>
         <p class="lede">
@@ -43,8 +42,10 @@
           <span class="chip">对照：<code>data/datasets.py</code> · <code>data/loss_mask.py</code> · <code>data/manifest.py</code> · <code>tests/test_data/</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>画出 SFT 样本的逐 token 着色图，说清"只在 assistant 回答上算损失"与 <code>-100</code> 的关系（回收 M09 的 ignore_index）；</li>
         <li>✏️ 补全 <code>scan_response_spans</code> 的三个关键位（区间起点 / 扫描推进 / 区间收口），自测输出与 reborn 逐位一致；</li>
@@ -52,8 +53,10 @@
         <li>复述 C1–C5 五处管线缺陷的现象数字与修复思路，把 17 个管线测试逐一归位；</li>
         <li>说出 Pretrain / DPO / RLAIF 三种样本形态与 SFT 的差异，解释 DPO"配对公平"的机制。</li>
       </ul>
+</section>
 
-      <h2 id="bridge">从"一行"到"一个样本"：本课地图</h2>
+<section class="panel">
+<h2 id="bridge">从"一行"到"一个样本"：本课地图</h2>
       <p>
         M09 组装好模型（容器），M10 定了语言与协议（词表 + chat 模板），M11 修好了仓库（registry + 字节偏移索引）。
         本课是第三篇的最后一课：把三者接起来，造出 DataLoader（取数据的迭代器，M13 见）每一步吐出的那个字典
@@ -85,8 +88,10 @@ O(1) 取第 i 行 ──────→    ③ render      chat 模板渲染（M
           过了这关，数据还要重造（渲染产物全变）。本课的第一件事就是把这个"脆耦合"拆开看懂。
         </p>
       </div>
+</section>
 
-      <h2 id="concept">loss mask：只在 assistant 说话的地方算账</h2>
+<section class="panel">
+<h2 id="concept">loss mask：只在 assistant 说话的地方算账</h2>
       <p>
         SFT（supervised fine-tuning，监督微调——用问答语料教预训练基座学会"以助手身份对话"，M02 对照表里
         full_sft 那一行）的训练目标很朴素：<b>给定对话前文，模型要学会续写 assistant 的回答</b>。但一条渲染后的
@@ -139,8 +144,10 @@ def build_mask(input_ids, spans) -&gt; list[int]:
         而锚点序列本身（<code>prefix = [1, 1388, 570, 811, 234]</code>、<code>suffix = [2, 234]</code>，M10 实测过）由
         <code>pattern_ids(tokenizer)</code> 单处定义——encode 一次、全程复用，不许各处自己算。
       </p>
+</section>
 
-      <h2 id="fillblank">✏️ 填空：亲手写一遍区间扫描</h2>
+<section class="panel">
+<h2 id="fillblank">✏️ 填空：亲手写一遍区间扫描</h2>
       <p>
         读过不等于会写。loss_mask.py 的心脏是 <code>scan_response_spans</code>——从左到右扫 token 序列，
         撞见前缀锚点就进入"找下文"状态，找到完整后缀锚点就收一个区间；扫到头也没等到后缀的是<b>残段</b>（C2，稍后详讲），只计数不监督。
@@ -227,8 +234,10 @@ spans.append((start, end + len(SUFFIX)))            # 空③ = end + len(SUFFIX)
 <span class="out">砍掉末 4 token： 1 个区间 + 1 个残段（残段不计监督）</span>
 <span class="out">与 reborn find_response_spans 逐位一致：ALL PASS</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径 · torch 2.14.0+cu130]</b> 两轮对话 46 token 扫出恰好 2 个区间；砍掉末尾 4 个 token 后，末轮变成残段——区间数掉到 1、dangling=1，残段整段不计监督（C2 语义的直接体感）。任何一空填错，assert 立刻红或区间数字对不上——对错机器可判。</p>
+</section>
 
-      <h2 id="sft">SFTDataset 精读：一行 jsonl 的七步旅程</h2>
+<section class="panel">
+<h2 id="sft">SFTDataset 精读：一行 jsonl 的七步旅程</h2>
       <p>
         扫描器在手，现在把它装回完整流水线。<code>SFTDataset</code> 继承 M11 的 <code>JsonlIndexedDataset</code>
         （字节偏移索引基类：<code>load_line(i)</code> 一次 seek+read 取出第 i 行），自己只做"行 → 样本"的翻译。
@@ -376,8 +385,10 @@ print("同一样本 C1 演示（预算 256）：", out["stats"])</code></pre></d
 <span class="out">[522,549) 监督 '&lt;think&gt;\n\n&lt;/think&gt;\n\n我目前专注于优化和提升自身的性能，持续…'</span>
 <span class="out">同一样本 C1 演示（预算 256）： {'full_len': 549, 'fitted': True, 'hard_truncated': False, 'complete_before': 7, 'complete_after': 4, 'dangling': 0, 'n_messages': 14, 'zero_loss': False}</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径 · torch 2.14.0+cu130]</b> 逐段着色由脚本真实打印（段内文本仅显示层截短，数据原样）。三个读点：① 忽略/监督严格交替 14 段——每轮"用户段+锚点"灰、回答含收尾亮；② 第二轮的监督段长 209 token（68~277），因为那条样本带真 reasoning_content，"怎么想"也在学；③ C1 演示把预算从 1024 压到 256：丢最旧 3 轮（complete 7→4）、dangling=0、末轮完整存活——下一节讲它为什么这样截。</p>
+</section>
 
-      <h2 id="fixes">C1–C5：五处缺陷的存档账本与修复</h2>
+<section class="panel">
+<h2 id="fixes">C1–C5：五处缺陷的存档账本与修复</h2>
       <p>
         这套七步流水线不是一次写成的。<a href="codeview/docs/retrain_plan_longctx_multiturn.md.html"><code>docs/retrain_plan_longctx_multiturn.md</code></a>
         （重训计划，2026-09-28）用工具实测给旧管线记了一笔账，编号 C1–C5 的五处"代码处理不当"（改代码即消失，区别于数据本身的缺陷 D 组）。
@@ -564,8 +575,10 @@ for i, h in enumerate(reply_hashes):
         </table>
       </div>
       <p class="prov"><b>[事实核对]</b> 17 个用例名逐一对着 <code>tests/test_data/test_sft_pipeline.py</code> 抄录；末三行 D1（多轮上采样，存档档二：治"多轮占比 19.4% 过低"）与 D5（数据卡）超出 C1–C5 编号但同在这份文件里——重复上限 3、验证视图不展开的语义都写在测试与源码注释里。</p>
+</section>
 
-      <h2 id="others">其余三张数据集：Pretrain / DPO / RLAIF·Agent</h2>
+<section class="panel">
+<h2 id="others">其余三张数据集：Pretrain / DPO / RLAIF·Agent</h2>
       <p>五个数据集类共享 M11 的索引基类，差异全在 encode 语义。剩三张各用一分钟看懂形态差异：</p>
 
       <h3 id="pretrain">PretrainDataset：没有 loss mask 的世界</h3>
@@ -688,8 +701,10 @@ print(f'30 次抽样：chosen/rejected think 处理同进退 {agree}/30；其中
           </tbody>
         </table>
       </div>
+</section>
 
-      <h2 id="pit">坑卡：字符串 find 与"手数 token"</h2>
+<section class="panel">
+<h2 id="pit">坑卡：字符串 find 与"手数 token"</h2>
       <div class="callout warn">
         <div class="co-title">⚠️ 坑卡：为什么必须逐 token 匹配——字符下标不是 token 下标</div>
         <ul class="pit-stages">
@@ -730,8 +745,10 @@ print('若把字符下标当 token 下标：监督区间从 68 起，而真实�
 <span class="out">第一个 assistant 回答的起点：字符下标 68 ；token 下标 25</span>
 <span class="out">若把字符下标当 token 下标：监督区间从 68 起，而真实区间是 (25, 50)——第一段回答整体丢失</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径]</b> 同一行数据同环境两次采集；68/25 的换算来自 M12 逐 token 实验（区间列表 [(25,50), …]）。300 行零失配的朴素对照也真跑过（脚本以 300 行滚动 find+前缀重分词对比 find_response_spans），结论只用于坑卡"恰好对"的论证。</p>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · 掩码为什么用 -100，用 0 不行吗？</summary>
@@ -772,8 +789,10 @@ print('若把字符下标当 token 下标：监督区间从 68 起，而真实�
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 1 · 把 add_system_ratio 调成 1.0：监督信号变多还是变少？</div>
         <div class="ex-body">
@@ -876,7 +895,10 @@ print(f"渲染变体 {len(texts)} 种；全长 {len(ids)} token；监督 {sum(1 
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>loss mask <span class="en">损失掩码</span></dt><dd>与 input_ids 等长的着色表：该学的位置 label=原 token id（进交叉熵），不该学的 label=-100（跳过）。SFT 只在 assistant 回答区间算损失；两个孪生产出 build_labels（-100 哨兵，SFT 用）与 build_mask（0/1 权重，DPO 用）。</dd>
           <dt>监督区间 <span class="en">response span</span></dt><dd>[start, stop) 半开 token 区间：从前缀锚点（"&lt;|im_start|&gt;assistant\n"，5 token）之后起，到后缀锚点（"&lt;|im_end|&gt;\n"，2 token）含尾收口——模型要学的除回答正文外还包括 think 块与"何时闭嘴"的收尾。</dd>
@@ -890,14 +912,17 @@ print(f"渲染变体 {len(texts)} 种；全长 {len(ids)} token；监督 {sum(1 
           <dt>prompt-only 样本</dt><dd>RL 阶段（RLAIF/AgentRL）的数据形态：只渲染"该 assistant 说话了"的话头（add_generation_prompt=True），answer 留空——答案由 rollout 现场生成、奖励打分（M19）。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
 
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

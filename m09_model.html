@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M09 · 组装 ForCausalLM：参数账本与官方权重互通 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m09">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M09</span><span>第二篇 · 模型：造</span><span class="badge-ms">🏁A</span></div>
         <h1>组装 ForCausalLM：参数账本与官方权重互通</h1>
         <p class="lede">
@@ -43,8 +42,10 @@
           <span class="chip">对照：<code>models/model.py</code> · <code>models/weights.py</code> · <code>tests/test_models/test_model.py</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>画出 Block 的 pre-norm 残差流图，解释"先 norm 再进子层"为什么让 8 层叠加后依然好训；</li>
         <li>逐部件手算 63.91M 参数账本，用逐键分组脚本与官方权重 strict 载入双重核对；</li>
@@ -52,8 +53,10 @@
         <li>默写移位交叉熵 <code>logits[..., :-1] ↔ labels[..., 1:]</code>，解释 ignore_index=-100 与初始 loss ≈ ln(6400)；</li>
         <li>区分权重加载的 strict / finetune 双语义，复述"静默吞键是最危险的『成功』"各防什么事故。</li>
       </ul>
+</section>
 
-      <h2 id="assembly">总装：从零件到整机</h2>
+<section class="panel">
+<h2 id="assembly">总装：从零件到整机</h2>
       <p>
         五课零件在整机里的位置——M03 ⑤站画过图纸，现在每块砖都换成了你读过、跑过的类名：
       </p>
@@ -247,8 +250,10 @@ print("ln(6400) = %.4f" % math.log(6400))</code></pre></div>
         MoE 的 <code>aux_loss</code>（M08 的负载均衡辅助损失）也在这里收口：骨干把各层 <code>mlp.aux_loss</code>
         求和带回（model.py:120-123），dense 模型恒为 0——<code>test_forward_shapes_and_loss</code> 断言的正是这一条。
       </p>
+</section>
 
-      <h2 id="ledger">参数账本：63.91M 逐键对账</h2>
+<section class="panel">
+<h2 id="ledger">参数账本：63.91M 逐键对账</h2>
       <p>
         63.91M 这个数字你在 M01 的训练日志里见过（"63.91M 可训练参数"）。现在把账算开——
         每个部件的形状、数量、份数全部来自前五课读过的源码，不查文档，手算：
@@ -322,8 +327,10 @@ print("lm_head.weight 单独计账了吗：", "lm_head.weight" in groups)</code>
       表格每行与脚本输出一一对应；63,912,192 与 M01 日志的"63.91M 可训练参数"（<code>runs/pretrain_full/20260925_005504/train.log</code>，
       <b>[存档 runs/pretrain_full/20260925_005504 · 2×RTX 4090 · bf16]</b>）三方对上。末行 False 即 tied 权重被
       <code>named_parameters()</code> 去重——账本天然不算两份。</p>
+</section>
 
-      <h2 id="weights">权重三语义：save / strict / finetune</h2>
+<section class="panel">
+<h2 id="weights">权重三语义：save / strict / finetune</h2>
       <p>
         模型有了、账算清了，下一个问题是<b>权重怎么落地、怎么回来</b>。
         <a href="codeview/src/minimind_reborn/models/weights.py.html">models/weights.py</a>
@@ -426,8 +433,10 @@ print('finetune 语义：不炸，带着警告继续')"</span>
         → <code>out/pretrain_768.pth</code>（MoE 再加后缀；已是文件则原样返回）。
         M04 变式 1 的"hidden 进文件名"在这里被消费：宽度不同的权重互不干扰，靠命名就能找到彼此。
       </p>
+</section>
 
-      <h2 id="bughunt">🔍 bug 猎场：RoPE buffer 在 meta 初始化中丢失</h2>
+<section class="panel">
+<h2 id="bughunt">🔍 bug 猎场：RoPE buffer 在 meta 初始化中丢失</h2>
       <p>
         M05 结尾埋的雷今天挖：<b>非持久 buffer</b>（<code>register_buffer(..., persistent=False)</code>——
         跟着模型走设备、不参与训练、不进 checkpoint 的派生数据）在正常构造下毫无问题——
@@ -509,8 +518,10 @@ print("logits 最大偏差:", round(diff, 4))</code></pre></div>
       复现脚本连续 4 次运行偏差分别为 0.2846 / NaN / 0.1355 / 0.2240（未初始化内存非确定）；注释引文逐字来自
       model.py:76-79。<b>[事实核对]</b> M05 的伏笔原话："transformers ≥5.x 用 meta 设备初始化模型时会丢非持久
       buffer，model.py:75-90 为此留了重建兜底——M09 的猎场就从这里开挖。"两课伏笔在此汇合。</p>
+</section>
 
-      <h2 id="milestone-a">🏁 里程碑 A</h2>
+<section class="panel">
+<h2 id="milestone-a">🏁 里程碑 A</h2>
       <div class="milestone">
         <div class="ms-head"><span class="flag">🏁</span>
           <div>
@@ -548,8 +559,10 @@ print("logits 最大偏差:", round(diff, 4))</code></pre></div>
           </p>
         </div>
       </div>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · 移位为什么要 logits[..., :-1] 对 labels[..., 1:]？不移位会怎样？</summary>
@@ -590,8 +603,10 @@ print("logits 最大偏差:", round(diff, 4))</code></pre></div>
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 · 拆掉 tying：参数账本会变成多少？</div>
         <div class="ex-body">
@@ -709,7 +724,10 @@ print("参数量：%.2fM" % (sum(p.numel() for p in model.parameters()) / 1e6))<
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>weight tying <span class="en">权重绑定</span></dt><dd>词嵌入矩阵与词汇预测头共享同一块 (vocab, hidden) 张量：一个正着查（词→向量）、一个反着用（向量×词打分）。64M 模型省 4.92M（7.7%）；<code>named_parameters()</code> 去重、<code>state_dict()</code> 保留双键。</dd>
           <dt>移位交叉熵 <span class="en">shifted cross-entropy</span></dt><dd>语言模型损失：位置 t 的 logits 对 labels[t+1] 求交叉熵——<code>logits[..., :-1]</code> 对 <code>labels[..., 1:]</code>，各留 T-1 个配对。不移位则学成"复读当前词"。</dd>
@@ -721,9 +739,12 @@ print("参数量：%.2fM" % (sum(p.numel() for p in model.parameters()) / 1e6))<
           <dt>meta 设备 <span class="en">meta device</span></dt><dd>只登记形状不分配内存的虚拟设备；transformers ≥5 用它搭骨架再灌参数——参数与持久 buffer 有人恢复，非持久 buffer（RoPE 表）责任真空，reborn 以"全零判据 + 重算重注册"兜底。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
   <aside class="toc" id="toc"></aside>
 </div>
@@ -735,6 +756,6 @@ print("参数量：%.2fM" % (sum(p.numel() for p in model.parameters()) / 1e6))<
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

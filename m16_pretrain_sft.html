@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M16 · pretrain / SFT 实战：点火，走完两棒 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m16">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M16</span><span>第四篇 · 训练</span><span class="badge-ms">🏁B</span></div>
         <h1>pretrain / SFT 实战：点火，走完两棒</h1>
         <p class="lede">
@@ -43,8 +42,10 @@
           <span class="chip">对照：<code>training/pretrain/workflow.py</code> · <code>training/sft/workflow.py</code> · <code>configs/{pretrain,sft}_64m.yaml</code> · <code>runs/</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>逐行数完 pretrain 母版的 37 行与 SFT 母版的 49 行，指出范式对引擎的全部定制只有 compute_loss 闭包与数据集；</li>
         <li>用 smoke 配方加大步数真跑 200 步 tiny pretrain 与 SFT，解释 loss 只从 8.7 降到 7.9 背后的"阅读量"算术；</li>
@@ -52,8 +53,10 @@
         <li>用 pretrain / full_sft 两份 64M 权重复现 M02 的行为跃迁表，并从训练侧（loss mask + init_from）解释它为何必然发生；</li>
         <li>完成 🏁 里程碑 B：自己训出的 tiny 基座被自己的推理链路加载并生成。</li>
       </ul>
+</section>
 
-      <h2 id="workflow">母版精读：范式到底有多薄</h2>
+<section class="panel">
+<h2 id="workflow">母版精读：范式到底有多薄</h2>
       <p>
         M13 立过一条规矩（trainer.py 模块 docstring 原话）：<i>"范式子包只提供 compute_loss(batch, model)
         -&gt; (loss, log_metrics) 与数据组装。梯度/AMP/裁剪/续训/评估/保存的顺序与不变量固定在此处，任何范式不得绕过。"</i>
@@ -192,8 +195,10 @@ train:
           所以"基座 + 对齐"的市场才会分成两层。你今天用 0.53M 参数走完同一形状的两棒。
         </p>
       </div>
+</section>
 
-      <h2 id="tiny">tiny 实战：200 步，从 8.7 出发</h2>
+<section class="panel">
+<h2 id="tiny">tiny 实战：200 步，从 8.7 出发</h2>
       <p>
         引擎读完了，点火。冒烟配方 <code>configs/smoke/smoke_pretrain.yaml</code> 默认只跑 6 步
         （M01 的样子），本课把步数放大到 200——tiny 模型（0.53M 参数）上这是<b>分钟级</b>的事：
@@ -310,8 +315,10 @@ train:
         （收尾 10 行）的输出，去重/重映射统计落盘（M12 的 D5 数据卡）。引擎的日志与范式的日志在同一个
         train.log 里接力，正如两个模块在同一台机器上接力。
       </p>
+</section>
 
-      <h2 id="archive">读档：64M 的完整曲线长什么样</h2>
+<section class="panel">
+<h2 id="archive">读档：64M 的完整曲线长什么样</h2>
       <p>
         tiny 是秒级玩具，64M 全程要 7 小时（双卡）。好在 M13 的四件套让每次训练都留下完整档案——
         读真实日志是正式学习路径（M01 就这么说）。先交代档案在哪：下面两个 64M 存档
@@ -425,8 +432,10 @@ val：ep1 末 1.6850 → ep2 末 1.5276（best）；tok/s ≈ 253k，mfu ≈ 29%
         它的 0.85 nat 全是词频；64M 走完三段、把 loss 压到 1.66。<b>规模买到的不是新的学习规律，
         而是走得更远的资格</b>。
       </p>
+</section>
 
-      <h2 id="behavior">行为跃迁：同一问题，两份权重</h2>
+<section class="panel">
+<h2 id="behavior">行为跃迁：同一问题，两份权重</h2>
       <p>
         M02 你见过一张表：pretrain 权重用对话模板问只会堆模板词，SFT 权重会接话。当时承诺
         "M16 你会亲手训出这两类权重再对照——这张表将从『现象』变成你自己的结论"。兑现。
@@ -477,8 +486,10 @@ val：ep1 末 1.6850 → ep2 末 1.5276（best）；tok/s ≈ 253k，mfu ≈ 29%
         loss mask 把"何时给 EOS"也计进了账。行为跃迁的幅度与模型容量、SFT 数据量成正比：
         64M 上是质变，0.53M 上是"从话痨变成寡言"。诚实呈现，这就是 100 倍参数差距的行为学刻度。
       </p>
+</section>
 
-      <h2 id="milestone-b">🏁 里程碑 B</h2>
+<section class="panel">
+<h2 id="milestone-b">🏁 里程碑 B</h2>
       <div class="milestone">
         <div class="ms-head"><span class="flag">🏁</span>
           <div>
@@ -533,8 +544,10 @@ print("生成:", out["content"], "| finish:", out["finish_reason"], "| tokens:",
         （括注：无 GPU 的毕业实得物 = 0.53M tiny（生成以高频字为主）+ 全链路经验——
         完整分档见 <a href="index.html">index</a>「硬件 × 毕业实得物」表。）
       </p>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · SFT 为什么用 pretrain 权重当起点，而不是从零训？用两组数字回答</summary>
@@ -575,8 +588,10 @@ print("生成:", out["content"], "| finish:", out["finish_reason"], "| tokens:",
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 · 步数 ×10：把 tiny pretrain 从 200 步拉到 2000 步</div>
         <div class="ex-body">
@@ -659,7 +674,10 @@ print("生成:", out["content"], "| finish:", out["finish_reason"], "| tokens:",
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>预训练动力学 <span class="en">pretraining dynamics</span></dt><dd>loss 随步数下降的三段规律：垂直下跌（学词频/unigram 统计）→ 快速变缓（学局部搭配）→ 长平台（学句法语法的长尾，占 95% 时长）。形状不随规模改变，规模决定能走到第几段。</dd>
           <dt>SFT 行为跃迁 <span class="en">behavior shift</span></dt><dd>SFT 前后模型行为的质变：基座只会文字接龙（拿对话模板只会堆模板词），SFT 后学会"在 assistant 标记后以助手身份回答"。机制是 M12 的 loss mask 把账本改到只记回答区间——不是涌现，是账本改了、模型跟着账本学。</dd>
@@ -671,9 +689,12 @@ print("生成:", out["content"], "| finish:", out["finish_reason"], "| tokens:",
           <dt>熵 <span class="en">entropy</span></dt><dd>语料本身不可预测性的度量，交叉熵（训练 loss）的下界。模型永远降不到 0——读曲线先问"地板在哪"，再判断模型离地板多远。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
   <aside class="toc" id="toc"></aside>
 </div>
@@ -685,6 +706,6 @@ print("生成:", out["content"], "| finish:", out["finish_reason"], "| tokens:",
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M14 · checkpoint 六件套与续训 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m14">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M14</span><span>第四篇 · 训练</span></div>
         <h1>checkpoint 六件套与续训</h1>
         <p class="lede">
@@ -44,8 +43,10 @@
           <span class="chip">对照：<code>training/common/checkpoint.py</code> · <code>utils/io.py</code> · <code>docs/pretrain_readiness.md</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>逐件说出六件套各防哪种灾难——为什么"只存权重"续训时是"重新开始装作接着练"；</li>
         <li>解释 RNG 四态（torch / cuda / python / numpy）各管哪路随机性，存了换来什么；</li>
@@ -53,8 +54,10 @@
         <li>从训练侧区分 resume / init_from / finetune_from 三语义，解释换卡数时 step 为什么会重标定；</li>
         <li>亲手完成 kill -9 中断实验（或读存档做同样分析），用 loss 轨迹判定"续训接得住"。</li>
       </ul>
+</section>
 
-      <h2 id="payload">训练状态：六件套逐件清点</h2>
+<section class="panel">
+<h2 id="payload">训练状态：六件套逐件清点</h2>
       <p>
         M13 结尾说过，Trainer 每 epoch 末（以及每 <code>save_interval_steps</code> 步）都在默默调
         <code>_save</code>。它写两个文件：<code>out/pretrain_64.pth</code>（M09 见过的 fp16 推理权重）和
@@ -195,8 +198,10 @@ return atomic_save(payload, path)          # 原子写（下节）</code></pre><
         <p class="prov"><b>[作者实测 · 2026-10-01]</b>脚本把本课实验的六件套挖掉 optimizer 件存回，
         复刻 trainer.py:442-444 的取用序列：模型件 <code>strict=True</code> 正常恢复，下一行即 <code>KeyError</code>。</p>
       </div>
+</section>
 
-      <h2 id="atomic">原子写：.tmp + os.replace</h2>
+<section class="panel">
+<h2 id="atomic">原子写：.tmp + os.replace</h2>
       <p>
         六件套 6.44 MB（64M 模型 731 MB）的文件，写一半要几十毫秒到几秒。
         如果直接写目标路径，写到一半进程被杀——磁盘上留下<b>半个文件</b>：
@@ -241,8 +246,10 @@ return atomic_save(payload, path)          # 原子写（下节）</code></pre><
         两个文件一个面向"用"，一个面向"续"，尺寸差三倍（2.14 vs 6.44 MB）。
         M09 说"原子写 M14 用 kill -9 实验专门验证"——现在就做。
       </p>
+</section>
 
-      <h2 id="semantics">三语义：resume / init_from / finetune_from</h2>
+<section class="panel">
+<h2 id="semantics">三语义：resume / init_from / finetune_from</h2>
       <p>
         M09 从<b>权重层</b>讲了 strict 与 finetune 两种加载；本课从<b>训练侧</b>看它们如何被三个入口消费。
         Trainer 构造的最后一步 <code>_load_initial_weights</code>（trainer.py:422）按固定顺序探测三个配置：
@@ -295,8 +302,10 @@ if "rng" in data:
         以 world=2 读回断言 <code>step == 3</code>（7×1//2）。LR 调度随之自然对齐——
         因为 M13 讲过它是只吃步数的纯函数。
       </p>
+</section>
 
-      <h2 id="kill9">kill -9 实验：亲手杀一次训练</h2>
+<section class="panel">
+<h2 id="kill9">kill -9 实验：亲手杀一次训练</h2>
       <p>
         🎮 本节需要能跑 smoke 的环境（GPU 更顺，CPU 也行，tiny 模型 60 步只要几秒）；
         无 GPU 时走本节末尾的存档分析路线——同样的推理链，读别人留下的数字。
@@ -387,8 +396,10 @@ echo "已击杀进程组，存档目录：$NEW_RUN_DIR"</code></pre></div>
         数字不同（64M 已训 200 步 loss 从 7.4 起步，vs tiny 从 8.7），推理链与本课实验逐句对应——
         这份存档正是那次实验的原始报告，也是下一个猎场的案发现场。
       </p>
+</section>
 
-      <h2 id="hunt1">🔍 bug 猎场一：续训记账漂移——len 的两副面孔</h2>
+<section class="panel">
+<h2 id="hunt1">🔍 bug 猎场一：续训记账漂移——len 的两副面孔</h2>
       <p>
         上面那份 0.67% 的漂亮报告，是 2026-09-24 kill -9 实验的<b>产出</b>；同一个实验还产出了一个 bug。
         报告原文记得很克制："实测发现并修复 1 个续训记账 bug"——断点落在 epoch 中间时，
@@ -440,8 +451,10 @@ is_last = offset == start_step + iters - 1        # 循环终点：实际迭代�
       <p class="prov"><b>[存档 docs/pretrain_readiness.md · 2026-09-24]</b> 猎场素材：
       0.67% 偏差数据表、bug 描述原文（"SkipBatchSampler 会把 len(loader) 扣减跳过批数，
       导致续训后全局步数分母 / LR 总步数 / 尾批 is_last 判定全部漂移"）、修复 commit fd9fdc8。</p>
+</section>
 
-      <h2 id="hunt2">🔍 bug 猎场二：换了数据集，残留的 resume 静默劫持续训</h2>
+<section class="panel">
+<h2 id="hunt2">🔍 bug 猎场二：换了数据集，残留的 resume 静默劫持续训</h2>
       <p>
         本课开头说 resume-by-default（M01 词汇：检测到 checkpoint 就默认接续）是"长跑中断保险"；
         保险的另一面是：<b>它不问你想不想续</b>。2026-09-25 全量训练启动时，作者从 mini 数据集
@@ -489,8 +502,10 @@ is_last = offset == start_step + iters - 1        # 循环终点：实际迭代�
       </p>
       <p class="prov"><b>[存档 docs/pretrain_readiness.md §6 · 2026-09-25 · commit 500513b]</b>
       事故描述、处置过程与检查单原文均来自该节；mini_era 归档目录为仓库现存实物。</p>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · 为什么 RNG 状态也要存？四路各管什么，不存最直接的后果是什么？</summary>
@@ -531,8 +546,10 @@ is_last = offset == start_step + iters - 1        # 循环终点：实际迭代�
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 · kill 之后把数据集换掉再 resume，会发生什么？</div>
         <div class="ex-body">
@@ -611,7 +628,10 @@ is_last = offset == start_step + iters - 1        # 循环终点：实际迭代�
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>训练状态 <span class="en">training state / checkpoint 语义</span></dt><dd>训练进程在某一刻的全部可变状态：模型权重 + 优化器矩 + scaler 水位 + 进度（epoch/step）+ 配置快照 + best 指标，再加 RNG 四态与 world_size。checkpoint 存的不是"模型"而是它——缺一件，续训就从那一件开始"重新开始装作接着练"。</dd>
           <dt>六件套 <span class="en">six-pack payload</span></dt><dd>save_checkpoint 的 payload：model（fp32 主权重）/ optimizer / scaler / 进度（epoch+step 两键）/ config 快照 / best_val_loss；附加 rng 与 world_size，实测顶层 9 键。tiny 6.44 MB（优化器件占 4.3 MB），64M 约 731 MB。</dd>
@@ -624,13 +644,16 @@ is_last = offset == start_step + iters - 1        # 循环终点：实际迭代�
           <dt>双轨记账 <span class="en">full_iters / iters</span></dt><dd>fd9fdc8 修复的纪律：full_iters（epoch 全长，不扣 skip）专供全局步数与 LR 分母；iters（本次实际迭代数 = 全长 − start_step）专供循环终点与 is_last（按 start_step + iters − 1 判定）。一个量两副面孔，让它们各自得名。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

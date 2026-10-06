@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M04 · 配置即实验：分域 schema 与守门人 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m04">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M04</span><span>第二篇 · 模型：造</span></div>
         <h1>配置即实验：分域 schema 与守门人</h1>
         <p class="lede">
@@ -44,16 +43,20 @@
           <span class="chip">对照：<code>configuration/{schemas,loader}.py</code> · <code>configs/</code> · <code>tests/test_configuration/test_loader.py</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>说出"配方即实验"的三条铁律（只写差异 / CLI 覆盖 / 未知 key 硬错），并解释各防什么事故；</li>
         <li>默写 <b>dataclass 默认 → YAML → CLI</b> 三层覆盖顺序，指出唯一守门人 <code>validate_and_derive</code> 在数据流中的位置；</li>
         <li>手算 hidden=768 的 <code>head_dim=96</code> 与 <code>intermediate_size=2432</code>，并解释派生参数为什么不进 YAML；</li>
         <li>亲手触发三类守门人报错（未知 key / GQA 不整除 / bool 类型不符），读懂报错自带的修复提示，并把 <code>test_loader.py</code> 的 10 个测试当回归锚点。</li>
       </ul>
+</section>
 
-      <h2 id="trap">先被咬一口：拼错的 key 会怎样？</h2>
+<section class="panel">
+<h2 id="trap">先被咬一口：拼错的 key 会怎样？</h2>
       <p>
         普通做法里，YAML 常用 <code>dict.update(config)</code> 式合并——<b>它不核对你拼错的 key</b>：
         写了 <code>max_step: 4</code>（少了 s），合并器默默吞下，训练静默用默认 <code>epochs=2</code> 跑完，
@@ -65,8 +68,10 @@
 <span class="err">ValueError: 未知配置项 'train.max_step'。合法项：['batch_size', 'compile', 'deterministic', 'dtype', 'epochs', 'eval_interval_steps', 'finetune_from', 'grad_clip', 'gradient_accumulation_steps', 'init_from', 'learning_rate', 'log_interval', 'lr_min_ratio', 'max_steps', 'resume', 'save_interval_steps', 'seed', 'warmup_steps', 'weight_decay']</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 报错发生在任何训练日志<b>之前</b>——模型未建、数据未碰；名单第 13 项就是正确拼法 <code>max_steps</code>。</p>
       <p>这就是 <b>fail-fast（快速失败）</b>：把"三小时后曲线不对"兑换成"启动前一秒一条报错"。本课回答三问：报错谁抛的（装载器）、凭什么知道全部合法项（schema）、除拼写外还拦什么（守门人）。</p>
+</section>
 
-      <h2 id="concept">两张概念卡：配方即实验 / 分域 schema</h2>
+<section class="panel">
+<h2 id="concept">两张概念卡：配方即实验 / 分域 schema</h2>
 
       <div class="callout tip">
         <div class="co-title">💡 概念卡：配方即实验</div>
@@ -91,8 +96,10 @@
           <li><b>哨兵表达"待派生"</b>：<code>head_dim: int | None = None</code> 的 None 是"守门人稍后会填"。</li>
         </ul>
       </div>
+</section>
 
-      <h2 id="schemas">精读 schemas.py：RunConfig 的组合结构</h2>
+<section class="panel">
+<h2 id="schemas">精读 schemas.py：RunConfig 的组合结构</h2>
       <p>9 个域由顶层 <code>RunConfig</code> 组合，精简骨架（省略各域内部字段）：</p>
       <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/configuration/schemas.py.html">src/minimind_reborn/configuration/schemas.py</a></span><span class="lang">python</span></div><pre class="code"><code><span class="k">STAGES</span> = (<span class="s">"pretrain"</span>, <span class="s">"sft"</span>, <span class="s">"dpo"</span>, <span class="s">"distill"</span>, <span class="s">"lora"</span>, <span class="s">"grpo"</span>, <span class="s">"ppo"</span>, <span class="s">"agent"</span>)  <span class="c"># 共 8 个范式，stage 的合法值</span>
 
@@ -189,7 +196,10 @@ m.moe_intermediate_size = m.moe_intermediate_size or m.intermediate_size
       <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/pretrain_64m.yaml --set model.num_key_value_heads=3</span>
 <span class="err">ValueError: num_attention_heads(8) 必须被 num_key_value_heads(3) 整除（GQA 约束）</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-29]</b> 报错里的两个数字就是当前配置的实际值——不查文档就知道该改哪边。</p>
-      <h2 id="loader">精读 loader.py：三层覆盖与唯一闸口</h2>
+</section>
+
+<section class="panel">
+<h2 id="loader">精读 loader.py：三层覆盖与唯一闸口</h2>
       <p>
         装载器 <a href="codeview/src/minimind_reborn/configuration/loader.py.html"><code>configuration/loader.py</code></a>
         只有一个入口 <code>load_config(recipe, overrides)</code>，内部是严格的三层覆盖——<b>后到的胜出</b>：
@@ -245,8 +255,10 @@ m.moe_intermediate_size = m.moe_intermediate_size or m.intermediate_size
           分层覆盖 + 装配期校验 + 运行留档</b>。reborn 用 200 行手写而非引框架，为的是零依赖保住这四件事——也让你能逐行读懂。
         </p>
       </div>
+</section>
 
-      <h2 id="bughunt">🔍 bug 猎场：bool CLI 覆盖失效（cf46125）</h2>
+<section class="panel">
+<h2 id="bughunt">🔍 bug 猎场：bool CLI 覆盖失效（cf46125）</h2>
       <p>
         配置系统自己也会生病。素材来自 git 史，修复落在 commit <code>cf46125</code>（2026-09-24，
         提交信息含"<b>bool CLI 覆盖修复</b>"）。
@@ -292,8 +304,10 @@ m.moe_intermediate_size = m.moe_intermediate_size or m.intermediate_size
         <code>bool</code> 是 <code>int</code> 子类——见 <code>_coerce_type</code> 的 <code>allow_bool=False</code> 防线）。
         也正是"未知 key 硬错 + 类型断言"两道闸，把这个坑从"静默错误"降级成"响亮的摩擦"——<b>把错误提前到可解释的位置</b>。
       </p>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · 为什么未知 key 要硬报错，而不是打条警告继续跑？</summary>
@@ -334,8 +348,10 @@ m.moe_intermediate_size = m.moe_intermediate_size or m.intermediate_size
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 1 · 把模型改成 hidden=512，权重文件叫什么名字？</div>
         <div class="ex-body">
@@ -414,7 +430,10 @@ m.moe_intermediate_size = m.moe_intermediate_size or m.intermediate_size
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>dataclass 分域 schema</dt><dd>按变化原因把超参切成 9 个 dataclass（一个类只因为一个原因修改），字段名+类型+默认值三合一，可被 <code>fields()</code> 枚举——校验的机器依据。</dd>
           <dt>守门人 <span class="en">validator</span></dt><dd>唯一闸口 <code>validate_and_derive</code>：全部配置必经此处做合法性检查与派生推导。</dd>
@@ -424,9 +443,12 @@ m.moe_intermediate_size = m.moe_intermediate_size or m.intermediate_size
           <dt>配置快照 <span class="en">config snapshot</span></dt><dd><code>snapshot()</code> 把装配后的完整配置随 checkpoint 与 run_dir/config.json 落盘——只拿输出目录即可复现实验。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
 
   <aside class="toc" id="toc"></aside>
@@ -439,6 +461,6 @@ m.moe_intermediate_size = m.moe_intermediate_size or m.intermediate_size
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

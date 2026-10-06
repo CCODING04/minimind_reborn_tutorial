@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M08 · FFN：SwiGLU 与 MoE | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m08">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M08</span><span>第二篇 · 模型：造</span></div>
         <h1>FFN：SwiGLU 与 MoE</h1>
         <p class="lede">
@@ -43,8 +42,10 @@
           <span class="chip">对照：<code>models/feedforward.py</code> · <code>models/config.py</code> · <code>models/model.py</code> · <code>tests/test_models/test_model.py</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>写出 SwiGLU 公式 $\mathrm{down}(\mathrm{SiLU}(\mathrm{gate}(x)) \odot \mathrm{up}(x))$，解释比经典 FFN 多出的那个矩阵（门）在干什么，算清 8h/3 与 π 的中间维账；</li>
         <li>沿 <code>(B,T,768) → (B,T,2432) → (B,T,768)</code> 的 shape 链读懂 14 行的 <code>FeedForward</code>，说出 <code>bias=False</code> 的理由；</li>
@@ -53,8 +54,10 @@
         <li>算清 use_moe=True/False 的参数账：<b>总参数 3.10 倍，每 token 激活参数几乎不变</b>。
         </li>
       </ul>
+</section>
 
-      <h2 id="map">⑤站的最后一块零件：FFN 是参数大户</h2>
+<section class="panel">
+<h2 id="map">⑤站的最后一块零件：FFN 是参数大户</h2>
       <p>
         M03 ⑤站的 Block 图纸上只剩一块没造：attention 之后的 FFN（feed-forward network，前馈网络）——
         对每个 token 位置<b>独立</b>做"升维 → 非线性 → 降维"的子层，<b>不跨位置混合</b>（跨位置是 attention 的活）。
@@ -74,8 +77,10 @@ x₁ ──┬──────────────────────
         "省计算"的 MoE 也动这里。全部家当在 <a href="codeview/src/minimind_reborn/models/feedforward.py.html"><code>models/feedforward.py</code></a>，73 行两个类。
       </p>
       <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 两个占比由 <code>sum(p.numel())</code> 分别对 <code>Attention(cfg)</code> 与 <code>FeedForward(cfg)</code> 实算（76.0% = 5,603,328 / (1,769,664 + 5,603,328)）；73 行来自 <code>wc -l</code>。</p>
+</section>
 
-      <h2 id="swiglu">SwiGLU：自己给自己调音量</h2>
+<section class="panel">
+<h2 id="swiglu">SwiGLU：自己给自己调音量</h2>
 
       <h3 id="swiglu-idea">直觉：两路线性，一路当门</h3>
       <p>
@@ -158,8 +163,10 @@ print('8h/3 =', 8*768//3, ' 768π ≈', round(768*math.pi, 1), '→ 2432，比 8
 <span class="out">silu(1) = 0.731059  1*sigmoid(1) = 0.731059</span>
 <span class="out">8h/3 = 2048 768π ≈ 2412.7 → 2432，比 8h/3 高 18.8 %</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> shape 链路、SiLU 数值、8h/3 与 2432 的对比均当日实跑；"作者推算，非官方声明"的标注沿用 M04 原文。</p>
+</section>
 
-      <h2 id="moe">MoE：不是每次都要全脑运转</h2>
+<section class="panel">
+<h2 id="moe">MoE：不是每次都要全脑运转</h2>
 
       <h3 id="moe-why">动机：把参数量和计算量解耦</h3>
       <p>
@@ -430,8 +437,10 @@ print(f"MoE 每 token 激活参数 ≈ {act:,}（{act/1e6:.2f}M）  ≈ dense �
           路由、直通、挂图、均衡税，一只不缺。
         </p>
       </div>
+</section>
 
-      <h2 id="pit">坑卡：aux 系数抄错数量级，路由被钉死在均匀</h2>
+<section class="panel">
+<h2 id="pit">坑卡：aux 系数抄错数量级，路由被钉死在均匀</h2>
       <div class="callout warn">
         <div class="co-title">⚠️ 坑卡：router_aux_loss_coef 从 5e-4 改成 0.5，训练一切照常——只是专家永远学不出分工</div>
         <ul class="pit-stages">
@@ -462,8 +471,10 @@ for coef in (5e-4, 0.5):
         </ul>
       </div>
       <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 上限公式与两组占比为当日实算（aux 范围推导见 <a href="#moe-aux">aux loss 小节</a>）；"18.6% 压制主损失"是量级论证——本课没有跑完整 MoE 训练对照，结论以公式与量级账为据。</p>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · SwiGLU 为什么是三个矩阵？多出来的那个在干什么？参数量怎么补回来？</summary>
@@ -504,8 +515,10 @@ for coef in (5e-4, 0.5):
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 1 · num_experts_per_tok=2：路由和计算量怎么变？</div>
         <div class="ex-body">
@@ -622,7 +635,10 @@ print("单 token 调用的专家:", sorted(called))</code></pre></div>
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>FFN <span class="en">feed-forward network</span></dt><dd>前馈子层：对每个 token 位置独立做升维→非线性→降维，不跨位置混合（跨位置是 attention 的职责）。SwiGLU 形态下每层 5.6M 参数，占 Block 的 76%。</dd>
           <dt>SwiGLU</dt><dd>三矩阵门控 FFN：down(SiLU(gate(x)) ⊙ up(x))。gate 路经激活后逐元素乘 up 路——"自己给自己调音量"；参数量与经典 FFN 相当时中间维取 8d/3，官方经验公式取 π·d 再对齐 64 倍数（768→2432）。LLaMA/Qwen/DeepSeek 系标配。</dd>
@@ -636,9 +652,12 @@ print("单 token 调用的专家:", sorted(called))</code></pre></div>
           <dt>挂图技巧 <span class="en">DDP unused parameters</span></dt><dd>y[0,0] += 0·Σp：为未被路由的专家在计算图上建立 0 乘依赖，使其获得全零梯度、被 DDP 视为已使用——多卡同步的刚需（M15 详讲 DDP）。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
 
   <aside class="toc" id="toc"></aside>
@@ -651,6 +670,6 @@ print("单 token 调用的专家:", sorted(called))</code></pre></div>
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

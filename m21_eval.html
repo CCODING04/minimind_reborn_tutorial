@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M21 · 评测与官方对照 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m21">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M21</span><span>第五篇 · 推理与评测</span></div>
         <h1>评测与官方对照：给模型打分，与官方面对面</h1>
         <p class="lede">
@@ -43,8 +42,10 @@
           <span class="chip">对照：<code>tools/eval_llm.py</code> · <code>tools/eval_multiturn.py</code> · <code>tools/compare_official.py</code> · <code>tools/convert_model.py</code> · <a href="codeview/out/official_compare.md.html"><code>out/official_compare.md</code></a></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>说出三把评测尺（自动指标 / 固定题集 / 专项套件）各自量什么、量不到什么，为一个弱项选对尺子；</li>
         <li>真跑 <code>eval_llm.py</code> 拿到 8 题回答与吞吐数字，并用双跑对照暴露"不固定种子的分数漂移"有多大；</li>
@@ -52,8 +53,10 @@
         <li>复述官方对照的方法论（同题集 + strict 载入 + 控制变量），解释 fp32 逐位一致如何给"双实现等价"盖章；</li>
         <li>把 .pth 权重导出成 HF/Qwen3 格式并用 transformers 加载生成，把评测发现整理成可实验的弱项假设清单。</li>
       </ul>
+</section>
 
-      <h2 id="rulers">评测的三把尺</h2>
+<section class="panel">
+<h2 id="rulers">评测的三把尺</h2>
       <p>
         "模型变好了吗"是训练侧最常问也最容易答错的问题。M13 说过 train loss 只能和同口径的自己比，
         M16 也只是拿它读曲线——要跨模型、跨阶段比较，需要专门的<b>评测指标</b>（本课第一个新概念：
@@ -111,8 +114,10 @@
           越界解读（拿 PPL 排名"谁更聪明"）是评测最常见的翻车姿势。
         </p>
       </div>
+</section>
 
-      <h2 id="run">eval_llm 实测：8 题、吞吐与一次诚实的复跑</h2>
+<section class="panel">
+<h2 id="run">eval_llm 实测：8 题、吞吐与一次诚实的复跑</h2>
       <p>
         第二把尺的主战场是 <code>tools/eval_llm.py</code>——固定 8 题自动评测 + 吞吐统计，全文 52 行。
         先读它的 CLI 再动手（这也是本课程的惯例：先确认参数名，别凭感觉敲）：
@@ -201,8 +206,10 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
           </li>
         </ul>
       </div>
+</section>
 
-      <h2 id="multiturn">多轮与长上下文：读档四套件</h2>
+<section class="panel">
+<h2 id="multiturn">多轮与长上下文：读档四套件</h2>
       <p>
         第三把尺由 <code>tools/eval_multiturn.py</code> 扛着，四个套件各有明确靶子——
         多轮记忆与长上下文是单轮评测的盲区，也是 M02 对话实验里你多半已经隐约感到的短板：
@@ -279,8 +286,10 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
       <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/eval_multiturn.py --suites A --weights ours_dpo --device cuda:0 --out /tmp/m21_mt.md</span></code></pre>
       <p class="prov"><b>[说明]</b> 权重名可选 ours_dpo / ours_full_sft / official_full_sft（后者需 out/official/ 的官方权重）；
       无 GPU 就读 <a href="codeview/docs/results/multiturn_eval.md.html">docs/results/multiturn_eval*.md</a> 完成同等分析——两条路都是验收块承认的正式路径。</p>
+</section>
 
-      <h2 id="official">官方对照：同题集、strict 载入、控制变量</h2>
+<section class="panel">
+<h2 id="official">官方对照：同题集、strict 载入、控制变量</h2>
       <p>
         本课的高潮：和官方 minimind 面对面。<b>本课第二个新概念：对照实验</b>——比较两个对象时，
         用控制变量法把"不关心的差异"全部冻结，只留要研究的那一个。官方对照
@@ -399,8 +408,10 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
           </li>
         </ul>
       </div>
+</section>
 
-      <h2 id="export">convert_model：实验室通往生态的桥</h2>
+<section class="panel">
+<h2 id="export">convert_model：实验室通往生态的桥</h2>
       <p>
         对照做完，最后一步是让成果走出实验室。<code>tools/convert_model.py</code> 的
         <code>to-qwen</code> 子命令把 .pth 转成 HF transformers 的 Qwen3 结构目录（safetensors 权重——
@@ -421,8 +432,10 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
       这是"实验室通往工业的桥"：训练栈是自己的（可控、可教、可改），交付格式是行业的（可被一切工具消费）。
       另一个子命令 <code>merge-lora</code> 一句话带过：M18 训出的 LoRA 适配器合并回基模存成普通 .pth
       （base + lora 两路径 → 合并产物），合并后同样可以走 to-qwen 出生态。</p>
+</section>
 
-      <h2 id="weakness">弱项清单：评测的终点不是分数，是假设</h2>
+<section class="panel">
+<h2 id="weakness">弱项清单：评测的终点不是分数，是假设</h2>
       <p>
         把本课两把尺照出来的东西汇总。评测的目的从来不是"得到一个分数然后开心"，而是产出一份
         <b>下一轮改进的假设清单</b>——每条弱项配一个可实验的假设，这正是 M22 毕业实验的入口：
@@ -444,8 +457,10 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
         冻结其他、同尺复测）——era1→era2 的召回率 16.7%→50% 就是这个循环跑通一次的样子。
         M22 的毕业实验，就是让你亲手把这个循环再跑一圈。
       </p>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · PPL 和 loss 是什么关系？ours full_sft 的 CE 是 1.592，PPL 是多少、什么含义？</summary>
@@ -486,8 +501,10 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 · temperature 0.1 vs 0.9：哪个重复率更低？</div>
         <div class="ex-body">
@@ -564,7 +581,10 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>评测指标 <span class="en">evaluation metric</span></dt><dd>把模型能力压缩成可比较数字的方法。三把尺：自动指标（PPL/重复率，便宜可全自动但看不见对错）、固定题集（输出可肉眼对照但样本小、题目可见）、专项套件（覆盖多轮/长上下文盲区但面窄）。每个数字都要记得它是哪把尺量出来的。</dd>
           <dt>困惑度 <span class="en">perplexity, PPL</span></dt><dd>token 平均交叉熵的指数换算 $e^{\mathcal{L}}$（见 M16），本课升级为跨模型比较指标：同一批评测文本上谁低谁的语言建模更准。ours full_sft 1.592 → 4.91；前提是同语料同口径，否则不可比。</dd>
@@ -577,9 +597,12 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
           <dt>HF 格式导出 <span class="en">HF export</span></dt><dd>convert_model.py to-qwen：.pth → Qwen3 结构的 safetensors+config+tokenizer 目录。导出即进入 HF 生态（transformers/vLLM/ollama 可加载）——训练栈自有、交付格式行业标准。merge-lora 子命令则把 M18 的适配器合并回基模。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
   <aside class="toc" id="toc"></aside>
 </div>
@@ -591,6 +614,6 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

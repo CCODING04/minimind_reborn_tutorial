@@ -161,6 +161,8 @@ v2 起，`course.css` 的 tokens 基底移植自 answer-me-with-html 的 bluepri
 - **有意偏离 blueprint 两处**：① 四语义色保留课程 hue（绿=验收/完成、黄=坑、红=红线、紫=工业/里程碑——教学语义优先，blueprint 的 ok=accent 会压平五卡语义），暗色下按对比度重调；② 圆角保留 6px 体系（blueprint 为直角），维持教程"教科书"质感。
 - **新增变量**：`--code-c/--code-s`（代码三色随态切换）、`--topbar-bg/--acc-head-bg/--overlay/--drawer-shadow/--card-hover-shadow/--on-accent/--on-success`（暗色覆盖的派生表面色与"色上文字"色）。终端块恒为 GitHub dark，两态共用。
 - **写作约束不变**：页面禁止内联样式；改 tokens 后全量递增资源版本号并重跑 build_codeview.py（同步 codeview 页引用）。
+- **panel 面板化（v3 起）**：模块页 `.content` 内每个 h2 小节包进 `<section class="panel">`（首段为 panel-head，词汇表为 glossary-panel），纸面卡片浮于 `--page-bg` 画布之上、1.5px 深墨描边（`--panel-border`）、直角、节头去下划线。由 **`tools/panelize.py` 幂等生成**——新页成文或增删小节后重跑一次即可；不要手写 panel 包裹。
+- **flowchart 流程图**：关键流转图（如 M03 七站地图、M09 前向管线）用 `.flowchart`（fc-node/fc-arrow/fc-io/fc-loop/fc-note）CSS 绘制，明暗自适应；对齐型教学图（残差流逐位、移位示意）保留 `pre.ascii` 字符形态。
 
 ## 5. 工作流与 QA
 
@@ -170,7 +172,7 @@ v2 起，`course.css` 的 tokens 基底移植自 answer-me-with-html 的 bluepri
 2. **先跑通**：页面上每条命令作者真实执行，输出留档（写入页面即溯源）；
 3. 按 §3.1 骨架成文，元素符合 §3.2/3.3 规范；**仓库文件链接一律写原始形式 `../../Reproduce/minimind_reborn/...`**；
 4. 过 §5.2 自查清单；
-5. 跑 `python3 tools/build_codeview.py`（把仓库链接转为站内代码查看页并生成对应 view 页）→ `python3 tools/check_course.py` 全绿后入库。
+5. 跑 `python3 tools/panelize.py`（新页/新小节自动包 panel）→ `python3 tools/build_codeview.py`（仓库链接转站内代码查看页）→ `python3 tools/check_course.py` 全绿后入库。
    - codeview 页特性：面包屑 + 行号列 + 每行 `#L42` 锚点 + 三色高亮 + 复制按钮；>200KB 文件截断提示；
    - 改动 course.css/js 后：全量递增页面资源版本号 `?v=N`，并重跑 build_codeview.py（它会同步 view 页的版本引用）。
 

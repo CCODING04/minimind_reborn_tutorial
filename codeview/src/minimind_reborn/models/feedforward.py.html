@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>feedforward.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../../assets/course.css?v=6">
+<link rel="stylesheet" href="../../../../assets/course.css?v=7">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -87,6 +87,6 @@ class MOEFeedForward(nn.Module):
             self.aux_loss = scores.new_zeros(1).squeeze()
         return y.view(batch, seq_len, hidden_dim)</code></pre></div>
 </main>
-<script src="../../../../assets/course.js?v=6"></script>
+<script src="../../../../assets/course.js?v=7"></script>
 </body>
 </html>

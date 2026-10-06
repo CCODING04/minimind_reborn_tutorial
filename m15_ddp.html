@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M15 · DDP 与 no_sync：把训练扩到两张卡 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m15">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M15</span><span>第四篇 · 训练</span></div>
         <h1>DDP 与 no_sync：把训练扩到两张卡</h1>
         <p class="lede">
@@ -43,8 +42,10 @@
           <span class="chip">对照：<code>utils/dist.py</code> · <code>training/common/trainer.py</code> · <code>docs/pretrain_readiness.md</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>画出 4 卡 DDP 一个 micro step 的数据流（同一份模型 + 各自 1/4 的数据 → 本地梯度 → all-reduce 平均 → 各卡同步更新），说清"复制的是模型、切分的是数据"；</li>
         <li>解释 DistributedSampler 为什么必须切数据、set_epoch 为什么每个 epoch 都要调，用真实日志指出每 rank 迭代数如何随 world 减半；</li>
@@ -52,8 +53,10 @@
         <li>手算累积 8 步时 no_sync 有/无的全量同步次数（8 次 → 1 次），用双卡 A/B 实测解释为什么吞吐 +31~33% 而不是 8×；</li>
         <li>跑通 torchrun 双卡冒烟并逐行读懂 world=2 日志；没有双卡时走存档分析路线。</li>
       </ul>
+</section>
 
-      <h2 id="ddp">数据并行：复制模型，切分数据</h2>
+<section class="panel">
+<h2 id="ddp">数据并行：复制模型，切分数据</h2>
       <p>
         M08 讲 MoE 时给过 DDP 一句话定义（"反向后同步梯度的多卡训练方式"），M13 讲 MFU 时又借了它的 world——
         今天把它讲透。<b>DDP</b>（DistributedDataParallel，分布式数据并行）是 PyTorch 的多卡训练包装器：
@@ -173,8 +176,10 @@ else:
           切分的是什么、每步同步什么。先懂 DDP，再懂其他。
         </p>
       </div>
+</section>
 
-      <h2 id="facade">容错 dist 封装：业务代码不写 if distributed</h2>
+<section class="panel">
+<h2 id="facade">容错 dist 封装：业务代码不写 if distributed</h2>
       <p>
         多卡代码最怕的不是写不出来，而是<b>散</b>：业务逻辑里到处 <code>if rank == 0:</code>、
         <code>if dist.is_initialized():</code>，读代码的人永远不知道还有哪个分支没看到。
@@ -293,8 +298,10 @@ def broadcast_object(obj, src: int = 0):
           </li>
         </ul>
       </div>
+</section>
 
-      <h2 id="nosync">no_sync：梯度累积下的通信陷阱（本课核心）</h2>
+<section class="panel">
+<h2 id="nosync">no_sync：梯度累积下的通信陷阱（本课核心）</h2>
       <p>
         M13 讲过梯度累积：显存装不下大 batch 时，把大 batch 切成 N 份逐份算，每份 loss 除以 N 记进梯度
         （micro step），N 份攒齐才动一次参数（optimizer step）。单卡世界这毫无问题。
@@ -440,8 +447,10 @@ runpy.run_path("tools/train.py", run_name="__main__")</code></pre></div>
       <p class="prov"><b>[作者实测 · 2026-10-01 · 同上环境，两次 48 步短跑]</b>
       两条轨迹偏差 ≤0.035——来源是浮点归约次序不同带来的 1e-7 量级扰动随训练放大，
       训练意义上是同一条曲线：no_sync 改的是通信时机，不是数学。</p>
+</section>
 
-      <h2 id="lab">🎮 双卡实验区</h2>
+<section class="panel">
+<h2 id="lab">🎮 双卡实验区</h2>
       <p>
         有两张卡（或租得起两小时）的读者，本节命令逐条真跑；单卡读者跳到本节末尾的存档路线——
         读真实日志是正式学习路径，不是降级。实验一，两进程冒烟（验收块同款命令的完整输出）：
@@ -490,8 +499,10 @@ runpy.run_path("tools/train.py", run_name="__main__")</code></pre></div>
         ④ 想动手摸 DDP 语义，M08 的 gloo/CPU 玩具实验（单进程 world=1 也能演示"挂图"铁律）随时可跑——
         但注意 torchrun + NCCL 路线必须有 GPU，init_distributed 会显式报错而不是静默回退。
       </p>
+</section>
 
-      <h2 id="bughunt">🔍 bug 猎场：缺 no_sync 的隐性通信（fd9fdc8）</h2>
+<section class="panel">
+<h2 id="bughunt">🔍 bug 猎场：缺 no_sync 的隐性通信（fd9fdc8）</h2>
       <p>
         这个 bug 的特别之处：<b>它没有任何症状</b>。训练正常收敛、日志正常打印、checkpoint 正常保存——
         只有两张卡没有"想象中那么快"。2026-09-24 全量训练前，作者按 readiness 清单
@@ -562,8 +573,10 @@ self.scaler.scale(scaled).backward()   # ← DDP 默认：每次 backward 都全
         （per_rank_full_iters）、M14 的跨卡数续训（checkpoint 存 world_size、加载时换算 step）、
         本课的通信时机——单卡测不出、多卡才现形，是这条生产线的母题。
       </p>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · all-reduce 平均的到底是什么？为什么平均完参数不会跑散？</summary>
@@ -604,8 +617,10 @@ self.scaler.scale(scaled).backward()   # ← DDP 默认：每次 backward 都全
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 · 等效 batch 真算：2 卡 × batch 4 × 累积 2，等价于单卡 batch 16 吗？</div>
         <div class="ex-body">
@@ -705,7 +720,10 @@ print("不等分片时最大差：", (((g_a2 + g_b2) / 2) - g_big).abs().max().i
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>数据并行 / DDP <span class="en">DistributedDataParallel</span></dt><dd>多卡训练的最底层形态：每卡一个进程、一份完整模型副本、不同的数据分片；各自前向反向，梯度 all-reduce 平均后各自更新，参数逐位保持一致。复制的是模型、切分的是数据；模型大到装不下才需要 ZeRO/FSDP 等切模型的技术。</dd>
           <dt>rank / world size / local_rank</dt><dd>rank = 进程全局编号（0 起）；world size = 进程总数（MFU 分母里的 world）；local_rank = 本机内卡号（多机时才与 rank 不同）。torchrun 启动时经 RANK/WORLD_SIZE/LOCAL_RANK 三个环境变量注入，dist.py 靠探测 RANK 区分单卡/多卡。</dd>
@@ -718,9 +736,12 @@ print("不等分片时最大差：", (((g_a2 + g_b2) / 2) - g_big).abs().max().i
           <dt>scaling 效率 <span class="en">多卡加速比</span></dt><dd>双卡 tok/s ÷（2 × 单卡 tok/s）。100% 是理论完美线性加速；2×4090（PCIe PHB、无 NVLink、混合卡）修复后实测 88.5%，剩余损耗来自互连带宽与快慢卡互相等待。判读前提：先有单卡基线（度量先行）。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
   <aside class="toc" id="toc"></aside>
 </div>
@@ -732,6 +753,6 @@ print("不等分片时最大差：", (((g_a2 + g_b2) / 2) - g_big).abs().max().i
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

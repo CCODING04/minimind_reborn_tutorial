@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M20 · 推理栈深潜：采样、停止与引擎 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m20">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M20</span><span>第五篇 · 推理与评测</span></div>
         <h1>推理栈深潜：采样、停止与引擎</h1>
         <p class="lede">
@@ -43,8 +42,10 @@
           <span class="chip">对照：<code>inference/{sampling,generator,chat,engine}.py</code> · <code>tools/serve.py</code> · <code>tests/test_inference/</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>逐函数默写 sampling.py 的<b>五连纯函数</b>，用最小数值例子复算每一个的行为，说出"顺序即契约"为什么成立；</li>
         <li>用插桩计数复现<b>双重温度 bug</b>，量化它对采样分布的影响面，并解释"为什么不随手修"与"该怎么锁"；</li>
@@ -53,8 +54,10 @@
         <li>把 engine 四层分层对应到 serve.py 的 OpenAI 风格端点，真跑一次服务并读懂流式 delta 与 M02 签名 bug 的终章。</li>
       </ul>
       <p><b>配套阅读：</b>本课的 top_k 阈值、top_p 的 cumsum+scatter、multinomial+Generator——逐条详解（直觉/为什么/坑/最小示例）见 <a href="pytorch_guide.html">附录 · PyTorch 特殊用法指南</a>，档 A 学员随查随练。</p>
+</section>
 
-      <h2 id="map">开工地图：M03 的②③④⑥站，今天拆到螺钉级</h2>
+<section class="panel">
+<h2 id="map">开工地图：M03 的②③④⑥站，今天拆到螺钉级</h2>
       <p>
         M03 画过七站地图：①tokenizer → ②chat 模板 → ③engine 门面 → ④generator 内核 → ⑤model 前向 →
         ⑥sampling → ⑦decode。当时承诺"M20 深潜整条推理栈"——今天兑现。⑤站已在第二篇拆完
@@ -71,8 +74,10 @@
         每一次都在调同一套 <code>generate</code> 内核。今天把它拆开，你会看到两个"纯函数各自正确、
         串联契约有缝隙"的真实 bug（一个立案新修讨论，一个收尾终章）。
       </p>
+</section>
 
-      <h2 id="sampling">五连纯函数：sampling.py 逐个复算</h2>
+<section class="panel">
+<h2 id="sampling">五连纯函数：sampling.py 逐个复算</h2>
       <p>
         <a href="codeview/src/minimind_reborn/inference/sampling.py.html"><code>inference/sampling.py</code></a>
         全文 70 行、五个函数，模块 docstring 第一行就立了规矩：<b>≤10 行一个、带形状注释、可独立单测</b>。
@@ -206,8 +211,10 @@ print([int(sample_token(torch.tensor([[1.0, 3.0, 2.0]]),
           反例是把采样写进生成循环——循环体一长，"每步发生了什么"就只能靠猜。
         </p>
       </div>
+</section>
 
-      <h2 id="bug-temp">🔍 bug 猎场：双重温度——纯函数都对，串起来 logits/T²</h2>
+<section class="panel">
+<h2 id="bug-temp">🔍 bug 猎场：双重温度——纯函数都对，串起来 logits/T²</h2>
       <p>
         M03 ⑥站的"停一下"埋过雷：<code>apply_temperature</code> 在 generate 路径上被调<b>两次</b>。
         今天立案。先并排看两处代码——
@@ -283,8 +290,10 @@ print(f"generate 2 步 · apply_temperature 调用次数 = {CALLS['n']}")</code>
         五连函数各有单测、generate 也有 7 个测试，但没有任何一条断言"温度在完整路径上只被应用一次"——
         缝隙又一次长在两块正确之间。
       </p>
+</section>
 
-      <h2 id="stops">停止三重：generator 的三道闸</h2>
+<section class="panel">
+<h2 id="stops">停止三重：generator 的三道闸</h2>
       <p>
         生成循环什么时候停？答案是<b>三重停止条件</b>（generator.py:1-7 文件头原文"缺一不可"），
         也是本课第二个新概念——<b>停止条件体系</b>：token 级、循环级、后处理级三道闸各管一层，
@@ -344,8 +353,10 @@ if eos_token_id is not None:
         这是"契约要测试锁定"的正面样板（对照上一节的双重温度：有功能、无锁定，就成了潜伏 bug）。
         实测行为：验收的 14 个用例里它就在。
       </p>
+</section>
 
-      <h2 id="chatwin">chat 滑窗：训练怎么截，推理就怎么忘</h2>
+<section class="panel">
+<h2 id="chatwin">chat 滑窗：训练怎么截，推理就怎么忘</h2>
       <p>
         <a href="codeview/src/minimind_reborn/inference/chat.py.html"><code>inference/chat.py</code></a>
         的 ChatSession 管"会话记忆"。多轮对话里历史只会越滚越长，最终把 prompt 推过训练窗口——
@@ -391,8 +402,10 @@ if eos_token_id is not None:
         （user/assistant 数量恒相等）、送入生成的 prompt 不超预算、单条超长消息左截保尾
         （<code>endswith("结尾标记")</code>）。
       </p>
+</section>
 
-      <h2 id="engine-serve">engine 与 serve：四层回收，服务上线</h2>
+<section class="panel">
+<h2 id="engine-serve">engine 与 serve：四层回收，服务上线</h2>
       <p>
         M03 的四层分层（sampling → generator → chat → engine，"内核只认 token"）今天全部拆完，
         收拢在 <a href="codeview/src/minimind_reborn/inference/engine.py.html"><code>inference/engine.py</code></a>
@@ -449,8 +462,10 @@ if eos_token_id is not None:
       每帧 1~3 个字——两份证据合起来正好覆盖 serve.py 的两条代码路径（非流式走 generate_text，
       流式走 generate_tokens + streamer）。本机 serving extras 已安装，未触发门控；
       若你看到 <code>SystemExit: 缺少服务依赖</code>，按提示 <code>uv sync --extra serving</code> 后重试。</p>
+</section>
 
-      <h2 id="bug-chat">chat 签名 bug 终章：M02 伏笔的最终盘点</h2>
+<section class="panel">
+<h2 id="bug-chat">chat 签名 bug 终章：M02 伏笔的最终盘点</h2>
       <p>
         M02 猎场的签名 bug（ChatSession 以三个位置参数调 generate_tokens，而后者 attention_mask
         是 keyword-only——星号之后只能按关键字传）当时承诺"M20 回收修复"。第一步先核对<b>当前状态</b>：
@@ -499,8 +514,10 @@ if eos_token_id is not None:
         <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 共享（他进程各占约 8.3/8.5GB）· torch 2.14.0+cu130 · full_sft_768.pth]</b>
         同一脚本先后两次跨进程运行开头分岔；同进程内两次调用、以及同输入两次前向的 logits 均逐位一致（torch.equal=True）。</p>
       </div>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · prompt 里已经出现了 eos，为什么不能据此停止生成？</summary>
@@ -541,8 +558,10 @@ if eos_token_id is not None:
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 · repetition_penalty=1.5 对复读输出有什么影响（full_sft 真跑）</div>
         <div class="ex-body">
@@ -671,7 +690,10 @@ for rp in (1.0, 1.5):
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>采样纯函数链契约 <span class="en">sampling chain contract</span></dt><dd>五个 ≤10 行纯函数按固定顺序串联（temperature → repetition_penalty → top_k → top_p → 采样），每个只做一件事、可独立单测；顺序即契约——先定型、再截断。本课证明：零件各自正确不保证串联正确，契约本身要有测试锁定。</dd>
           <dt>停止条件体系 <span class="en">stop conditions, triple</span></dt><dd>token 级（eos 掩码只认生成位——prompt 携带的 eos 不算，因 pretrain 语料里它是文档分隔/pad）、循环级（batch 全停才 break，已停序列冻结为 eos 占位）、后处理级（decode 前按 eos 截断残留）。三道闸各防一种事故，缺一不可。</dd>
@@ -683,9 +705,12 @@ for rp in (1.0, 1.5):
           <dt>OpenAI 风格 API <span class="en">OpenAI-compatible API</span></dt><dd>业界事实标准的服务接口约定（/v1/chat/completions 端点、messages 进 choices 出、delta 流式增量、tool_calls 结构）。实现它 = 生态里所有现成客户端直接可用。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
 
   <aside class="toc" id="toc"></aside>
@@ -698,6 +723,6 @@ for rp in (1.0, 1.5):
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M06 · KV Cache：预分配设计 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m06">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M06</span><span>第二篇 · 模型：造</span></div>
         <h1>KV Cache：预分配设计</h1>
         <p class="lede">
@@ -46,8 +45,10 @@
           <span class="chip">对照：<code>models/kv_cache.py</code> · <code>inference/generator.py</code> · <code>tests/test_models/test_kv_cache.py</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>用实测数字说出无缓存 vs 有缓存的差距（50 token 省 38.8 倍计算量），并解释为什么墙钟加速比"只有"1.6 倍；</li>
         <li>解释为什么 K/V 能缓存而 Q 不能，画出一"步"解码时 q_new 与历史 k/v 的注意力关系；</li>
@@ -55,8 +56,10 @@
         <li>手算一个 2048-token 会话的 KV 显存占用（24 MiB），并从 generator 的 <code>prompt + max_new_tokens</code> 容量公式推出任意配置的账单；</li>
         <li>复现两类坑（忘 <code>advance</code> 静默变慢、容量开小越界硬错），并解释"逐步解码 vs 全量重算逐位一致"为什么是 KV cache 最硬的正确性关卡。</li>
       </ul>
+</section>
 
-      <h2 id="exp">黑箱先行：先生成 50 个 token，亲眼看"慢"</h2>
+<section class="panel">
+<h2 id="exp">黑箱先行：先生成 50 个 token，亲眼看"慢"</h2>
       <div class="callout warn">
         <div class="co-title">⚠️ 依赖声明：本实验读取 64M 官方权重</div>
         <p>
@@ -134,8 +137,10 @@ print(statistics.median(bench(no_cache) for _ in range(5)),
         <li><b>墙钟加速比远小于计算量比</b>（2.4× vs 277.9×）：这个尺寸下每步时间大头是固定开销——Python 循环、几十个小内核（GPU 一次调度执行的计算单元）的启动、采样链——而不是注意力算力。模型越大、上下文越长，固定开销占比越低，KV cache 的收益越逼近计算量比（🏭 工业对照见<a href="#capacity">容量一节</a>）。</li>
         <li><b>两条路径逐位一致</b>：缓存不该改变任何输出，只该改变耗时——这句话如何变成一条测试，本课<a href="#hardest">专门有一节</a>。</li>
       </ol>
+</section>
 
-      <h2 id="why">慢在哪：每一步都在重算"不会变的历史"</h2>
+<section class="panel">
+<h2 id="why">慢在哪：每一步都在重算"不会变的历史"</h2>
       <p>
         无缓存为什么是平方级？看第 5 步解码时模型在算什么。此时序列已有 6 个 token（p0~p3 是 prompt，
         t4 是上一步生成的），刚喂进去新 token t5，要预测下一个 token。模型内部（M07 精读的 attention）会把
@@ -170,8 +175,10 @@ print(statistics.median(bench(no_cache) for _ in range(5)),
         (k, v) 元组、每步 <code>torch.cat</code> 把新的一列拼上去——直观，但每一步都重新分配能装下全部历史的内存并整体拷贝
         （<code>kv_cache.py</code> 模块注释里自己写了这条对照）。reborn 的答案是 57 行的预分配设计。
       </p>
+</section>
 
-      <h2 id="source">精读 kv_cache.py：预分配 + 切片写 + 游标</h2>
+<section class="panel">
+<h2 id="source">精读 kv_cache.py：预分配 + 切片写 + 游标</h2>
       <p>
         <a href="codeview/src/minimind_reborn/models/kv_cache.py.html"><code>models/kv_cache.py</code></a>
         全文 57 行（含注释），一个类四个方法。先看仓库与容量：
@@ -253,8 +260,10 @@ advance(1)              → cur_len 7 → 8                8 层全部写完后�
           "什么进 state_dict、什么不进"的完整图景，M09 组装模型、官方权重 strict 互通时正面回收。
         </p>
       </div>
+</section>
 
-      <h2 id="capacity">容量怎么定：prompt + max_new_tokens 的一笔显存账</h2>
+<section class="panel">
+<h2 id="capacity">容量怎么定：prompt + max_new_tokens 的一笔显存账</h2>
       <p>
         预分配把"开多大"变成一道必答题。答案在
         <a href="codeview/src/minimind_reborn/inference/generator.py.html"><code>inference/generator.py</code></a>
@@ -313,8 +322,10 @@ print(f"真实分配核对：k{tuple(cache.k.shape)} + v 同形 = {real/1024/102
         </p>
       </div>
       <p class="prov"><b>[事实核对]</b> 官方 minimind 的 cat 式实现对照与 vLLM 浪费率数字，分别来自 <code>kv_cache.py</code> 模块注释与 vLLM 论文 <i>Efficient Memory Management for Large Language Model Serving with PagedAttention</i>（Kwon et al., SOSP 2023）。</p>
+</section>
 
-      <h2 id="hardest">最硬的一条测试：逐步解码 vs 全量重算，逐位一致</h2>
+<section class="panel">
+<h2 id="hardest">最硬的一条测试：逐步解码 vs 全量重算，逐位一致</h2>
       <p>
         KV cache 的 bug 有个恶劣性质：<b>它不崩</b>。游标错一位、mask 差一列（off-by-one，边界上差一个位置的错误），
         模型照样吐出"看起来挺像话"的中文——直到某个微妙的重复或胡话让你起疑。所以正确性不能靠肉眼看输出，
@@ -354,8 +365,10 @@ print(f"真实分配核对：k{tuple(cache.k.shape)} + v 同形 = {real/1024/102
           </tbody>
         </table>
       </div>
+</section>
 
-      <h2 id="pit">坑卡：两类真实的坑</h2>
+<section class="panel">
+<h2 id="pit">坑卡：两类真实的坑</h2>
       <div class="callout warn">
         <div class="co-title">⚠️ 坑卡 1：忘了 advance——不报错、不错字，只是悄悄回到全量重算</div>
         <ul class="pit-stages">
@@ -400,8 +413,10 @@ cache.write(0, k, k, start=6)"</span>
         </ul>
       </div>
       <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 两条输出均为当日真跑；坑卡 1 的喂入序列由 forward 前钩子（<code>register_forward_pre_hook</code>）采集。</p>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · 为什么只缓存 K/V，不缓存 Q？多缓存一份 Q 会怎样？</summary>
@@ -442,8 +457,10 @@ cache.write(0, k, k, start=6)"</span>
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 · 把容量开成 2 倍（max_seq_len 2048 → 4096），显存和速度怎么变？</div>
         <div class="ex-body">
@@ -550,7 +567,10 @@ for cap in (2048, 4096):
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>KV 缓存 <span class="en">KV cache</span></dt><dd>把解码过程中历史 token 的 K/V 向量存进显存复用的运行时状态；历史 K/V 不随新 token 改变，而每个新 Q 都要查它们——缓存把解码从平方级降到线性。</dd>
           <dt>prefill <span class="en">预填充</span></dt><dd>生成的第一步：整段 prompt 一次前向、整块写入缓存；之后每步只喂 1 个新 token（decode，步进解码）。</dd>
@@ -562,14 +582,17 @@ for cap in (2048, 4096):
           <dt>state_dict</dt><dd>PyTorch 收纳模型全部参数的字典，保存/加载权重即存/读它；KV cache 是会话级运行痕迹，作为普通属性与参数彻底分家（M09 回收）。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
 
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

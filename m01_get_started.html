@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M01 · 课程导览与第一个绿灯 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m01">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M01</span><span>第一篇 · 开箱：用</span></div>
         <h1>课程导览与第一个绿灯</h1>
         <p class="lede">
@@ -42,8 +41,10 @@
           <span class="chip">对照：<code>Makefile</code> · <code>tools/verify_env.py</code> · <code>tools/train.py</code> · <code>configs/smoke/</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>说清这门课的学习方式：<b>跟读真实代码 + 动手跑 + 绿灯验收</b>三件事如何配合；</li>
         <li>用 <code>uv</code> 一条命令装出锁定的 Python 环境，并用 <code>verify_env.py</code> 验证 torch/CUDA；</li>
@@ -51,8 +52,10 @@
         <li>跑通 <code>make smoke</code>——tiny 模型三阶段全链路，并<b>逐行读懂训练日志</b>在说什么；</li>
         <li>用"重跑一次冒烟"亲手观察到 <b>resume-by-default</b>（默认断点续训）行为——为 M14 埋下伏笔。</li>
       </ul>
+</section>
 
-      <h2 id="how">这门课怎么学</h2>
+<section class="panel">
+<h2 id="how">这门课怎么学</h2>
       <div class="callout note">
         <div class="co-title">📐 先见三个词：pretrain · SFT · DPO</div>
         <p>
@@ -108,8 +111,10 @@
 第四篇 训练        M13 ── M14 ── M15 ── M16 🏁B ── M17 ── M18 ── M19   基座到对齐全家桶
 第五篇 推理·评测   M20 ── M21                              白箱推理 + 给模型打分
 第六篇 毕业        M22 🏁C                                  全链路一条命令 + 毕业小实验</code></pre>
+</section>
 
-      <h2 id="target">先认识实现目标：minimind_reborn</h2>
+<section class="panel">
+<h2 id="target">先认识实现目标：minimind_reborn</h2>
       <p>
         <b>minimind_reborn</b> 是开源项目 minimind 的工程化重构。64M 参数（hidden 768 × 8 层，词表 6400），
         覆盖八种训练范式与完整推理栈。它和官方版本的关键区别（也是本课程的看点）：
@@ -127,8 +132,10 @@
         </table>
       </div>
       <p class="prov"><b>[事实核对]</b> 85 测试（2026-10-01 实测；课程早期记录为 49，随仓库长上下文工作扩容）· 8 冒烟配方 · 64M≈63.91M 参数 · 官方权重 strict 互通——均可在 <a href="codeview/README.md.html"><code>Reproduce/minimind_reborn/README.md</code></a> 与 <code>tests/</code> 目录核对。</p>
+</section>
 
-      <h2 id="get-code">第 0 步：拿到代码与权重</h2>
+<section class="panel">
+<h2 id="get-code">第 0 步：拿到代码与权重</h2>
       <p>
         课程真正的起点：把 reborn 仓库克隆到本地，再（可选但强烈建议）把官方训练好的 64M 权重请下来。
         环境与数据是后面两节的事——代码与权重，现在就位：
@@ -171,8 +178,10 @@ cd minimind-reborn</code></pre></div>
       <p>
         没有下载权重也能走完全课程主线（tiny 配方 CPU 可跑），但 M02 的对话体验与 🏁A 里程碑需要它们。
       </p>
+</section>
 
-      <h2 id="env">环境准备：uv 与锁定环境</h2>
+<section class="panel">
+<h2 id="env">环境准备：uv 与锁定环境</h2>
       <p>
         reborn 用 <a href="https://docs.astral.sh/uv/" target="_blank" rel="noopener noreferrer">uv</a> 管理依赖——
         <code>uv.lock</code> 锁定全部版本，任何人任何时候装出的环境<b>逐位一致</b>。这是可复现性的第一块地基。
@@ -197,8 +206,10 @@ GPU 可用: True
 设备名: NVIDIA GeForce RTX 4090
 矩阵乘 OK: True</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-29 · 2×RTX 4090 · uv 0.12.5]</b> 无 GPU 的机器上输出会是 <code>GPU 可用: False</code>——<b>不影响本课程主线</b>（tiny 配方 CPU 可跑），只有 🎮 选做的 64M 实训需要 GPU。</p>
+</section>
 
-      <h2 id="data">数据就位</h2>
+<section class="panel">
+<h2 id="data">数据就位</h2>
       <p>
         训练数据不进 git 仓库，reborn 用一个环境变量告诉代码"数据根目录在哪"：
         <code>MINIMIND_REBORN_DATA_ROOT</code>（未设置时默认 <code>~/Code/WorkSpace/minimind-reproduce/dataset</code>，
@@ -223,8 +234,10 @@ uv run python tools/download_data.py --name dpo_mini</code></pre></div>
 或运行 tools/download_data.py --name pretrain_t2t_mini 从 modelscope 下载</span></code></pre>
         <p class="pit-note">缺什么（文件路径）、叫什么（注册名）、怎么办（两种解法）——一句废话没有。M11 讲数据注册表时你会看到这条消息是怎么生成的。</p>
       </div>
+</section>
 
-      <h2 id="smoke">第一个绿灯：make smoke</h2>
+<section class="panel">
+<h2 id="smoke">第一个绿灯：make smoke</h2>
       <p>
         万事俱备。现在跑整个课程的第一条核心命令——<b>tiny 模型全链路冒烟</b>：
         一个 64 维 2 层的迷你模型（0.53M 参数），把 pretrain→SFT→DPO 三阶段各跑几步，11 秒内验证整条管线无断点。
@@ -307,8 +320,10 @@ uv run python tools/download_data.py --name dpo_mini</code></pre></div>
           M04 会带你通读整个配置系统——这是 reborn 与官方版本差异最大的一层。
         </p>
       </div>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · pretrain 的初始 loss 为什么是 8.77 左右？</summary>
@@ -343,8 +358,10 @@ uv run python tools/download_data.py --name dpo_mini</code></pre></div>
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 · 重跑一次冒烟，会发生什么？</div>
         <div class="ex-body">
@@ -421,7 +438,10 @@ uv run python tools/download_data.py --name dpo_mini</code></pre></div>
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>冒烟测试 <span class="en">smoke test</span></dt><dd>tiny 模型 + 少量步数跑通全链路的快速验证，抓"断了"不抓"错了"。</dd>
           <dt>配方 <span class="en">recipe</span></dt><dd>一个 YAML 文件 = 一个可复现实验；只写与默认值的差异，文件名即实验名。</dd>
@@ -432,9 +452,12 @@ uv run python tools/download_data.py --name dpo_mini</code></pre></div>
           <dt>MFU <span class="en">model FLOPs utilization</span></dt><dd>模型算力利用率：实际吞吐折算的 FLOPs ÷ 硬件峰值，M13 详讲。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
 
   <aside class="toc" id="toc"></aside>
@@ -447,6 +470,6 @@ uv run python tools/download_data.py --name dpo_mini</code></pre></div>
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

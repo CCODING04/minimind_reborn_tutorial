@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M17 · DPO：偏好对齐 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m17">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M17</span><span>第四篇 · 训练</span></div>
         <h1>DPO：偏好对齐</h1>
         <p class="lede">
@@ -43,8 +42,10 @@
           <span class="chip">对照：<code>training/dpo/{workflow,loss}.py</code> · <code>configs/dpo_64m.yaml</code> · <code>runs/dpo_full/</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>从"两个回答哪个更好"出发走完推导链：Bradley-Terry 偏好模型 → RLHF 目标 → DPO 闭式损失，说出每一步替换掉了什么；</li>
         <li>逐行读 <code>dpo_loss</code> 与 <code>logits_to_log_probs</code>，解释 β 的作用，以及"为什么是 log_prob 之差而不是 logit 之差"；</li>
@@ -52,8 +53,10 @@
         <li>真跑三档学习率的 smoke_dpo 对照、读 64M 存档的偏好曲线，用数字解释 lr=4e-8 背后的"已经会说话，只调品味"；</li>
         <li>亲手触发两个退化案例（β=0、chosen=rejected），先按公式预测行为再实测验证。</li>
       </ul>
+</section>
 
-      <h2 id="problem">会说话 ≠ 说得好：SFT 之后的瓶颈</h2>
+<section class="panel">
+<h2 id="problem">会说话 ≠ 说得好：SFT 之后的瓶颈</h2>
       <p>
         M16 收官的复盘三问里有一条"还差什么"，答案是：<b>模型不知道什么叫"更好"</b>。SFT 的损失是
         模仿——把标准答案的每个 token 概率推高（M12 的 loss mask 只对回答区间记账）。它带来两个后遗症：
@@ -158,8 +161,10 @@
             M01 测验 2 的答案在此兑现：那是"对哪个更好毫无偏好、纯猜硬币"的损失，所有偏好训练的零点。
           </p>
       </details>
+</section>
 
-      <h2 id="loss">精读 loss.py：31 行纯函数</h2>
+<section class="panel">
+<h2 id="loss">精读 loss.py：31 行纯函数</h2>
       <p>
         DPO 的全部数学落在 <code>training/dpo/loss.py</code>——两个纯函数（输入输出只有张量，
         不碰模型不碰配置，天然可单测）。全文 31 行：
@@ -244,8 +249,10 @@ return picked.squeeze(-1)                  # (B, T)：每 token 的 log P(y_t | 
         切片 <code>[:0]</code> 是空的，空张量取均值即 nan。上游 workflow 的拼批保证 batch 恒为偶数
         （下一节），纯函数自己不设防；给它写单测时，batch 必须按"对"喂。
       </p>
+</section>
 
-      <h2 id="ref">冻结参考模型：workflow 精读</h2>
+<section class="panel">
+<h2 id="ref">冻结参考模型：workflow 精读</h2>
       <p>
         <code>training/dpo/workflow.py</code> 全文 59 行，是八范式里第一个"模型有两份"的母版。
         分两段读，先看组装（前 32 行）：
@@ -361,8 +368,10 @@ dpo:
       但参考侧前向全程 no_grad——激活即算即释放，不留计算图；真正的大头是策略侧的激活图
       （前向 4672−539 ≈ 4.1 GiB）。训练时策略侧还有 Adam 优化器状态（M13）与梯度各一份参数，
       但那与 SFT 相同——DPO 的增量就是"多一份参数 + 多一次无梯度前向"。</p>
+</section>
 
-      <h2 id="labs">实测：三档学习率，与 64M 的偏好曲线</h2>
+<section class="panel">
+<h2 id="labs">实测：三档学习率，与 64M 的偏好曲线</h2>
       <p>
         M01 冒烟只跑了 4 步 DPO（loss 0.6931→0.6908）。本课放大到 40 步，做三档学习率对照
         （每档 40 步 GPU 上秒级完成；CPU 学员预期每档 ~5 分钟——两份模型各一次前向，数字仅供 GPU 对照）。
@@ -525,8 +534,10 @@ for i in range(64):
           </li>
         </ul>
       </div>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · 参考模型的"冻结三件套"缺一不可吗？各防什么病？</summary>
@@ -567,8 +578,10 @@ for i in range(64):
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 · chosen = rejected：把两个回答设成一模一样，loss 和梯度是什么？</div>
         <div class="ex-body">
@@ -654,7 +667,10 @@ pol[1, -1] -= 0.5; loss2 = dpo_loss(ref, pol, mask, beta=0.15)</code></pre></div
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>偏好优化 <span class="en">preference optimization</span></dt><dd>第三棒训练范式：不再模仿标准答案（SFT），而是直接优化"chosen 比 rejected 更受偏爱"的判断。数据形态是同一 prompt 的两个回答（M12 的 DPODataset），损失开口于 ln 2=0.6931——零偏好零点。</dd>
           <dt>DPO <span class="en">direct preference optimization</span></dt><dd>偏好优化的最轻路线（2023）：把 RLHF 的"奖励模型+强化学习"闭式地消成一个损失 $-\log\sigma(\beta[(\pi_c-\pi_r)-(\mathrm{ref}_c-\mathrm{ref}_r)])$，与 pretrain/SFT 共用同一台 Trainer。工业界小模型对齐的默认选择（Zephyr 等）。</dd>
@@ -667,9 +683,12 @@ pol[1, -1] -= 0.5; loss2 = dpo_loss(ref, pol, mask, beta=0.15)</code></pre></div
           <dt>logsigmoid <span class="en">数值稳定实现</span></dt><dd>$-\log\sigma(z)$ 的稳定计算（loss.py 用 F.logsigmoid）。margin 大负数时朴素写法会溢出；其梯度 $-\sigma(-z)$ 在 z 极负时≈1、极正时≈0——DPO 的梯度尺度与交叉熵不可直接比较。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
   <aside class="toc" id="toc"></aside>
 </div>
@@ -681,6 +700,6 @@ pol[1, -1] -= 0.5; loss2 = dpo_loss(ref, pol, mask, beta=0.15)</code></pre></div
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

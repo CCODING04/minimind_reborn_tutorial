@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M13 · 训练基座：Trainer 生命周期与可观测 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m13">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M13</span><span>第四篇 · 训练</span></div>
         <h1>训练基座：Trainer 生命周期与可观测</h1>
         <p class="lede">
@@ -44,8 +43,10 @@
           <span class="chip">对照：<code>training/common/</code> · <code>tests/test_training/</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>画出 Trainer 的生命周期骨架（run → _train_epoch → evaluate → _save），说出范式唯一能注入的东西是什么；</li>
         <li>区分 micro step 与 optimizer step，解释 6 个 micro step 在累积 2 下为何只记 3 个 optimizer step、grad_norm 为什么在 unscale 之后测；</li>
@@ -54,8 +55,10 @@
         <li>打开任意一个 <code>runs/&lt;recipe&gt;/&lt;时间戳&gt;/</code> 目录，逐件指认四件套，用 MFU 公式解释 tiny 模型为何只有 0.1%。</li>
       </ul>
       <p><b>配套阅读：</b>本课的 unscale_→clip 顺序、no_sync、zero_grad(set_to_none)、param_groups——逐条详解（直觉/为什么/坑/最小示例）见 <a href="pytorch_guide.html">附录 · PyTorch 特殊用法指南</a>，档 A 学员随查随练。</p>
+</section>
 
-      <h2 id="bridge">十分钟导览：五主题各自消费 M12 的什么</h2>
+<section class="panel">
+<h2 id="bridge">十分钟导览：五主题各自消费 M12 的什么</h2>
       <p>
         M12 备下的产物不会闲置——本课五个主题各按不同方式把它们接进引擎。先给一张"谁消费什么"的接线表，
         十分钟读完再进正文，每一节都能对号入座：
@@ -72,8 +75,10 @@
           </tbody>
         </table>
       </div>
+</section>
 
-      <h2 id="optimizer-primer">开小灶：优化器 30 分钟（无 ML 背景先读）</h2>
+<section class="panel">
+<h2 id="optimizer-primer">开小灶：优化器 30 分钟（无 ML 背景先读）</h2>
       <p>
         有 ML 基础的同学可以直接跳到 <a href="#lifecycle">下一节</a>。这一节是给零背景同学的缓冲垫：
         不讲 reborn 任何源码，只用一条抛物线把"训练到底在干什么"讲到能读懂
@@ -119,8 +124,10 @@ print(f"裁剪后范数 {clipped.norm():.2f}，梯度 {clipped.tolist()}")
         就等比例缩回安全圈。带着这套直觉回读 <a href="#optim">§优化器</a> 的 AdamW 两行配置 + M01 冒烟日志的
         grad_norm 列，全部落地。
       </p>
+</section>
 
-      <h2 id="lifecycle">一台引擎，八种范式</h2>
+<section class="panel">
+<h2 id="lifecycle">一台引擎，八种范式</h2>
       <p>
         reborn 有八种训练范式（pretrain / SFT / DPO / 蒸馏 / LoRA / GRPO / PPO / Agent），但它们<b>不各写一个训练循环</b>。
         循环、精度、梯度累积、裁剪、评估、保存——全部长在同一个类里：
@@ -267,8 +274,10 @@ print(f"裁剪后范数 {clipped.norm():.2f}，梯度 {clipped.tolist()}")
           拷到卡上，数据传输与当前步的计算重叠——CPU 设备自动旁路，不引入"GPU 之外无预取语义"的假象。
         </p>
       </div>
+</section>
 
-      <h2 id="lr">学习率调度：一个 15 行的纯函数</h2>
+<section class="panel">
+<h2 id="lr">学习率调度：一个 15 行的纯函数</h2>
       <p>
         M01 说 lr（学习率）是"每步参数更新的步长"。它不该是常数：训练开局模型还很乱，
         大步长会把参数打飞；训练后期接近收敛，需要小步长精修。
@@ -345,8 +354,10 @@ print(f"裁剪后范数 {clipped.norm():.2f}，梯度 {clipped.tolist()}")
         这个数字再出现，就是 bug 回来了。<b>单卡 world=1 时两种口径恰好一致</b>，所以 mini 时代从未暴露：
         又一个"单卡测不出、多卡才现形"的案例。
       </p>
+</section>
 
-      <h2 id="amp">AMP 混合精度：bf16 与 fp16 的分野</h2>
+<section class="panel">
+<h2 id="amp">AMP 混合精度：bf16 与 fp16 的分野</h2>
       <p>
         <b>AMP</b>（Automatic Mixed Precision，自动混合精度）：矩阵乘这类大数值吞吐的算子跑低精度
         （省一半显存与带宽、快一倍），敏感的归约仍留在 fp32——PyTorch 的 <code>autocast</code> 上下文自动逐算子分派，
@@ -474,8 +485,10 @@ def build_scaler(dtype: torch.dtype) -&gt; torch.amp.GradScaler:
       bf16 相对 fp32 恰好 <b>1.98×</b>。<b>结论：混合精度的收益随"每步计算量"放大</b>——
       tiny 冒烟里 bf16 与 fp32 几乎无差（3.46 vs 3.72 ms），别用冒烟数字判断精度收益；
       显存上 tiny 从 60→55 MB、64M 两种 16 位基本持平（激活省一半、权重/优化器状态仍是 fp32 主副本）。</p>
+</section>
 
-      <h2 id="optim">优化器：decay 分组与 0.95</h2>
+<section class="panel">
+<h2 id="optim">优化器：decay 分组与 0.95</h2>
       <p>
         引擎里最后一个基件是 <b>AdamW</b>：Adam 优化器 + 解耦权重衰减。
         Adam 为每个参数维护两个滑动平均：一阶矩 <code>m</code>（梯度的动量，方向）与二阶矩 <code>v</code>
@@ -515,8 +528,10 @@ def build_scaler(dtype: torch.dtype) -&gt; torch.amp.GradScaler:
         不比较版本号，而是<b>签名探测</b>——当前 torch 的 AdamW 支持 fused（CUDA 融合内核，一次launch
         完成整组更新）才开启；能力探测比版本判断更能抵御环境漂移。
       </p>
+</section>
 
-      <h2 id="observ">可观测：四件套、MFU 与 ETA</h2>
+<section class="panel">
+<h2 id="observ">可观测：四件套、MFU 与 ETA</h2>
       <p>
         训练一旦跑过几十分钟，"当时是什么环境、什么配置、指标怎么走的"就必须能<b>事后只凭磁盘回答</b>。
         M01 你见过日志里的环境指纹一行；现在看它落盘后的样子。Trainer 构造时（rank0 独占——rank0 即多卡里的
@@ -586,8 +601,10 @@ def build_scaler(dtype: torch.dtype) -&gt; torch.amp.GradScaler:
         "多 worker 更快"在 tiny 上是伪命题，在你的负载上量过才知道。
         <span class="prov"><b>[作者实测 · 2026-10-01 · 冒烟配方 max_steps=40 log_interval=10，各跑一次]</b></span>
       </p>
+</section>
 
-      <h2 id="bughunt">🔍 bug 猎场：ETA 恒 0——窗口耗时冒充总耗时</h2>
+<section class="panel">
+<h2 id="bughunt">🔍 bug 猎场：ETA 恒 0——窗口耗时冒充总耗时</h2>
       <p>
         2026-09-24 中午，作者跑完 pretrain_26m 两轮训练，复盘日志时发现：进度条越接近尾声，
         <code>eta</code> 越是清一色的 0.0——838 行训练日志（含 790 行 Epoch 进度）里
@@ -649,8 +666,10 @@ def estimate_eta_minutes(elapsed_total_s, steps_done, steps_left) -&gt; float:
         （窗口恰好覆盖全部已走步时两者相等），越到后期越离谱。凡是"越跑越准/越跑越离谱"的指标，
         先查口径，再查公式。
       </p>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · warmup 为什么存在？reborn 默认 warmup_steps 是多少、什么场景必须打开？</summary>
@@ -691,8 +710,10 @@ def estimate_eta_minutes(elapsed_total_s, steps_done, steps_left) -&gt; float:
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 · 把 warmup_steps 从 2 改成 10：前几步的 lr 曲线怎么变？</div>
         <div class="ex-body">
@@ -818,7 +839,10 @@ for step in range(6):
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>训练循环生命周期 <span class="en">train loop lifecycle</span></dt><dd>run → _train_epoch → evaluate → _save 的固定骨架；梯度/AMP/裁剪/续训/评估/保存的顺序与不变量固定在 Trainer，范式只提供 compute_loss 与数据组装，不得绕过。</dd>
           <dt>micro step / optimizer step</dt><dd>前者 = 一个 batch 的前向+反向（梯度记账），后者 = 优化器真正更新一次参数。隔着梯度累积（loss ÷ 累积步数后 backward 累加）；metrics 曲线的 x 轴统一用 optimizer step。</dd>
@@ -831,9 +855,12 @@ for step in range(6):
           <dt>可追溯四件套 <span class="en">run artifacts</span></dt><dd>runs/&lt;recipe&gt;/&lt;时间戳&gt;/ 下的 config.json（配置全量快照）、env.json（git commit/软硬件指纹/seed）、train.log（人读时间线）、metrics.jsonl（(step,key,value) 逐行指标流，本地兜底永不断网失忆）。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
   <aside class="toc" id="toc"></aside>
 </div>
@@ -845,6 +872,6 @@ for step in range(6):
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

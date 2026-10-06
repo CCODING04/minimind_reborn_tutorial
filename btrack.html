@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>B 轨 · 自写挑战总纲 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-page="btrack">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <p><a href="m00_week0.html">← M00 · Week-0 准备</a> ｜ 本页是附录，不在 22 个主线模块之列 ｜ <a href="m01_get_started.html">进入 M01 →</a></p>
+    <div class="content"><section class="panel panel-head">
+<p><a href="m00_week0.html">← M00 · Week-0 准备</a> ｜ 本页是附录，不在 22 个主线模块之列 ｜ <a href="m01_get_started.html">进入 M01 →</a></p>
 
       <header class="unit-head">
         <div class="kicker"><span class="badge-ms">B 轨</span><span>附录 · 自写挑战</span></div>
@@ -45,8 +44,10 @@
           <span class="chip">加入时机：<b>读到 M05 即可开始（BT1）</b></span>
         </div>
       </header>
+</section>
 
-      <h2 id="manifesto">B 轨宣言</h2>
+<section class="panel">
+<h2 id="manifesto">B 轨宣言</h2>
       <p>
         这门课有两条轨道，不是两个阵营：
         <b>A 轨（跟读主线）不变</b>——22 个模块、绿灯验收、数字溯源，一门都不改、一课都不少；
@@ -67,8 +68,10 @@
         两者的差距就是"看会了"与"学会了"的差距。默写会失败在你想不到的地方（dtype、边界、就地改写），
         而每一处失败都是 A 轨读漏的细节。
       </p>
+</section>
 
-      <h2 id="tasks">八任务总表</h2>
+<section class="panel">
+<h2 id="tasks">八任务总表</h2>
       <p>
         每个任务的"对拍裁判"是 reborn 仓库里真实服役的测试文件——你的实现要么通过它，
         要么用它揭示差距。任务与主线模块一一对应，<b>先读后写</b>（读 = 对应模块的 A 轨）：
@@ -89,8 +92,10 @@
         </table>
       </div>
       <p class="prov"><b>[事实核对]</b> 裁判路径按 reborn 仓库 <code>tests/</code> 实际目录逐个核实（2026-10-06）。仓库没有独立的 test_layers.py / test_attention.py / test_feedforward.py / test_sampling.py——地基件与注意力的覆盖在 <code>test_rope_scaling.py</code> 与 <code>test_model.py</code>，采样在 <code>test_generator.py</code>；每个任务的详细挑战块（含提示折叠）随对应模块页发布。</p>
+</section>
 
-      <h2 id="template">通用对拍脚本模板</h2>
+<section class="panel">
+<h2 id="template">通用对拍脚本模板</h2>
       <p>
         八个任务共用同一个对拍骨架，五步纪律：<b>固定 seed → 同一输入 → 双实现前向 →
         assert_close → 打印 PASS</b>。以 BT1 的 RMSNorm 为例（把两个 import 换成当次任务的组件即可复用全程）：
@@ -116,8 +121,10 @@ torch.testing.assert_close(mine, ref, rtol=<span class="n">1e-5</span>, atol=<sp
           它就是你的下一步路标。
         </p>
       </div>
+</section>
 
-      <h2 id="help">求助梯度（四层，只升不跳）</h2>
+<section class="panel">
+<h2 id="help">求助梯度（四层，只升不跳）</h2>
       <p>卡住是 B 轨的常态——按层级求助，<b>每层停留够久再升下一层</b>：</p>
       <div class="table-scroll">
         <table>
@@ -131,8 +138,10 @@ torch.testing.assert_close(mine, ref, rtol=<span class="n">1e-5</span>, atol=<sp
         </table>
       </div>
       <p>四层用尽仍未通过：回 A 轨把整个模块重读一遍再战——那不叫失败，叫发现了一个读漏的盲区。</p>
+</section>
 
-      <h2 id="finish-d">🏁D 终点定义</h2>
+<section class="panel">
+<h2 id="finish-d">🏁D 终点定义</h2>
       <div class="milestone">
         <div class="ms-head"><span class="flag">🏁</span>
           <div>
@@ -154,8 +163,10 @@ torch.testing.assert_close(mine, ref, rtol=<span class="n">1e-5</span>, atol=<sp
           </ul>
         </div>
       </div>
+</section>
 
-      <h2 id="graduation">与 M22 毕业实验的关系</h2>
+<section class="panel">
+<h2 id="graduation">与 M22 毕业实验的关系</h2>
       <p>
         走完 B 轨的人，毕业实验（<a href="m22_graduation.html#gradexp">M22</a>）相当于<b>直接锁定"复现对比"题</b>：
         你的实现与 reborn 的对拍数据（哪里逐值一致、哪里有残差、什么边缘输入下分叉）就是现成的自变量与因变量，
@@ -164,12 +175,13 @@ torch.testing.assert_close(mine, ref, rtol=<span class="n">1e-5</span>, atol=<sp
       </p>
 
       <p><a href="m00_week0.html">← M00 · Week-0 准备</a> ｜ 回到主线继续跟读 ｜ <a href="m01_get_started.html">进入 M01 →</a></p>
-    </div>
+</section>
+      </div>
   </main>
 
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

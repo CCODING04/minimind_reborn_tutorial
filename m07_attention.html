@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M07 · Attention：GQA、QK-Norm 与三条路径 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m07">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M07</span><span>第二篇 · 模型：造</span></div>
         <h1>Attention：GQA、QK-Norm 与三条路径</h1>
         <p class="lede">
@@ -43,8 +42,10 @@
           <span class="chip">对照：<code>models/attention.py</code> · <code>models/layers.py</code> · <code>tests/test_models/</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li><b>手算</b>一遍 4 token 的注意力（打分 → softmax → 加权求和），说出 Q/K/V 的检索角色与 $\sqrt{d}$ 缩放的原因；</li>
         <li>画出 <b>8 Q 头共享 4 组 KV</b> 的 GQA 结构图，算清 KV cache 减半的显存账，解释 M04 整除约束为什么是<b>硬</b>的；</li>
@@ -53,8 +54,10 @@
         <li>✏️ 补全路径③的三个关键行（缩放 / 因果 mask / softmax 维度），自测脚本验证与路径①一致。</li>
       </ul>
       <p><b>配套阅读：</b>本课的 view/reshape 之辨、unsqueeze 广播、masked_fill、triu 因果块——逐条详解（直觉/为什么/坑/最小示例）见 <a href="pytorch_guide.html">附录 · PyTorch 特殊用法指南</a>，档 A 学员随查随练。</p>
+</section>
 
-      <h2 id="qkv">Q/K/V：先把注意力当一次检索</h2>
+<section class="panel">
+<h2 id="qkv">Q/K/V：先把注意力当一次检索</h2>
       <p>注意力（attention）要解决的问题是：生成第 $t$ 个 token 时，前文 $t$ 个 token <b>各自该贡献多少</b>。最直觉的模型是一次检索：</p>
 
       <div class="callout tip">
@@ -108,8 +111,10 @@
       </div>
 
       <p>进代码前固定记号——本课 shape 注释全程用 <b>(B, H, T, D)</b>（批 / 头数 / 序列长 / 头维度）。64M 配置下的主干变换：<code>x (B, T, 768)</code> → 投影 <code>xq (B, T, 8, 96)</code>、<code>xk/xv (B, T, 4, 96)</code> → 转置复制 <code>(B, 8, T/total, 96)</code> → 打分 <code>scores (B, 8, T, total)</code>（total = 历史列 + 新列，M06 的游标语义）。</p>
+</section>
 
-      <h2 id="gqa">GQA：8 个 Q 头共享 4 组 KV</h2>
+<section class="panel">
+<h2 id="gqa">GQA：8 个 Q 头共享 4 组 KV</h2>
       <p>
         上表里藏着一个不对称：Q 有 <b>8</b> 个头，K/V 却只有 <b>4</b> 组。这就是 <b>GQA</b>（Grouped-Query Attention，
         分组查询注意力）：不是每个 Q 头配一套自己的 K/V，而是每 <b>2 个 Q 头共用一组 KV</b>。
@@ -190,8 +195,10 @@ q.transpose(1, 2) @ k.transpose(1, 2).transpose(-2, -1)"</span>
           靠的就是形状逐键一致。KV 头数既是<b>推理成本的旋钮</b>，也是<b>权重形状的一部分</b>，定了就锁死。
         </p>
       </div>
+</section>
 
-      <h2 id="qknorm">QK-Norm：进 RoPE 之前先踩一脚刹车</h2>
+<section class="panel">
+<h2 id="qknorm">QK-Norm：进 RoPE 之前先踩一脚刹车</h2>
       <p>
         <code>__init__</code> 里那两行 <code>q_norm / k_norm</code> 是本课第二个新概念。<b>QK-Norm</b>：对 q、k 各做一次
         RMSNorm（M05 读过的实现：fp32 归一化、<code>type_as</code> 回落），作用维度是 <b>head_dim</b>——每个头、每个位置各自归一，然后才进 RoPE：
@@ -228,8 +235,10 @@ xq, xk = apply_rotary_pos_emb(xq, xk, cos, sin)   # RoPE（M05）：转的是"�
           数据少、训练短，范数漂移没有机会被海量数据磨平，一个不稳的头就能拖垮 loss 曲线——64M 的小模型选它是"小更要稳"的典型决策。
         </p>
       </div>
+</section>
 
-      <h2 id="paths">三条执行路径：一份语义，三台发动机</h2>
+<section class="panel">
+<h2 id="paths">三条执行路径：一份语义，三台发动机</h2>
       <p>
         前置段算完 q/k/v，forward 下半场是本课主体：<b>同一套注意力语义</b>（GQA + QK-Norm + RoPE + 因果 + pad 抑制）有三个实现，
         按序判定、择一执行——训练全段、推理带 cache、没有融合算子的老环境，各自的最优发动机不同：
@@ -411,8 +420,10 @@ print("贪心稳定性——①与③ argmax 全等:", bool((out1.argmax(-1) == 
           性能路径永远有"慢但对的参照物"可对照。等价性测试不问"好不好"，只问"变没变"。
         </p>
       </div>
+</section>
 
-      <h2 id="fillblank">✏️ 填空：亲手把路径③写一遍</h2>
+<section class="panel">
+<h2 id="fillblank">✏️ 填空：亲手把路径③写一遍</h2>
       <p>
         读过不等于会写。下面是路径③的独立可跑缩小版（5 个 token、2 个头、$d{=}4$，不依赖仓库），
         <b>三处空</b>正是本课的三条命脉：$\sqrt{d}$ 缩放、因果 mask 构造、softmax 的维度。把空填上，跑通它：
@@ -466,8 +477,10 @@ out = F.softmax(scores, dim=-1).type_as(q) @ v                    # 空③ = -1<
       <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m07_fill.py</span>
 <span class="out">allclose(atol=1e-6): True  max|Δ| = 2.384185791015625e-07</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 填对三空即与路径①（SDPA is_causal）逐元素一致，max|Δ|≈2.4e-7；任何一空填错，allclose 变 False 或直接 NaN——对错机器可判，不用问人。</p>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · GQA 省的到底是哪份账？Q 投影省不省？</summary>
@@ -508,8 +521,10 @@ out = F.softmax(scores, dim=-1).type_as(q) @ v                    # 空③ = -1<
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 1 · n_rep=1（退回 MHA），KV cache 显存怎么变？</div>
         <div class="ex-body">
@@ -633,7 +648,10 @@ for kv in (4, 8):   # 4 = GQA（n_rep=2），8 = MHA（n_rep=1）
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>多头注意力 <span class="en">MHA</span></dt><dd>把 hidden 切成 H 个 head_dim 份并行做注意力再拼接，每个头学一种关注关系；每 Q 头独享一套 KV（n_rep=1）。</dd>
           <dt>Q / K / V <span class="en">Query / Key / Value</span></dt><dd>注意力三角色：Q=当前 token 的查询，K=各位置的被检索索引，V=真正被取走的内容；打分 $q\cdot k/\sqrt d$ 经 softmax 变权重，对 V 加权求和。</dd>
@@ -646,9 +664,12 @@ for kv in (4, 8):   # 4 = GQA（n_rep=2），8 = MHA（n_rep=1）
           <dt>等价性断言 <span class="en">equivalence assertion</span></dt><dd>同权重下比较两条实现输出 allclose 的回归测试；锁"实现之间一致"，不锁"与正确语义一致"（见变式 2）。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
 
   <aside class="toc" id="toc"></aside>
@@ -661,6 +682,6 @@ for kv in (4, 8):   # 4 = GQA（n_rep=2），8 = MHA（n_rep=1）
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

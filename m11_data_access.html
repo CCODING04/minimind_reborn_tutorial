@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M11 · 数据访问层：registry 与字节偏移索引 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m11">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M11</span><span>第三篇 · 数据</span></div>
         <h1>数据访问层：registry 与字节偏移索引</h1>
         <p class="lede">
@@ -43,8 +42,10 @@
           <span class="chip">对照：<code>data/registry.py</code> · <code>datasets.json</code> · <code>data/datasets.py</code> · <code>data/manifest.py</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>复现同一份 1.24GB jsonl 的三种取样姿势实测账单（全量预载 / 顺序扫描 / 字节偏移索引），说出索引赢在哪、输在哪；</li>
         <li>逐行读懂 <code>registry.py</code>，把 M01 那条三要素报错从生成处讲到每个要素的来源，并解释"声明式 JSON 优于 if-else"；</li>
@@ -52,8 +53,10 @@
         <li>用 <code>SegmentView</code> / <code>IndexListView</code> 在同一份索引上切 train/eval，讲清"视图不复制"（回收 M06）；</li>
         <li>说出 manifest 的三件设计各防什么：md5 稳定哈希防跨进程漂移、哈希分桶防 eval 泄漏、mtime+size 指纹防旁车脏读。</li>
       </ul>
+</section>
 
-      <h2 id="problem">观测先行：1.24GB 语料的三种取样姿势</h2>
+<section class="panel">
+<h2 id="problem">观测先行：1.24GB 语料的三种取样姿势</h2>
       <p>
         训练循环每个 step 都要"随机抽若干行、编码成样本"（DataLoader 的日常，M13 详讲它的调度）。
         先看要对付的对手有多大——jsonl（JSON Lines：每行一个独立 JSON 对象的纯文本，大语料的事实标准格式；
@@ -134,8 +137,10 @@ print(f"随机取样 {(time.perf_counter()-t0)/1000*1e6:.1f}µs/次")</code></pr
           tokenize（毫秒级）——省下的 1.3GB 内存是纯赚。
         </p>
       </div>
+</section>
 
-      <h2 id="registry">注册表：数据集是"数据"，不是代码</h2>
+<section class="panel">
+<h2 id="registry">注册表：数据集是"数据"，不是代码</h2>
       <p>
         C 姿势解决了"怎么读"，还有个前置问题："文件在哪、叫什么"。最省事的写法是在训练代码里
         <code>if name == "pretrain": path = "..."</code> 一路硬编码——reborn 的选择是把这件事变成一份<b>数据</b>：
@@ -226,8 +231,10 @@ except FileNotFoundError as e:
         这与 M04 "配置即实验"是同一个哲学的两半：M04 把<b>超参数</b>从代码搬进 YAML，本课把<b>资源描述</b>从代码搬进 JSON
         （registry.py 的 docstring 引用的 project-structure §4："数据描述的资源走配置文件"）。代码只保留"怎么拿"的逻辑。
       </p>
+</section>
 
-      <h2 id="index">字节偏移索引：O(N) 建一次，O(1) 取任意行</h2>
+<section class="panel">
+<h2 id="index">字节偏移索引：O(N) 建一次，O(1) 取任意行</h2>
       <p>
         现在拆姿势 C 的主角。<b>字节偏移（byte offset）</b>指某行第一个字节在整个文件里的位置编号（第 0 行的偏移是 0，
         第 1 行的偏移 = 第 0 行的字节长度，依此类推）。<b>字节偏移索引</b> = 把每行的起点偏移存成一个整数数组。
@@ -337,8 +344,10 @@ class IndexListView(Dataset):
         真正的索引只有一份。切分、上采样、过滤（M12 的零损失样本重映射也做在 IndexListView 里）全部变成
         "改行号数组"这个廉价操作。
       </p>
+</section>
 
-      <h2 id="manifest">manifest 一节：稳定哈希、分桶与旁车指纹</h2>
+<section class="panel">
+<h2 id="manifest">manifest 一节：稳定哈希、分桶与旁车指纹</h2>
       <p>
         SFT 的切分比 pretrain 讲究：要做<b>回复去重</b>和<b>按内容切分</b>，就得先知道每行的"回复规范化哈希"和"消息数"——
         这需要解析全量 json（14GB 十多分钟），不能每次启动都付。<a href="codeview/src/minimind_reborn/data/manifest.py.html"><code>manifest.py</code></a>
@@ -380,8 +389,10 @@ is_eval_flags.append(stable_hash(normalize_text(text)) % _BUCKET_MOD &lt; bucket
 def _fingerprint(path: Path) -&gt; str:
     st = path.stat()
     return f"{st.st_mtime_ns}:{st.st_size}"   # 修改时间(纳秒):字节数，便宜且够用</code></pre></div>
+</section>
 
-      <h2 id="pit">坑卡：改了 eval_ratio 却"不生效"</h2>
+<section class="panel">
+<h2 id="pit">坑卡：改了 eval_ratio 却"不生效"</h2>
       <div class="callout warn">
         <div class="co-title">⚠️ 坑卡：旁车的缓存键里没有 eval_ratio——同文件换口径，静默用旧切分</div>
         <ul class="pit-stages">
@@ -420,8 +431,10 @@ print(f"拿到的 eval 占比 {m.is_eval.mean():.5f}——是 smoke 的 0.001 �
         <p class="pit-note">缓存键少一味参数 = 缓存可能"对不上请求"——与 M04 bool 覆盖失效同一家族：配置变了，行为没变。</p>
       </div>
       <p class="prov"><b>[作者实测 · 2026-09-30]</b> 旁车现状：905,718 行、eval 占比 0.00092（=1‰ 桶的理论值）。该坑在仓库当前配置组合下真实存在（smoke 与 64m 配方同文件不同口径）；0.00092 与 0.001 的微小差值是哈希分桶的正常抽样噪声。</p>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · seek+偏移为什么能做到 O(1) 取行？它依赖哪两个前提？</summary>
@@ -462,8 +475,10 @@ print(f"拿到的 eval 占比 {m.is_eval.mean():.5f}——是 smoke 的 0.001 �
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 1 · 预测：把 jsonl 原地改一个字节（大小不变），manifest 指纹会怎样？</div>
         <div class="ex-body">
@@ -578,7 +593,10 @@ print("ALL PASS")</code></pre></div>
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>数据注册表 <span class="en">registry</span></dt><dd>一张"名字 → 数据集描述"的清单，物理形态是 datasets.json（9 条目 × 四字段 name/file/kind/description）。声明式：只描述有什么，不含怎么拿的代码；resolve_dataset 是唯一解析入口。</dd>
           <dt>声明式 <span class="en">declarative</span></dt><dd>用数据（JSON/YAML）描述"有什么"，而不是用代码写"怎么拿"。与 M04 配置即实验同源：加数据集 = 加条目，不改代码；报错能打印全量名单。</dd>
@@ -592,14 +610,17 @@ print("ALL PASS")</code></pre></div>
           <dt>哈希分桶 <span class="en">hash bucket</span></dt><dd><code>stable_hash(行内容) % 1000 &lt; bucket_take</code> 的确定性切分：同一行永远落同一侧，防 eval 泄漏（验证集混入训练样本致指标虚高）与重跑切分漂移。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
 
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

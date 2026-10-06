@@ -42,14 +42,16 @@
   --term-yellow:#e3b341;
   --term-blue:#79c0ff;
   /* 派生表面色（暗色下覆盖） */
-  --topbar-bg:rgba(255,255,255,.92);
+  --topbar-bg:rgba(246,246,243,.92);
   --acc-head-bg:rgba(230,244,234,.5);
   --overlay:rgba(31,35,46,.3);
   --drawer-shadow:0 8px 24px rgba(31,35,46,.12);
   --card-hover-shadow:0 1px 6px rgba(29,95,191,.12);
   --on-accent:#ffffff;
   --on-success:#ffffff;
-  --radius:6px;
+  --page-bg:#f6f6f3;
+  --panel-border:#1d2026;
+  --radius:0px;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Cascadia Code","Source Code Pro","Liberation Mono",monospace;
   --sans:-apple-system,"Segoe UI","Noto Sans","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
 }
@@ -82,13 +84,15 @@ html[data-mode="dark"]{
   --done-border:#6e40c9;
   --code-c:#8b949e;
   --code-s:#7ee787;
-  --topbar-bg:rgba(13,28,49,.92);
+  --topbar-bg:rgba(8,19,34,.92);
   --acc-head-bg:rgba(15,36,23,.55);
   --overlay:rgba(0,0,0,.5);
   --drawer-shadow:0 8px 24px rgba(0,0,0,.45);
   --card-hover-shadow:0 1px 6px rgba(110,168,255,.14);
   --on-accent:#081322;
   --on-success:#081322;
+  --page-bg:#081322;
+  --panel-border:#c9d6e8;
 }
 @media (prefers-color-scheme:dark){
   html:not([data-mode="light"]){
@@ -118,19 +122,21 @@ html[data-mode="dark"]{
     --done-border:#6e40c9;
     --code-c:#8b949e;
     --code-s:#7ee787;
-    --topbar-bg:rgba(13,28,49,.92);
+    --topbar-bg:rgba(8,19,34,.92);
     --acc-head-bg:rgba(15,36,23,.55);
     --overlay:rgba(0,0,0,.5);
     --drawer-shadow:0 8px 24px rgba(0,0,0,.45);
     --card-hover-shadow:0 1px 6px rgba(110,168,255,.14);
     --on-accent:#081322;
     --on-success:#081322;
+    --page-bg:#081322;
+    --panel-border:#c9d6e8;
   }
 }
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
 body{
-  margin:0;background:var(--canvas);color:var(--fg);
+  margin:0;background:var(--page-bg);color:var(--fg);
   font:16.5px/1.8 var(--sans);
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
 }
@@ -163,7 +169,7 @@ a:hover{text-decoration:underline}
 }
 .topbar .brand .crumb{color:var(--fg-faint);font-weight:400;font-size:13px}
 .topbar .progress-wrap{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--fg-muted);white-space:nowrap}
-.topbar .progress-bar{width:120px;height:6px;border-radius:3px;background:var(--subtle-deep);overflow:hidden;flex:0 1 120px}
+.topbar .progress-bar{width:120px;height:6px;border-radius:0;background:var(--subtle-deep);overflow:hidden;flex:0 1 120px}
 .topbar .progress-bar i{display:block;height:100%;width:0;background:var(--success);transition:width .3s}
 .topbar .map-link{font-size:13.5px;white-space:nowrap}
 .topbar .theme-toggle{
@@ -238,13 +244,13 @@ a:hover{text-decoration:underline}
 .sidebar .mod.planned .label{cursor:default}
 .sidebar .mod.planned .done-dot{opacity:.35;cursor:default}
 .sidebar .mod .tag{
-  font:600 10px/1 var(--sans);padding:2px 6px;border-radius:10px;flex:none;
+  font:600 10px/1 var(--sans);padding:2px 6px;border-radius:2px;flex:none;
   background:var(--subtle-deep);color:var(--fg-faint);
 }
 .sidebar .mod .tag.milestone{background:var(--done-subtle);color:var(--done)}
 
 /* —— 主内容 —— */
-.main{background:var(--canvas);min-width:0}
+.main{background:transparent;min-width:0}
 .content{max-width:820px;margin:0 auto;padding:36px 40px 90px}
 .content-wide{max-width:1060px}
 @media(max-width:640px){.content{padding:28px 20px 70px}}
@@ -293,6 +299,41 @@ a:hover{text-decoration:underline}
   .cl::before{width:2.4em;margin-right:12px;font-size:.9em}
 }
 
+/* ═══════════════ panel 面板（blueprint 纸面卡片，DESIGN §4.6）═══════════════ */
+.panel{
+  background:var(--canvas);border:1.5px solid var(--panel-border);
+  border-radius:0;padding:20px 26px 10px;margin:0 0 18px;
+}
+.panel > *:first-child{margin-top:0}
+.panel > *:last-child{margin-bottom:6px}
+.panel-head{padding-bottom:18px}
+.panel h2{border-bottom:0;font-size:20px;margin:26px 0 12px;padding-bottom:0;letter-spacing:.01em}
+.panel > h2:first-child{margin-top:0}
+.panel h3{margin-top:22px}
+.panel .glossary{border:0;background:transparent;padding:0;margin-top:0}
+.panel .glossary h2{margin:0 0 10px}
+
+/* 流程图（CSS 绘制，明暗自适应；关键 ASCII 图的升级形态，DESIGN §4.6） */
+.flowchart{margin:16px 0;font-size:13.5px}
+.flowchart .fc-node{
+  border:1.5px solid var(--panel-border);background:var(--subtle);
+  padding:7px 14px;display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline;
+}
+.flowchart .fc-station{font:700 13px/1.6 var(--mono);color:var(--accent);min-width:10.5em}
+.flowchart .fc-file{font:12px/1.6 var(--mono);color:var(--fg-muted)}
+.flowchart .fc-desc{flex-basis:100%;font-size:12.5px;color:var(--fg-muted);padding-left:.2em}
+.flowchart .fc-arrow{
+  color:var(--fg-faint);font:12px/1.15 var(--mono);
+  padding:1px 0 1px 5.4em;user-select:none;
+}
+.flowchart .fc-node.fc-io{border-style:dashed;background:transparent;border-color:var(--border-muted)}
+.flowchart .fc-node.fc-loop{border-left:4px solid var(--accent)}
+.flowchart .fc-note{
+  font-size:12.5px;color:var(--fg-muted);margin:8px 0 0 1em;
+  border-left:2px solid var(--border);padding-left:10px;
+}
+@media(max-width:640px){.flowchart .fc-station{min-width:0;flex-basis:100%}.flowchart .fc-arrow{padding-left:2em}}
+
 /* ═══════════════ 模块头 ═══════════════ */
 .unit-head{margin-bottom:26px}
 .unit-head .kicker{
@@ -305,7 +346,7 @@ a:hover{text-decoration:underline}
 }
 .unit-head .kicker .badge-ms{
   color:var(--done);background:var(--done-subtle);border:1px solid var(--done-border);
-  padding:3px 8px;border-radius:10px;letter-spacing:0;
+  padding:3px 8px;border-radius:2px;letter-spacing:0;
 }
 .unit-head h1{font-size:30px;line-height:1.35;margin:0 0 12px;font-weight:650;letter-spacing:-.01em}
 .lede{
@@ -315,7 +356,7 @@ a:hover{text-decoration:underline}
 .meta{display:flex;flex-wrap:wrap;gap:8px;margin:0}
 .meta .chip{
   font-size:12.5px;color:var(--fg-muted);background:var(--subtle);
-  border:1px solid var(--border);border-radius:16px;padding:3px 12px;
+  border:1px solid var(--border);border-radius:2px;padding:3px 12px;
 }
 .meta .chip b{color:var(--fg);font-weight:600}
 
@@ -371,7 +412,7 @@ pre.ascii{font-size:12.5px;line-height:1.55;color:var(--fg-muted)}
 .code-head > span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .code-head .lang{
   font:600 11px/1 var(--sans);color:var(--fg-faint);
-  border:1px solid var(--border);border-radius:10px;padding:2px 8px;background:var(--canvas);
+  border:1px solid var(--border);border-radius:2px;padding:2px 8px;background:var(--canvas);
 }
 /* token 三色：灰注释 / 绿字符串 / 加粗蓝关键字；数字与函数名保持正文色（极简方案） */
 pre.code .c,pre.ascii .c{color:var(--code-c)}
@@ -446,7 +487,7 @@ pre.term .dim{color:#7d8590}
 .pit-stages li{margin:6px 0;padding-left:64px;position:relative}
 .pit-stages li::before{
   position:absolute;left:0;top:2px;font:700 12px/1.6 var(--mono);
-  padding:1px 8px;border-radius:4px;background:var(--canvas);
+  padding:1px 8px;border-radius:2px;background:var(--canvas);
 }
 .pit-stages li.sym::before{content:"症状";color:var(--danger);border:1px solid var(--danger-border)}
 .pit-stages li.cause::before{content:"原因";color:var(--attention);border:1px solid var(--attention-border)}
@@ -504,7 +545,7 @@ details.quiz .quiz-ans .back a{color:var(--accent)}
 .accept pre{margin:10px 0 4px}
 
 .milestone{
-  border:2px solid var(--done-border);border-radius:8px;background:var(--done-subtle);
+  border:2px solid var(--done-border);border-radius:0;background:var(--done-subtle);
   margin:30px 0;padding:0;overflow:hidden;
 }
 .milestone .ms-head{
@@ -547,8 +588,8 @@ details.quiz .quiz-ans .back a{color:var(--accent)}
 
 /* 页间导航 */
 .pager{
-  display:flex;gap:12px;margin-top:40px;padding-top:22px;
-  border-top:1px solid var(--border);align-items:stretch;
+  display:flex;gap:12px;margin-top:22px;padding-top:0;
+  border-top:0;align-items:stretch;
 }
 @media(max-width:640px){
   .pager{flex-direction:column}
@@ -579,7 +620,7 @@ details.quiz .quiz-ans .back a{color:var(--accent)}
   background:
     radial-gradient(720px 280px at 12% -10%,var(--accent-subtle),transparent 62%),
     radial-gradient(640px 260px at 95% 0%,var(--done-subtle),transparent 60%),
-    var(--canvas);
+    var(--page-bg);
   padding:0;
 }
 .hero-inner{max-width:1060px;margin:0 auto;padding:56px 40px 44px}
@@ -596,7 +637,7 @@ details.quiz .quiz-ans .back a{color:var(--accent)}
 .section-title{font-size:21px;font-weight:650;margin:44px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--border)}
 .parts-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(330px,100%),1fr));gap:16px}
 .part-card{
-  border:1px solid var(--border);border-radius:8px;padding:18px 20px;background:var(--canvas);
+  border:1.5px solid var(--panel-border);border-radius:0;padding:18px 20px;background:var(--canvas);
   display:flex;flex-direction:column;gap:8px;
 }
 .part-card:hover{border-color:var(--accent-border);box-shadow:var(--card-hover-shadow)}
@@ -615,7 +656,7 @@ details.quiz .quiz-ans .back a{color:var(--accent)}
 .part-card .pc-mods li.planned{color:var(--fg-faint)}
 .part-card .pc-mods a{color:var(--fg)}
 .part-card .pc-mods a:hover{color:var(--accent)}
-.part-card .pc-mods .tag{font:600 10px/1 var(--sans);padding:2px 6px;border-radius:10px;background:var(--subtle);color:var(--fg-faint)}
+.part-card .pc-mods .tag{font:600 10px/1 var(--sans);padding:2px 6px;border-radius:2px;background:var(--subtle);color:var(--fg-faint)}
 .part-card .pc-mods .mod-num{font-family:var(--mono);font-size:12px}
 .part-card .pc-mods .tag.milestone{background:var(--done-subtle);color:var(--done)}
 

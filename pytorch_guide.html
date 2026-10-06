@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PyTorch 特殊用法指南 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-page="pytorch-guide">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <p><a href="btrack.html">← btrack.html · B 轨自写挑战</a> ｜ 本页是附录，不在 22 个主线模块之列 ｜ <a href="m01_get_started.html">返回 M01 →</a></p>
+    <div class="content"><section class="panel panel-head">
+<p><a href="btrack.html">← btrack.html · B 轨自写挑战</a> ｜ 本页是附录，不在 22 个主线模块之列 ｜ <a href="m01_get_started.html">返回 M01 →</a></p>
 
       <header class="unit-head">
         <div class="kicker"><span class="badge-ms">附录</span><span>档 A · PyTorch 速查页</span></div>
@@ -58,8 +57,10 @@
           再讲"为什么不用别的写法"，最后给 CPU 可跑的最小示例。
         </p>
       </div>
+</section>
 
-      <h2 id="table">用法总表</h2>
+<section class="panel">
+<h2 id="table">用法总表</h2>
       <div class="table-scroll">
         <table>
           <thead><tr><th>#</th><th>用法</th><th>章</th><th>位置</th><th>课程模块</th></tr></thead>
@@ -119,8 +120,10 @@
           </tbody>
         </table>
       </div>
+</section>
 
-      <h2 id="ch1">一、形状与视图</h2>
+<section class="panel">
+<h2 id="ch1">一、形状与视图</h2>
       <p>PyTorch 张量的"形状操作"几乎都不搬数据，只是换一种"看同一块内存"的方式。本章 5 条是全书的地基。</p>
 
       <h3 id="u1">1. <code>tensor.mean(-1, keepdim=True)</code></h3>
@@ -205,8 +208,10 @@ rope = torch.arange(10.0).reshape(10, 1)   # 假装是 RoPE 表
 step_view = rope[7:9]                       # 零拷贝视图
 step_view[0, 0] = 999                       # 原地在改会污染源表！
 print(rope[7, 0].item())                    # 999.0——同一块内存</code></pre></div>
+</section>
 
-      <h2 id="ch2">二、广播与归约</h2>
+<section class="panel">
+<h2 id="ch2">二、广播与归约</h2>
       <p>广播（broadcasting）是小形状自动"拉伸"对齐大形状的机制；归约（reduction）是 mean/sum 这类"多变少"的运算。两者组合是掩码运算的通用语言。</p>
 
       <h3 id="u6">6. 三层 <code>unsqueeze</code> 加性 mask 广播</h3>
@@ -282,8 +287,10 @@ std_r = grouped.std(dim=1, unbiased=False).repeat_interleave(2)
 print(((torch.tensor([1.0, 3.0]) - mean_r) / (std_r + 1e-4)).tolist())  # ≈[-1.0, 1.0]
 print(torch.tensor([1., 2.]).repeat_interleave(3).tolist())  # [1,1,1,2,2,2]
 print(torch.tensor([1., 2.]).repeat(3).tolist())             # [1,2,1,2,1,2] 记混的后果</code></pre></div>
+</section>
 
-      <h2 id="ch3">三、数值纪律</h2>
+<section class="panel">
+<h2 id="ch3">三、数值纪律</h2>
       <p>半精度（fp16/bf16）训练的世界里，"顺序"和"类型"就是数值纪律。本章 4 条是 reborn 数值不变量的落点。</p>
 
       <h3 id="u10">10. <code>x.float()</code> 升 fp32 计算 + <code>torch.rsqrt</code> + <code>type_as</code> 回落</h3>
@@ -358,8 +365,10 @@ losses = [2.1, float("nan"), 2.3]
 finite = [v for v in losses if torch.isfinite(torch.tensor(v))]
 print(finite)                     # [2.1, 2.3]
 print(sum(finite) / len(finite))  # 2.2：NaN 被挡在平均之外</code></pre></div>
+</section>
 
-      <h2 id="ch4">四、自动微分</h2>
+<section class="panel">
+<h2 id="ch4">四、自动微分</h2>
       <p>autograd（自动微分）记录每个运算以便反向传播。本章 5 条覆盖"什么时候<b>不要</b>记梯度"以及"怎么骗过 autograd"两类高级用法。</p>
 
       <h3 id="u14">14. <code>@torch.inference_mode</code> + <code>is_inference()</code> 张量防御</h3>
@@ -466,8 +475,10 @@ y = torch.zeros(1)
 y += 0 * w.sum()                         # 0 乘挂图
 y.sum().backward()
 print(w.grad.tolist())                   # [0.0, 0.0, 0.0]：梯度为 0 但已参与通信簿记</code></pre></div>
+</section>
 
-      <h2 id="ch5">五、模块与参数</h2>
+<section class="panel">
+<h2 id="ch5">五、模块与参数</h2>
       <p>nn.Module 的世界：哪些东西进 state_dict、哪些进优化器、哪些只是常量。本章 5 条决定模型的"记账方式"。</p>
 
       <h3 id="u19">19. <code>register_buffer(persistent=False)</code> + meta-device 丢 buffer 的全 0 判据重建</h3>
@@ -583,8 +594,10 @@ m = nn.Linear(2, 2).half()
 print(next(m.parameters()).dtype)   # torch.float16：随 .half() 自动对齐
 cache = torch.zeros(2, 2, dtype=next(m.parameters()).dtype)
 print(cache.dtype)                  # torch.float16：cache 与权重同精度</code></pre></div>
+</section>
 
-      <h2 id="ch6">六、掩码与注意力</h2>
+<section class="panel">
+<h2 id="ch6">六、掩码与注意力</h2>
       <p>注意力掩码是"因果性"与"padding"两大语义的交汇处，也是 off-by-one（差一）错误的高发区。</p>
 
       <h3 id="u24">24. SDPA 三路径选择（is_causal / additive attn_mask / manual）</h3>
@@ -644,8 +657,10 @@ y = x.masked_fill(cond, -1.0)     # 非原地：返回新张量
 print(x.tolist(), y.tolist())     # [0.0, 0.0, 0.0] [-1.0, 0.0, -1.0]
 x.masked_fill_(cond, -1.0)        # 原地：改自己
 print(x.tolist())                 # [-1.0, 0.0, -1.0]</code></pre></div>
+</section>
 
-      <h2 id="ch7">七、采样</h2>
+<section class="panel">
+<h2 id="ch7">七、采样</h2>
       <p>从 logits 到 token id 的每一步都是张量运算。reborn 把采样拆成 ≤10 行的纯函数（sampling.py），本章 5 条覆盖全链。</p>
 
       <h3 id="u27">27. top_k 第 k 大值作阈值 + 布尔赋 <code>-inf</code></h3>
@@ -750,8 +765,10 @@ next_token = torch.where(finished.unsqueeze(-1),
 print(next_token.tolist())                      # [[2, 2]]：已结束行冻结为 eos
 finished |= next_token.squeeze(-1).eq(2)
 print(finished.tolist(), bool(finished.all())) # [True, True] True：全停可 break</code></pre></div>
+</section>
 
-      <h2 id="ch8">八、训练循环</h2>
+<section class="panel">
+<h2 id="ch8">八、训练循环</h2>
       <p>训练循环的顺序就是不变量本身：AMP（自动混合精度）、梯度累积、LR 调度、数据预取，一步错位就是数值错误或性能腰斩。</p>
 
       <h3 id="u32">32. autocast 集中构造 + <code>nullcontext</code> 分支</h3>
@@ -891,8 +908,10 @@ running = 0.0
 for v in [torch.tensor(1.0), torch.tensor(2.0)]:
     running += v.item()               # 及时提取，tensor 可被 GC
 print(running)                        # 3.0</code></pre></div>
+</section>
 
-      <h2 id="ch9">九、分布式</h2>
+<section class="panel">
+<h2 id="ch9">九、分布式</h2>
       <p>多卡（DDP）训练的规则只有一条：所有 rank 走完全相同的路。本章 4 条都是这句话的推论。</p>
 
       <h3 id="u38">38. DDP <code>broadcast_buffers=False</code></h3>
@@ -978,8 +997,10 @@ def broadcast_object(obj, src: int = 0):
     return container[0]             # 非 src 进程拿到 rank0 的值
 
 print(broadcast_object("runs/20260926-143000"))</code></pre></div>
+</section>
 
-      <h2 id="ch10">十、权重 / 设备 / 数据加载</h2>
+<section class="panel">
+<h2 id="ch10">十、权重 / 设备 / 数据加载</h2>
       <p>保存与加载的世界充满"当时好好的，换台机器就炸"。本章 5 条是不炸的保证。</p>
 
       <h3 id="u42">42. <code>map_location="cpu"</code> + <code>weights_only</code> 双态</h3>
@@ -1092,8 +1113,10 @@ a = torch.rand(3); _ = random.random()
 torch.set_rng_state(state_t); random.setstate(state_p)   # 回滚
 b = torch.rand(3); _ = random.random()
 print(torch.equal(a, b))   # True：同一位随机流，位精确</code></pre></div>
+</section>
 
-      <h2 id="ch11">十一、损失函数专项</h2>
+<section class="panel">
+<h2 id="ch11">十一、损失函数专项</h2>
       <p>损失函数是张量操作的竞技场：移位、加权、取对数、辨方向。本章 6 条覆盖 LLM 全范式的损失写法。</p>
 
       <h3 id="u47">47. 移位 CE：切片 <code>[..., :-1, :]</code> vs <code>[..., 1:]</code> + <code>ignore_index=-100</code></h3>
@@ -1229,8 +1252,10 @@ naive = torch.log(torch.sigmoid(x))   # 手写两步
 stable = F.logsigmoid(x)              # fused 稳定版
 print(stable.tolist())                # [-30.0, -0.6931, -0.0]
 print(naive.tolist())                 # 此处尚可；fp16/更负时 naive 会 -inf</code></pre></div>
+</section>
 
-      <h2 id="top10">TOP 10 最易错速查表</h2>
+<section class="panel">
+<h2 id="top10">TOP 10 最易错速查表</h2>
       <p>训练炸了先翻这张表——十个最隐蔽的坑，按"坑 | 症状 | 一句话解法"排列：</p>
       <div class="table-scroll">
         <table>
@@ -1249,8 +1274,10 @@ print(naive.tolist())                 # 此处尚可；fp16/更负时 naive 会 
           </tbody>
         </table>
       </div>
+</section>
 
-      <h2 id="bonus">附录：指南外的工程彩蛋</h2>
+<section class="panel">
+<h2 id="bonus">附录：指南外的工程彩蛋</h2>
       <p>以上 52 条之外，reborn 还有几处"不像 PyTorch 用法但值得知道"的工程细节：</p>
       <ul>
         <li><b>per_rank_full_iters 余弦分母按 rank 折算</b>（<code>src/minimind_reborn/training/common/trainer.py:82-94</code>）：DDP 下 DistributedSampler 给每 rank 只分 1/world 样本，LR 调度的总步数分母必须按本 rank 口径折算——此前按全量算，双卡时余弦 2 epochs 只退到 75% 进度（2026-09-29 修复，单卡两种口径恰好一致所以 mini 时代未暴露）。</li>
@@ -1274,12 +1301,13 @@ print(naive.tolist())                 # 此处尚可；fp16/更负时 naive 会 
       <p class="prov"><b>[事实核对]</b> 本页全部 file:line 与 minimind-reborn 仓库逐条核对（2026-10-06），移植自《11_PyTorch 特殊用法指南》全文（52 条 / 11 章 + TOP 10 速查 + 工程彩蛋附录），未删条目。</p>
 
       <p><a href="btrack.html">← btrack.html · B 轨自写挑战</a> ｜ 回到主线继续跟读 ｜ <a href="m01_get_started.html">返回 M01 →</a></p>
-    </div>
+</section>
+      </div>
   </main>
 
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>

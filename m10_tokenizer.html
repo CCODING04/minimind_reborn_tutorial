@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M10 · tokenizer 与 chat 模板 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=6">
+<link rel="stylesheet" href="assets/course.css?v=7">
 </head>
 <body data-module="m10">
 
@@ -26,9 +26,8 @@
   <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
 
   <main class="main">
-    <div class="content">
-
-      <header class="unit-head">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
         <div class="kicker"><span class="badge-m">M10</span><span>第三篇 · 数据</span></div>
         <h1>tokenizer 与 chat 模板</h1>
         <p class="lede">
@@ -43,8 +42,10 @@
           <span class="chip">对照：<code>assets/tokenizer/</code> · <code>constants.py</code> · <code>tools/train_tokenizer.py</code> · <code>inference/chat.py</code></span>
         </div>
       </header>
+</section>
 
-      <h2 id="objectives">学完你能</h2>
+<section class="panel">
+<h2 id="objectives">学完你能</h2>
       <ul>
         <li>预测并验证任意文本的 token 切分（中英 / 代码 / 生僻字 / emoji），用实测数字说清 <b>token ≠ 字 ≠ 词</b>；</li>
         <li>手玩 8 行迷你语料的 BPE 前 3 轮合并，默写 6400 词表的账本（256 字节 + 6108 合并 + 36 特殊）；</li>
@@ -52,8 +53,10 @@
         <li>用 <code>render_chat</code> 渲染四种对话变体，讲清"训练与推理必须同一模板"和 prefix/suffix 测试为什么锁的是它；</li>
         <li>（🎮 选做）自训一个 mini 词表，并说出换词表的全链路代价。</li>
       </ul>
+</section>
 
-      <h2 id="bridge">第三篇开篇：容器与燃料</h2>
+<section class="panel">
+<h2 id="bridge">第三篇开篇：容器与燃料</h2>
       <p>
         第二篇自底向上造好了模型：RMSNorm、RoPE、KV cache、attention、FFN，M09 组装成 ForCausalLM 并装下官方权重。
         但训练时模型吃的不是文本也不是权重，而是 <b>token id 序列</b>——把文本变成 id 的那把刀，就是 tokenizer
@@ -75,8 +78,10 @@ M04 配置 → … → M09 🏁A       M10 词表与协议 ← 你在这里     
         （词表本体，两个 json）与 <code>constants.py</code> / <code>inference/chat.py</code>（常量与渲染入口）。
         还是老节奏：先观测，再概念。
       </p>
+</section>
 
-      <h2 id="observe">观测先行：同一把刀，切五段文本</h2>
+<section class="panel">
+<h2 id="observe">观测先行：同一把刀，切五段文本</h2>
       <p>
         M03 ①站见过一例：「你好，世界」→ <code>[1968, 294, 1950]</code>，5 个字符变 3 个 token。
         现在把刀口放宽——英文、代码、生僻字、emoji 一起上，每段都真跑：
@@ -113,8 +118,10 @@ for t in texts:
           <b>词表不是越大越好，是"和语料匹配"才好</b>。
         </p>
       </div>
+</section>
 
-      <h2 id="bpe">概念卡 BPE：反复合并最高频的相邻对</h2>
+<section class="panel">
+<h2 id="bpe">概念卡 BPE：反复合并最高频的相邻对</h2>
       <div class="callout tip">
         <div class="co-title">💡 概念卡：BPE（byte pair encoding，字节对编码）</div>
         <p>
@@ -191,8 +198,10 @@ print('词表', len(d['model']['vocab']), '= 字节 256 + 合并', len(d['model'
           字节级 BPE 结构上消灭了 OOV：没见过的「龘」「🤖」退化成几个字节 token，照切照还原，只是贵一点（观测表第 4/5 行）。
         </p>
       </div>
+</section>
 
-      <h2 id="special">36 个特殊 token 与三大常量</h2>
+<section class="panel">
+<h2 id="special">36 个特殊 token 与三大常量</h2>
       <p>
         词表里有 36 个 token 不是合并学出来的，是<b>人工指定、整串占用一个 id</b> 的标记——<b>特殊 token</b>
         （special tokens）：不参与 BPE 合并、渲染时原样占一个位置。三个最重要的常量写死在
@@ -249,8 +258,10 @@ RESPONSE_SUFFIX_TEXT = f"{EOS_TEXT}\n"</code></pre></div>
           但切英文/代码偏碎（观测表第 3 行）。词表一旦定下，权重、数据、模板全体绑定——这正是下一节的主题。
         </p>
       </div>
+</section>
 
-      <h2 id="template">chat 模板即代码：一份写进配置的对话协议</h2>
+<section class="panel">
+<h2 id="template">chat 模板即代码：一份写进配置的对话协议</h2>
       <p>
         M03 ②站的 <code>render_chat</code> 当时只看了一眼：消息列表进、带特殊标记的文本出。现在回答"模板到底是什么"：
         <b>chat 模板是把 <code>messages</code>（role/content 列表）渲染成模型训练时见过的固定格式的协议</b>，
@@ -305,8 +316,10 @@ RESPONSE_SUFFIX_TEXT = f"{EOS_TEXT}\n"</code></pre></div>
         这也决定了模板必须进 config 而不是散在代码里：训练侧造样本（M12）与推理侧拼 prompt 走同一个
         <code>render_chat</code> → 同一份模板字符串，两边永不漂移；改模板 = 改协议 = 数据重造 + 模型重训。
       </p>
+</section>
 
-      <h2 id="render-exp">实验：同一个 API，四种渲染</h2>
+<section class="panel">
+<h2 id="render-exp">实验：同一个 API，四种渲染</h2>
       <p>两个开关各翻一次，行为差异全在输出里（真跑）：</p>
       <div class="codeblock"><div class="code-head"><span>/tmp/m10_render.py · render_chat 参数对比</span><span class="lang">python</span></div><pre class="code"><code>from minimind_reborn.inference.chat import render_chat
 from transformers import AutoTokenizer
@@ -347,8 +360,10 @@ print("  ", repr(render_chat(tok, hist)))</code></pre></div>
         <b>D</b>——<code>open_thinking=True</code> 把空 think 块换成开着的 <code>&lt;think&gt;\n</code>：模型被允许先"想"再答，
         生成结束后 <code>split_reasoning</code>（chat.py:28）把 think 段拆出来——推理行为实验 M20 再展开。
       </p>
+</section>
 
-      <h2 id="lock">模板即代码的锁定：prefix/suffix 测试</h2>
+<section class="panel">
+<h2 id="lock">模板即代码的锁定：prefix/suffix 测试</h2>
       <p>
         constants.py 注释说 loss mask 是"全系统最脆的耦合点"。loss mask（损失掩码：只对 assistant 回答区间算损失、
         其余位置填 -100 忽略——M12 详讲）的工作方式是<b>逐 token 扫描</b>：在渲染产物里找
@@ -378,8 +393,10 @@ def test_single_response_span(tokenizer):
         prefix = <code>[1, 1388, 570, 811, 234]</code>（<code>&lt;|im_start|&gt;</code> + assistant 三瓣 + 换行）、
         suffix = <code>[2, 234]</code>。7 个测试全绿在验收块复跑。
       </p>
+</section>
 
-      <h2 id="pit">坑卡：把模板写成 f-string 手拼</h2>
+<section class="panel">
+<h2 id="pit">坑卡：把模板写成 f-string 手拼</h2>
       <div class="callout warn">
         <div class="co-title">⚠️ 坑卡："格式看起来一样"的手拼模板，token 层面已经全变</div>
         <ul class="pit-stages">
@@ -425,8 +442,10 @@ print("多个空格：", h2, "→ 结尾", repr(tok.decode([h2[-1]])), "≠ '\\n
 <span class="out">共同前缀 12 位后分岔：真 18 token，手拼 12 token（少了 &lt;think&gt; 空块）</span>
 <span class="out">多个空格： [1, 832, 311, 234, 1968, 2, 234, 1, 1388, 570, 811, 2615] → 结尾 ' \n' ≠ '\n'，prefix 锚点从此失配</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 三种字符串同环境真跑；id 2615 = <code>' \n'</code>、234 = <code>'\n'</code> 由单 id 解码核对。</p>
+</section>
 
-      <h2 id="train-tok">🎮 选做：自训一个 mini 词表</h2>
+<section class="panel">
+<h2 id="train-tok">🎮 选做：自训一个 mini 词表</h2>
       <p>
         reborn 默认直接用官方训好的 6400 词表（保证权重与数据互通），但保留了自训入口
         <a href="codeview/tools/train_tokenizer.py.html"><code>tools/train_tokenizer.py</code></a>
@@ -459,8 +478,10 @@ print('同一个词 你好：官方 id', off('你好', add_special_tokens=False)
       <pre class="term"><code><span class="p">$ </span><span class="cmd">printf 'not json at all\n{"foo": "bar"}\n' &gt; /tmp/m10_empty.jsonl &amp;&amp; uv run python tools/train_tokenizer.py --data /tmp/m10_empty.jsonl --out /tmp/m10_bad</span>
 <span class="err">ValueError: /tmp/m10_empty.jsonl 中没有可用文本：每行应为 {"text": ...} 或 conversations 结构</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-30]</b> 报错发生在写任何文件之前（对照 M04 的"启动前一秒咬你"：同一 fail-fast 哲学）。</p>
+</section>
 
-      <h2 id="quiz">检验一下</h2>
+<section class="panel">
+<h2 id="quiz">检验一下</h2>
 
       <details class="quiz">
         <summary>测验 1 · BPE 为什么从字节级（256 个基础符号）起步，而不是直接用"汉字"或"英文单词"？</summary>
@@ -501,8 +522,10 @@ print('同一个词 你好：官方 id', off('你好', add_special_tokens=False)
           </div>
         </div>
       </details>
+</section>
 
-      <h2 id="exercise">变式练习</h2>
+<section class="panel">
+<h2 id="exercise">变式练习</h2>
       <div class="exercise">
         <div class="ex-head">🧪 变式 1 · 预测 token 数：中文、英文、数字、标点各来一组</div>
         <div class="ex-body">
@@ -608,7 +631,10 @@ print("ALL PASS")</code></pre></div>
       </p>
 
       <section class="glossary" id="glossary">
-        <h2>本课词汇</h2>
+</section>
+
+<section class="panel">
+<h2>本课词汇</h2>
         <dl>
           <dt>BPE <span class="en">byte pair encoding</span></dt><dd>字节对编码：从最小字母表出发，统计语料中最高频的相邻 token 对并合并为新 token、逐轮扩充词表，直到词表满。高频优先保证额度花在最常见片段上；编码新文本时按学到的合并顺序重放。</dd>
           <dt>token / 词表 <span class="en">vocab</span></dt><dd>token 是 tokenizer 切出的片段（≠ 字 ≠ 词，见 M03 ①站）；词表是全部 token 的清单，同时决定 embedding 行数。reborn 词表 6400 = 256 字节 + 6108 合并 + 36 特殊。</dd>
@@ -621,14 +647,17 @@ print("ALL PASS")</code></pre></div>
           <dt>fail-fast <span class="en">快速失败</span></dt><dd>把"三小时后才发现"兑换成"启动前一秒一条报错"（M04）。train_tokenizer.py 的空词表修复同款：解析不到可用文本立即 raise，不再静默产出没有合并的词表。</dd>
         </dl>
       </section>
+</section>
 
-      <nav class="pager" id="pager"></nav>
-    </div>
+<section class="panel">
+<nav class="pager" id="pager"></nav>
+</section>
+      </div>
   </main>
 
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=6"></script>
+<script src="assets/course.js?v=7"></script>
 </body>
 </html>
