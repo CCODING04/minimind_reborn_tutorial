@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>run_full.sh · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
-<link rel="stylesheet" href="../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -14,27 +14,27 @@
   <span class="cv-meta">21 行 · 1KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>tools/run_full.sh</span><span class="lang">bash</span></div><pre class="code"><code data-lines="1">#!/bin/bash
-# 全量训练链：数据下载校验 → pretrain → SFT → DPO（2×GPU DDP，resume 默认开）
-# 用法：nohup bash tools/run_full.sh &gt; /tmp/full_chain.log 2&gt;&amp;1 &amp;
-set -u
-cd &quot;$(dirname &quot;$0&quot;)/..&quot;
-UV=${UV:-$HOME/.local/bin/uv}
-NP=${NP:-2}
-MARKER=/tmp/full_chain.log
-
-echo &quot;[chain] start $(date)&quot; &gt;&gt; &quot;$MARKER&quot;
-$UV run python tools/download_data.py --name pretrain_t2t &gt;&gt; &quot;$MARKER&quot; 2&gt;&amp;1 || { echo &quot;[chain] 数据下载失败&quot; &gt;&gt; &quot;$MARKER&quot;; exit 1; }
-$UV run python tools/download_data.py --name sft_t2t    &gt;&gt; &quot;$MARKER&quot; 2&gt;&amp;1 || { echo &quot;[chain] 数据下载失败&quot; &gt;&gt; &quot;$MARKER&quot;; exit 1; }
-
-$UV run torchrun --nproc-per-node &quot;$NP&quot; tools/train.py configs/pretrain_full.yaml &gt; /tmp/full_pretrain.log 2&gt;&amp;1
-echo &quot;[chain] pretrain exit=$? $(date)&quot; &gt;&gt; &quot;$MARKER&quot;
-$UV run torchrun --nproc-per-node &quot;$NP&quot; tools/train.py configs/sft_full.yaml     &gt; /tmp/full_sft.log 2&gt;&amp;1
-echo &quot;[chain] sft exit=$? $(date)&quot; &gt;&gt; &quot;$MARKER&quot;
-$UV run torchrun --nproc-per-node &quot;$NP&quot; tools/train.py configs/dpo_full.yaml     &gt; /tmp/full_dpo.log 2&gt;&amp;1
-echo &quot;[chain] dpo exit=$? $(date)&quot; &gt;&gt; &quot;$MARKER&quot;
-echo &quot;[chain] all done $(date)&quot; &gt;&gt; &quot;$MARKER&quot;</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>tools/run_full.sh</span><span class="lang">bash</span></div><pre class="code"><code data-lines="1">#!/bin/bash
+# 全量训练链：数据下载校验 → pretrain → SFT → DPO（2×GPU DDP，resume 默认开）
+# 用法：nohup bash tools/run_full.sh &gt; /tmp/full_chain.log 2&gt;&amp;1 &amp;
+set -u
+cd &quot;$(dirname &quot;$0&quot;)/..&quot;
+UV=${UV:-$HOME/.local/bin/uv}
+NP=${NP:-2}
+MARKER=/tmp/full_chain.log
+
+echo &quot;[chain] start $(date)&quot; &gt;&gt; &quot;$MARKER&quot;
+$UV run python tools/download_data.py --name pretrain_t2t &gt;&gt; &quot;$MARKER&quot; 2&gt;&amp;1 || { echo &quot;[chain] 数据下载失败&quot; &gt;&gt; &quot;$MARKER&quot;; exit 1; }
+$UV run python tools/download_data.py --name sft_t2t    &gt;&gt; &quot;$MARKER&quot; 2&gt;&amp;1 || { echo &quot;[chain] 数据下载失败&quot; &gt;&gt; &quot;$MARKER&quot;; exit 1; }
+
+$UV run torchrun --nproc-per-node &quot;$NP&quot; tools/train.py configs/pretrain_full.yaml &gt; /tmp/full_pretrain.log 2&gt;&amp;1
+echo &quot;[chain] pretrain exit=$? $(date)&quot; &gt;&gt; &quot;$MARKER&quot;
+$UV run torchrun --nproc-per-node &quot;$NP&quot; tools/train.py configs/sft_full.yaml     &gt; /tmp/full_sft.log 2&gt;&amp;1
+echo &quot;[chain] sft exit=$? $(date)&quot; &gt;&gt; &quot;$MARKER&quot;
+$UV run torchrun --nproc-per-node &quot;$NP&quot; tools/train.py configs/dpo_full.yaml     &gt; /tmp/full_dpo.log 2&gt;&amp;1
+echo &quot;[chain] dpo exit=$? $(date)&quot; &gt;&gt; &quot;$MARKER&quot;
+echo &quot;[chain] all done $(date)&quot; &gt;&gt; &quot;$MARKER&quot;</code></pre></div>
 </main>
-<script src="../../assets/course.js?v=9"></script>
+<script src="../../assets/course.js?v=10"></script>
 </body>
 </html>

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M11 · 数据访问层：registry 与字节偏移索引 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=9">
+<link rel="stylesheet" href="assets/course.css?v=10">
 </head>
 <body data-module="m11">
 
@@ -371,10 +371,12 @@ class IndexListView(Dataset):
           <b>eval 泄漏</b>（验证集混入训练样本），指标虚高，你以为什么都没发生过。
         </li>
         <li>
-          <b>mtime+size 指纹防旁车脏读</b>：旁车必须知道"数据文件变没变"。<code>_fingerprint</code> 返回
-          <code>f"{st.st_mtime_ns}:{st.st_size}"</code>（修改时间戳纳秒值 : 文件字节数），存进 npz；加载时不匹配就全量重建
-          （写入走 tmp+rename 原子替换：先写临时文件、再一步改名顶替，中途崩溃也留不下半个文件——同款手法 M14 在 checkpoint 里详讲）。真实旁车实测：
-          指纹 <code>1788969816217196132:1739201170</code>，冒号后半恰是 sft_t2t_mini.jsonl 的字节数。
+          <b>mtime+size+分桶粒度 指纹防旁车脏读</b>：旁车必须知道"数据文件变没变、口径变没变"。<code>_fingerprint</code> 返回
+          <code>f"{st.st_mtime_ns}:{st.st_size}:{bucket_take}"</code>（修改时间戳纳秒值 : 文件字节数 : 分桶粒度），存进 npz；任一不匹配就全量重建
+          （写入走 tmp+rename 原子替换：先写临时文件、再一步改名顶替，中途崩溃也留不下半个文件——同款手法 M14 在 checkpoint 里详讲）。第三段是 2026-10-06 修复补上的
+          （本课坑卡讲它的来龙去脉）。真实旁车实测
+          <span class="prov">[作者实测 · 2026-10-06 · 纯 CPU 路径]</span>：
+          指纹 <code>1791273753098007351:57191431:100</code>，中间一段恰是 2 万行切片的字节数、末段 100 即 eval_ratio=0.1 的 bucket_take。
         </li>
       </ul>
       <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/manifest.py.html">src/minimind_reborn/data/manifest.py</a> · 两处关键逻辑（节选）</span><span class="lang">python</span></div><pre class="code"><code>def stable_hash(text: str) -&gt; int:
@@ -386,15 +388,15 @@ _BUCKET_MOD = 1000  # 哈希分桶粒度：eval_ratio=0.003 → 命中 [0,3) 进
 # 建清单时逐行判定归属（与文件顺序无关，与随机数无关）：
 is_eval_flags.append(stable_hash(normalize_text(text)) % _BUCKET_MOD &lt; bucket_take)
 
-def _fingerprint(path: Path) -&gt; str:
+def _fingerprint(path: Path, bucket_take: int) -&gt; str:
     st = path.stat()
-    return f"{st.st_mtime_ns}:{st.st_size}"   # 修改时间(纳秒):字节数，便宜且够用</code></pre></div>
+    return f"{st.st_mtime_ns}:{st.st_size}:{bucket_take}"   # 时间(纳秒):字节数:分桶粒度，便宜且够用</code></pre></div>
 </section>
 
 <section class="panel">
-<h2 id="pit">坑卡：改了 eval_ratio 却"不生效"</h2>
+<h2 id="pit">坑卡：改了 eval_ratio 却"不生效"（已修复）</h2>
       <div class="callout warn">
-        <div class="co-title">⚠️ 坑卡：旁车的缓存键里没有 eval_ratio——同文件换口径，静默用旧切分</div>
+        <div class="co-title">⚠️ 坑卡：旁车的缓存键里没有 eval_ratio——同文件换口径，静默用旧切分（2026-10-06 已修复）</div>
         <ul class="pit-stages">
           <li class="sym">
             症状极隐蔽：你把配方里的 eval_ratio 从 0.001 改成 0.005，重跑训练——eval 集大小纹丝不动，
@@ -408,15 +410,17 @@ def _fingerprint(path: Path) -&gt; str:
             作者机器上的真实旁车就是 smoke 建的（证据见下方实测）。
           </li>
           <li class="fix">
-            两步：<b>① 删旁车重建</b>——<code>rm sft_t2t_mini.jsonl.manifest.npz</code> 后下次加载自动全量重扫（20,000 行实测 0.83s；
+            两步：<b>① 删旁车重建</b>——<code>rm sft_t2t_mini.jsonl.manifest.npz</code> 后下次加载自动全量重扫（20,000 行实测 0.70s；
             14GB 全量按 docstring 经验 10~20 分钟，删之前想清楚）。顺带回答"乱删旁车有什么后果"：<b>没有任何风险</b>——
             npz 是纯派生物，删了只是重建，数据文件分毫不动；真正的红线是反过来删 jsonl 留 npz。
-            <b>② 工程修复方向</b>：把 eval_ratio（或 bucket_take）写进指纹串——缓存键必须覆盖所有影响缓存内容的参数，
-            这与 M04 "配置漂移"是同一条纪律。多口径共用一个数据集的现成 workaround：先跑大口径的（旁车建成大桶），
-            或干脆各口径各留一份文件副本。
+            <b>② 工程修复——已于 2026-10-06 落地（commit <code>7eb25d8</code>）</b>：bucket_take（eval_ratio 派生）写进指纹串
+            <code>f"{mtime_ns}:{size}:{bucket_take}"</code>，同文件换口径必重建；顺带把下限 <code>max(1,...)</code> 改为
+            <code>max(0,...)</code>，兑现 eval_ratio=0"关闭评估"的语义。回归测试 <code>test_manifest_cache_key_includes_eval_ratio</code>
+            锁定三件事：换 ratio 必重分桶、ratio=0 无 eval 行、同 ratio 二次加载命中缓存。缓存键必须覆盖所有影响缓存内容的参数——
+            这与 M04 "配置漂移"是同一条纪律。
           </li>
         </ul>
-        <div class="codeblock"><div class="code-head"><span>/tmp/m11_pit.py · 用 64m 配方的口径去读 smoke 建的旁车</span><span class="lang">python</span></div><pre class="code"><code>import time
+        <div class="codeblock"><div class="code-head"><span>/tmp/m11_pit.py · 用 64m 配方的口径去读 smoke 建的旁车（修复前复现）</span><span class="lang">python</span></div><pre class="code"><code>import time
 from pathlib import Path
 from minimind_reborn.data.manifest import load_or_build
 
@@ -425,9 +429,12 @@ t0 = time.perf_counter()
 m = load_or_build(SRC, eval_ratio=0.005)   # sft_64m.yaml 的口径
 print(f"耗时 {time.perf_counter()-t0:.2f}s（毫秒级=命中缓存，没重建）")
 print(f"拿到的 eval 占比 {m.is_eval.mean():.5f}——是 smoke 的 0.001 桶，不是我要的 0.005")</code></pre></div>
-        <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m11_pit.py</span>
+        <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m11_pit.py</span>   <span class="c"># 修复前（2026-09-29 实测）</span>
 <span class="out">耗时 0.04s（毫秒级=命中缓存，没重建）</span>
-<span class="err">拿到的 eval 占比 0.00092——是 smoke 的 0.001 桶，不是我要的 0.005</span></code></pre>
+<span class="err">拿到的 eval 占比 0.00092——是 smoke 的 0.001 桶，不是我要的 0.005</span>
+<span class="p">$ </span><span class="cmd">uv run python /tmp/m11_pit.py</span>   <span class="c"># 修复后（2026-10-06 实测，2 万行切片、换口径 0.1→0.5，脚本见下方变式）</span>
+<span class="ok">换口径重取(eval_ratio=0.5) 0.69s  eval 占比 0.492（指纹含 bucket_take：必重建）</span></code></pre>
+        <p class="prov"><b>[作者实测 · 2026-10-06 · 纯 CPU 路径 · 修复前/后各一次]</b> 修复前毫秒级返回旧桶；修复后同文件换口径全量重扫、占比如实。同一脚本、同一数据，唯一变量是指纹里那一段 bucket_take——控制变量法的又一次现场演出。</p>
         <p class="pit-note">缓存键少一味参数 = 缓存可能"对不上请求"——与 M04 bool 覆盖失效同一家族：配置变了，行为没变。</p>
       </div>
       <p class="prov"><b>[作者实测 · 2026-09-30]</b> 旁车现状：905,718 行、eval 占比 0.00092（=1‰ 桶的理论值）。该坑在仓库当前配置组合下真实存在（smoke 与 64m 配方同文件不同口径）；0.00092 与 0.001 的微小差值是哈希分桶的正常抽样噪声。</p>
@@ -488,17 +495,20 @@ print(f"拿到的 eval 占比 {m.is_eval.mean():.5f}——是 smoke 的 0.001 �
           <p>先写下预测：① 指纹串会变吗？② 如果变，变的是冒号前（mtime）还是冒号后（size）？③ 旁车会重建吗——判断依据是什么？</p>
           <details>
             <summary>观察结果与解释（先动手再看）</summary>
-            <p>作者实测（同环境，脚本 /tmp/m11_ex.py 全文见下方）：</p>
-            <pre class="term"><code><span class="out">首建 0.83s  行数 20000  eval 占比 0.098</span>
-<span class="out">指纹 = 1790818233326545818:57191431</span>
-<span class="out">改后 stat：size 57191431（不变）  指纹 = 1790818234220556055:57191431</span>
-<span class="out">重取(eval_ratio=0.5) 0.72s  eval 占比 0.492（重建，新口径生效）</span></code></pre>
+            <p>作者实测（2026-10-06，修复后代码，同环境，脚本 /tmp/m11_ex.py 全文见下方）：</p>
+            <pre class="term"><code><span class="out">首建 0.70s  行数 20000  eval 占比 0.098</span>
+<span class="out">指纹 = 1791273753098007351:57191431:100</span>
+<span class="out">改后 stat：size 57191431（不变）  指纹 = 1791273754552018416:57191431:500</span>
+<span class="out">换口径重取(eval_ratio=0.5) 0.69s  eval 占比 0.492（必重建，坑卡修复生效）</span>
+<span class="out">同口径二取(eval_ratio=0.5) 0.00s（毫秒级=命中缓存，没白重建）</span></code></pre>
             <p>
-              <b>机制：</b>指纹变了，但变得不是你以为的那半边——size 两边都是 57191431，变的是 <b>mtime_ns</b>
-              （1790818233326545818 → 1790818234220556055）：写文件这个动作本身就会更新修改时间戳，<b>哪怕你只改一个字节、大小不变</b>。
-              于是旁车判定失效，下次加载触发全量重扫（0.72s），新口径 eval_ratio=0.5 也在重建中生效（0.492）——这同时就是坑卡的"修复动作"原理。
-              <b>追问（想深一层）</b>：<code>cp -p</code>（保留时间戳）复制一个同大小的不同文件过来，指纹不变、旁车不重建、内容却换了——脏读。
-              绝对保险是内容哈希，但 14GB 每次加载先全量 md5 一遍太贵；mtime+size 是"几乎不花时间、漏网概率极小"的工程折中——
+              <b>机制：</b>改文件后指纹变了，但变得不是你以为的那段——中间的 size 两边都是 57191431，变的可能是
+              <b>mtime_ns</b>（1791273753098007351 → 1791273754552018416）：写文件这个动作本身就会更新修改时间戳，<b>哪怕你只改一个字节、大小不变</b>；
+              末段 100→500 是脚本里口径 0.1→0.5 的 bucket_take——2026-10-06 修复后它也在指纹里，换口径本身就触发重建。
+              于是旁车判定失效，下次加载触发全量重扫（0.69s），新口径 eval_ratio=0.5 在重建中生效（0.492）；
+              再取一次同口径则毫秒级命中——重建没有白做。
+              <b>追问（想深一层）</b>：<code>cp -p</code>（保留时间戳）复制一个同大小、同口径的不同文件过来，指纹不变、旁车不重建、内容却换了——脏读。
+              绝对保险是内容哈希，但 14GB 每次加载先全量 md5 一遍太贵；mtime+size+bucket_take 是"几乎不花时间、漏网概率极小"的工程折中——
               缓存失效策略永远在"检查成本"与"脏读风险"之间选点。
             </p>
           </details>
@@ -516,10 +526,17 @@ m1 = load_or_build(SLICE, eval_ratio=0.1)             # 第一次：全量扫描
 print(f"首建 {time.perf_counter()-t0:.2f}s  行数 {len(m1)}  eval 占比 {m1.is_eval.mean():.3f}")
 print(f"指纹 = {m1.fingerprint}")
 
+t0 = time.perf_counter()
+m_half = load_or_build(SLICE, eval_ratio=0.5)         # 同文件换口径：指纹含 bucket_take，必重建
+print(f"换口径重取(eval_ratio=0.5) {time.perf_counter()-t0:.2f}s  eval 占比 {m_half.is_eval.mean():.3f}")
+t0 = time.perf_counter()
+m_same = load_or_build(SLICE, eval_ratio=0.5)         # 同口径二取：命中缓存
+print(f"同口径二取(eval_ratio=0.5) {time.perf_counter()-t0:.2f}s")
+
 raw = SLICE.read_bytes()                              # 原地改一字节：3 字节标点互换，大小不变
 i = raw.rindex("。".encode())
 SLICE.write_bytes(raw[:i] + "，".encode() + raw[i + 3 :])
-print(f"改后 stat：size {SLICE.stat().st_size}（不变）  指纹 = {_fingerprint(SLICE)}")
+print(f"改后 stat：size {SLICE.stat().st_size}（不变）  指纹 = {_fingerprint(SLICE, 500)}")
 
 t0 = time.perf_counter()
 m2 = load_or_build(SLICE, eval_ratio=0.5)             # 指纹已变：必须全量重建
@@ -621,6 +638,6 @@ print("ALL PASS")</code></pre></div>
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=9"></script>
+<script src="assets/course.js?v=10"></script>
 </body>
 </html>

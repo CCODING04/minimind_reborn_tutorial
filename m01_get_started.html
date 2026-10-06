@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M01 · 课程导览与第一个绿灯 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=9">
+<link rel="stylesheet" href="assets/course.css?v=10">
 </head>
 <body data-module="m01">
 
@@ -78,7 +78,7 @@
           <tbody>
             <tr><td><b>跟读</b></td><td>按模块精读 reborn 对应源码，页面上有逐段讲解与"为什么这么写"；</td><td>能向别人复述该模块的职责</td></tr>
             <tr><td><b>动手</b></td><td>跑冒烟配方、改旋钮、先预测再观察（变式练习）；</td><td>终端里看到与页面一致的输出</td></tr>
-            <tr><td><b>验收</b></td><td>跑该模块的验收命令——多数直接复用 reborn 的 <b>85 个单元测试</b>（课程写作时实测，随仓库演进）或冒烟链路；</td><td><b>绿灯</b>（如 <code>5 passed</code>）</td></tr>
+            <tr><td><b>验收</b></td><td>跑该模块的验收命令——多数直接复用 reborn 的 <b>93 个单元测试</b>（2026-10-06 实测，随仓库演进）或冒烟链路；</td><td><b>绿灯</b>（如 <code>5 passed</code>）</td></tr>
           </tbody>
         </table>
       </div>
@@ -125,13 +125,13 @@
           <tbody>
             <tr><td>配置</td><td>每个脚本一套 argparse</td><td>分域 dataclass + YAML <b>配方</b> + CLI 覆盖（M04 专讲）</td></tr>
             <tr><td>训练范式</td><td>pretrain/SFT/DPO/LoRA 等</td><td>8 种：+ 蒸馏、GRPO、PPO、Agent-RL，全部有冒烟配方</td></tr>
-            <tr><td>测试</td><td>无</td><td><b>85 个</b>（写作时实测）CPU 快速单元测试（验收锚点）</td></tr>
+            <tr><td>测试</td><td>无</td><td><b>93 个</b>（2026-10-06 实测）CPU 快速单元测试（验收锚点）</td></tr>
             <tr><td>权重</td><td>—</td><td>与官方 <b>state_dict 逐键兼容</b>（官方权重可直接加载，M09 验证）</td></tr>
             <tr><td>分布式</td><td>torchrun DDP</td><td>DDP + no_sync 梯度累积修复（M15 专讲，吞吐提升 31%）</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="prov"><b>[事实核对]</b> 85 测试（2026-10-01 实测；课程早期记录为 49，随仓库长上下文工作扩容）· 8 冒烟配方 · 64M≈63.91M 参数 · 官方权重 strict 互通——均可在 <a href="codeview/README.md.html"><code>Reproduce/minimind_reborn/README.md</code></a> 与 <code>tests/</code> 目录核对。</p>
+      <p class="prov"><b>[事实核对]</b> 93 测试（2026-10-06 实测；课程早期记录为 49、写作收官时 85——49→85 随长上下文工作扩容，85→93 随 2026-10-06 修复周期新增回归）· 8 冒烟配方 · 64M≈63.91M 参数 · 官方权重 strict 互通——均可在 <a href="codeview/README.md.html"><code>Reproduce/minimind_reborn/README.md</code></a> 与 <code>tests/</code> 目录核对。</p>
 </section>
 
 <section class="panel">
@@ -353,7 +353,7 @@ uv run python tools/download_data.py --name dpo_mini</code></pre></div>
         <summary>测验 3 · 冒烟测试能证明"模型训练正确"吗？</summary>
         <div class="quiz-body">
           <div class="quiz-ans">
-            <p><b>答案：</b>不能，它只证明<b>链路无断点</b>。tiny 模型 6 步训练的 loss 变化没有任何统计意义。正确性由 85 个单元测试（写作时实测）（形状、不变量、等价性）与验收实验保障，那是后面每个模块的"验收块"在做的事。两种手段互补：<b>冒烟抓"断了"，测试抓"错了"</b>。</p>
+            <p><b>答案：</b>不能，它只证明<b>链路无断点</b>。tiny 模型 6 步训练的 loss 变化没有任何统计意义。正确性由 93 个单元测试（2026-10-06 实测）（形状、不变量、等价性）与验收实验保障，那是后面每个模块的"验收块"在做的事。两种手段互补：<b>冒烟抓"断了"，测试抓"错了"</b>。</p>
             <p class="back">答错回看：<a href="#how">这门课怎么学</a> 三环节表 + <a href="#smoke">概念卡：冒烟测试</a>。</p>
           </div>
         </div>
@@ -470,6 +470,6 @@ uv run python tools/download_data.py --name dpo_mini</code></pre></div>
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=9"></script>
+<script src="assets/course.js?v=10"></script>
 </body>
 </html>

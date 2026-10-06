@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>serve.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
-<link rel="stylesheet" href="../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -14,213 +14,213 @@
   <span class="cv-meta">207 行 · 7KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>tools/serve.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;OpenAI 风格推理服务（官方 serve_openai_api.py 的重构）。
-
-/v1/chat/completions：流式（reasoning_content 分流）与非流式；tool_calls 解析。
-可选依赖 fail-fast：fastapi/uvicorn 缺失时在启动期报错（python-style §2）。
-&quot;&quot;&quot;
-
-import argparse
-import json
-import re
-import time
-from queue import Queue
-from threading import Thread
-
-from minimind_reborn.configuration.schemas import GenerateConfig
-from minimind_reborn.inference.chat import split_reasoning
-from minimind_reborn.loggers import catch_main, get_logger
-
-logger = get_logger(&quot;serve&quot;)
-
-
-def parse_response(text: str) -&gt; tuple[str, str | None, list[dict] | None]:
-    &quot;&quot;&quot;拆 &lt;think&gt; 与 &lt;tool_call&gt;：返回 (content, reasoning, tool_calls)。&quot;&quot;&quot;
-    reasoning, content = split_reasoning(text)
-    tool_calls = []
-    for i, m in enumerate(re.findall(r&quot;&lt;tool_call&gt;(.*?)&lt;/tool_call&gt;&quot;, text, re.DOTALL)):
-        try:
-            call = json.loads(m.strip())
-            tool_calls.append(
-                {
-                    &quot;id&quot;: f&quot;call_{int(time.time())}_{i}&quot;,
-                    &quot;type&quot;: &quot;function&quot;,
-                    &quot;function&quot;: {
-                        &quot;name&quot;: call.get(&quot;name&quot;, &quot;&quot;),
-                        &quot;arguments&quot;: json.dumps(call.get(&quot;arguments&quot;, {}), ensure_ascii=False),
-                    },
-                }
-            )
-        except json.JSONDecodeError:
-            pass
-    if tool_calls:
-        content = re.sub(r&quot;&lt;tool_call&gt;.*?&lt;/tool_call&gt;&quot;, &quot;&quot;, content or &quot;&quot;, flags=re.DOTALL).strip()
-    return content, reasoning, tool_calls or None
-
-
-@catch_main
-def main() -&gt; None:
-    try:
-        import uvicorn
-        from fastapi import FastAPI
-        from fastapi.responses import StreamingResponse
-        from pydantic import BaseModel, Field
-    except ImportError as e:
-        raise SystemExit(f&quot;缺少服务依赖（{e}）。请安装 serving extras：uv sync --extra serving&quot;) from None
-
-    from transformers import TextStreamer
-
-    from minimind_reborn.inference.engine import MiniMindLLM
-
-    parser = argparse.ArgumentParser(description=&quot;minimind_reborn OpenAI 风格服务&quot;)
-    parser.add_argument(&quot;--weight&quot;, default=&quot;full_sft&quot;)
-    parser.add_argument(&quot;--hidden-size&quot;, type=int, default=768)
-    parser.add_argument(&quot;--num-hidden-layers&quot;, type=int, default=8)
-    parser.add_argument(&quot;--use-moe&quot;, action=&quot;store_true&quot;)
-    parser.add_argument(&quot;--host&quot;, default=&quot;0.0.0.0&quot;)
-    parser.add_argument(&quot;--port&quot;, type=int, default=8998)
-    parser.add_argument(&quot;--device&quot;, default=None)
-    args = parser.parse_args()
-
-    llm = MiniMindLLM.build(
-        args.weight,
-        hidden_size=args.hidden_size,
-        num_hidden_layers=args.num_hidden_layers,
-        use_moe=args.use_moe,
-        device=args.device,
-    )
-    app = FastAPI(title=&quot;minimind_reborn&quot;)
-
-    class ChatRequest(BaseModel):
-        model: str = &quot;minimind-reborn&quot;
-        messages: list
-        temperature: float = 0.7
-        top_p: float = 0.92
-        max_tokens: int = 1024
-        stream: bool = True
-        tools: list = Field(default_factory=list)
-        open_thinking: bool = False
-
-    class _Streamer(TextStreamer):
-        def __init__(self, tokenizer, queue: Queue):
-            super().__init__(tokenizer, skip_prompt=True, skip_special_tokens=True)
-            self.queue = queue
-
-        def on_finalized_text(self, text: str, stream_end: bool = False):
-            self.queue.put(text)
-            if stream_end:
-                self.queue.put(None)
-
-    def stream_chunks(request: ChatRequest):
-        prompt = llm.tokenizer.apply_chat_template(
-            request.messages,
-            tokenize=False,
-            add_generation_prompt=True,
-            tools=request.tools or None,
-            open_thinking=request.open_thinking,
-        )
-        inputs = llm.tokenizer(prompt, return_tensors=&quot;pt&quot;, truncation=True).to(llm.device)
-        queue: Queue = Queue()
-        streamer = _Streamer(llm.tokenizer, queue)
-
-        def _generate():
-            try:
-                llm.generate_tokens(
-                    inputs[&quot;input_ids&quot;],
-                    GenerateConfig(temperature=request.temperature, top_p=request.top_p),
-                    attention_mask=inputs[&quot;attention_mask&quot;],
-                    max_new_tokens=request.max_tokens,
-                    streamer=streamer,
-                )
-            except Exception as e:  # noqa: BLE001
-                queue.put(json.dumps({&quot;error&quot;: str(e)}, ensure_ascii=False))
-                queue.put(None)
-
-        Thread(target=_generate, daemon=True).start()
-        emitted = 0
-        full_text = &quot;&quot;
-        thinking_ended = not request.open_thinking
-        while True:
-            chunk = queue.get()
-            if chunk is None:
-                break
-            if isinstance(chunk, str) and chunk.startswith(&#x27;{&quot;error&quot;&#x27;):
-                yield chunk
-                continue
-            full_text += chunk
-            if not thinking_ended:
-                pos = full_text.find(&quot;&lt;/think&gt;&quot;)
-                if pos &gt;= 0:
-                    thinking_ended = True
-                    new_reason = full_text[emitted:pos]
-                    if new_reason:
-                        yield json.dumps(
-                            {&quot;choices&quot;: [{&quot;delta&quot;: {&quot;reasoning_content&quot;: new_reason}}]}, ensure_ascii=False
-                        )
-                    emitted = len(full_text)
-                else:
-                    new_reason = full_text[emitted:]
-                    if new_reason:
-                        yield json.dumps(
-                            {&quot;choices&quot;: [{&quot;delta&quot;: {&quot;reasoning_content&quot;: new_reason}}]}, ensure_ascii=False
-                        )
-                    emitted = len(full_text)
-            else:
-                new_content = full_text[emitted:]
-                if new_content:
-                    yield json.dumps({&quot;choices&quot;: [{&quot;delta&quot;: {&quot;content&quot;: new_content}}]}, ensure_ascii=False)
-                emitted = len(full_text)
-        content, _, tool_calls = parse_response(full_text)
-        if tool_calls:
-            yield json.dumps({&quot;choices&quot;: [{&quot;delta&quot;: {&quot;tool_calls&quot;: tool_calls}}]}, ensure_ascii=False)
-        yield json.dumps(
-            {&quot;choices&quot;: [{&quot;delta&quot;: {}, &quot;finish_reason&quot;: &quot;tool_calls&quot; if tool_calls else &quot;stop&quot;}]}, ensure_ascii=False
-        )
-
-    @app.post(&quot;/v1/chat/completions&quot;)
-    async def chat_completions(request: ChatRequest):
-        if request.stream:
-            return StreamingResponse(
-                (f&quot;data: {chunk}\n\n&quot; for chunk in stream_chunks(request)),
-                media_type=&quot;text/event-stream&quot;,
-            )
-        result = llm.generate_text(
-            request.messages,
-            GenerateConfig(temperature=request.temperature, top_p=request.top_p),
-            tools=request.tools or None,
-            open_thinking=request.open_thinking,
-        )
-        content, reasoning, tool_calls = parse_response(result[&quot;content&quot;])
-        message: dict = {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: content}
-        if reasoning:
-            message[&quot;reasoning_content&quot;] = reasoning
-        if tool_calls:
-            message[&quot;tool_calls&quot;] = tool_calls
-        return {
-            &quot;id&quot;: f&quot;chatcmpl-{result[&#x27;request_id&#x27;]}&quot;,
-            &quot;object&quot;: &quot;chat.completion&quot;,
-            &quot;created&quot;: int(time.time()),
-            &quot;model&quot;: request.model,
-            &quot;choices&quot;: [
-                {
-                    &quot;index&quot;: 0,
-                    &quot;message&quot;: message,
-                    &quot;finish_reason&quot;: &quot;tool_calls&quot; if tool_calls else result[&quot;finish_reason&quot;],
-                }
-            ],
-        }
-
-    @app.get(&quot;/health&quot;)
-    async def health():
-        return {&quot;status&quot;: &quot;ok&quot;}
-
-    logger.info(&quot;服务启动 http://%s:%d/v1/chat/completions&quot;, args.host, args.port)
-    uvicorn.run(app, host=args.host, port=args.port)
-
-
-if __name__ == &quot;__main__&quot;:
-    main()</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>tools/serve.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;OpenAI 风格推理服务（官方 serve_openai_api.py 的重构）。
+
+/v1/chat/completions：流式（reasoning_content 分流）与非流式；tool_calls 解析。
+可选依赖 fail-fast：fastapi/uvicorn 缺失时在启动期报错（python-style §2）。
+&quot;&quot;&quot;
+
+import argparse
+import json
+import re
+import time
+from queue import Queue
+from threading import Thread
+
+from minimind_reborn.configuration.schemas import GenerateConfig
+from minimind_reborn.inference.chat import split_reasoning
+from minimind_reborn.loggers import catch_main, get_logger
+
+logger = get_logger(&quot;serve&quot;)
+
+
+def parse_response(text: str) -&gt; tuple[str, str | None, list[dict] | None]:
+    &quot;&quot;&quot;拆 &lt;think&gt; 与 &lt;tool_call&gt;：返回 (content, reasoning, tool_calls)。&quot;&quot;&quot;
+    reasoning, content = split_reasoning(text)
+    tool_calls = []
+    for i, m in enumerate(re.findall(r&quot;&lt;tool_call&gt;(.*?)&lt;/tool_call&gt;&quot;, text, re.DOTALL)):
+        try:
+            call = json.loads(m.strip())
+            tool_calls.append(
+                {
+                    &quot;id&quot;: f&quot;call_{int(time.time())}_{i}&quot;,
+                    &quot;type&quot;: &quot;function&quot;,
+                    &quot;function&quot;: {
+                        &quot;name&quot;: call.get(&quot;name&quot;, &quot;&quot;),
+                        &quot;arguments&quot;: json.dumps(call.get(&quot;arguments&quot;, {}), ensure_ascii=False),
+                    },
+                }
+            )
+        except json.JSONDecodeError:
+            pass
+    if tool_calls:
+        content = re.sub(r&quot;&lt;tool_call&gt;.*?&lt;/tool_call&gt;&quot;, &quot;&quot;, content or &quot;&quot;, flags=re.DOTALL).strip()
+    return content, reasoning, tool_calls or None
+
+
+@catch_main
+def main() -&gt; None:
+    try:
+        import uvicorn
+        from fastapi import FastAPI
+        from fastapi.responses import StreamingResponse
+        from pydantic import BaseModel, Field
+    except ImportError as e:
+        raise SystemExit(f&quot;缺少服务依赖（{e}）。请安装 serving extras：uv sync --extra serving&quot;) from None
+
+    from transformers import TextStreamer
+
+    from minimind_reborn.inference.engine import MiniMindLLM
+
+    parser = argparse.ArgumentParser(description=&quot;minimind_reborn OpenAI 风格服务&quot;)
+    parser.add_argument(&quot;--weight&quot;, default=&quot;full_sft&quot;)
+    parser.add_argument(&quot;--hidden-size&quot;, type=int, default=768)
+    parser.add_argument(&quot;--num-hidden-layers&quot;, type=int, default=8)
+    parser.add_argument(&quot;--use-moe&quot;, action=&quot;store_true&quot;)
+    parser.add_argument(&quot;--host&quot;, default=&quot;0.0.0.0&quot;)
+    parser.add_argument(&quot;--port&quot;, type=int, default=8998)
+    parser.add_argument(&quot;--device&quot;, default=None)
+    args = parser.parse_args()
+
+    llm = MiniMindLLM.build(
+        args.weight,
+        hidden_size=args.hidden_size,
+        num_hidden_layers=args.num_hidden_layers,
+        use_moe=args.use_moe,
+        device=args.device,
+    )
+    app = FastAPI(title=&quot;minimind_reborn&quot;)
+
+    class ChatRequest(BaseModel):
+        model: str = &quot;minimind-reborn&quot;
+        messages: list
+        temperature: float = 0.7
+        top_p: float = 0.92
+        max_tokens: int = 1024
+        stream: bool = True
+        tools: list = Field(default_factory=list)
+        open_thinking: bool = False
+
+    class _Streamer(TextStreamer):
+        def __init__(self, tokenizer, queue: Queue):
+            super().__init__(tokenizer, skip_prompt=True, skip_special_tokens=True)
+            self.queue = queue
+
+        def on_finalized_text(self, text: str, stream_end: bool = False):
+            self.queue.put(text)
+            if stream_end:
+                self.queue.put(None)
+
+    def stream_chunks(request: ChatRequest):
+        prompt = llm.tokenizer.apply_chat_template(
+            request.messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            tools=request.tools or None,
+            open_thinking=request.open_thinking,
+        )
+        inputs = llm.tokenizer(prompt, return_tensors=&quot;pt&quot;, truncation=True).to(llm.device)
+        queue: Queue = Queue()
+        streamer = _Streamer(llm.tokenizer, queue)
+
+        def _generate():
+            try:
+                llm.generate_tokens(
+                    inputs[&quot;input_ids&quot;],
+                    GenerateConfig(temperature=request.temperature, top_p=request.top_p),
+                    attention_mask=inputs[&quot;attention_mask&quot;],
+                    max_new_tokens=request.max_tokens,
+                    streamer=streamer,
+                )
+            except Exception as e:  # noqa: BLE001
+                queue.put(json.dumps({&quot;error&quot;: str(e)}, ensure_ascii=False))
+                queue.put(None)
+
+        Thread(target=_generate, daemon=True).start()
+        emitted = 0
+        full_text = &quot;&quot;
+        thinking_ended = not request.open_thinking
+        while True:
+            chunk = queue.get()
+            if chunk is None:
+                break
+            if isinstance(chunk, str) and chunk.startswith(&#x27;{&quot;error&quot;&#x27;):
+                yield chunk
+                continue
+            full_text += chunk
+            if not thinking_ended:
+                pos = full_text.find(&quot;&lt;/think&gt;&quot;)
+                if pos &gt;= 0:
+                    thinking_ended = True
+                    new_reason = full_text[emitted:pos]
+                    if new_reason:
+                        yield json.dumps(
+                            {&quot;choices&quot;: [{&quot;delta&quot;: {&quot;reasoning_content&quot;: new_reason}}]}, ensure_ascii=False
+                        )
+                    emitted = len(full_text)
+                else:
+                    new_reason = full_text[emitted:]
+                    if new_reason:
+                        yield json.dumps(
+                            {&quot;choices&quot;: [{&quot;delta&quot;: {&quot;reasoning_content&quot;: new_reason}}]}, ensure_ascii=False
+                        )
+                    emitted = len(full_text)
+            else:
+                new_content = full_text[emitted:]
+                if new_content:
+                    yield json.dumps({&quot;choices&quot;: [{&quot;delta&quot;: {&quot;content&quot;: new_content}}]}, ensure_ascii=False)
+                emitted = len(full_text)
+        content, _, tool_calls = parse_response(full_text)
+        if tool_calls:
+            yield json.dumps({&quot;choices&quot;: [{&quot;delta&quot;: {&quot;tool_calls&quot;: tool_calls}}]}, ensure_ascii=False)
+        yield json.dumps(
+            {&quot;choices&quot;: [{&quot;delta&quot;: {}, &quot;finish_reason&quot;: &quot;tool_calls&quot; if tool_calls else &quot;stop&quot;}]}, ensure_ascii=False
+        )
+
+    @app.post(&quot;/v1/chat/completions&quot;)
+    async def chat_completions(request: ChatRequest):
+        if request.stream:
+            return StreamingResponse(
+                (f&quot;data: {chunk}\n\n&quot; for chunk in stream_chunks(request)),
+                media_type=&quot;text/event-stream&quot;,
+            )
+        result = llm.generate_text(
+            request.messages,
+            GenerateConfig(temperature=request.temperature, top_p=request.top_p),
+            tools=request.tools or None,
+            open_thinking=request.open_thinking,
+        )
+        content, reasoning, tool_calls = parse_response(result[&quot;content&quot;])
+        message: dict = {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: content}
+        if reasoning:
+            message[&quot;reasoning_content&quot;] = reasoning
+        if tool_calls:
+            message[&quot;tool_calls&quot;] = tool_calls
+        return {
+            &quot;id&quot;: f&quot;chatcmpl-{result[&#x27;request_id&#x27;]}&quot;,
+            &quot;object&quot;: &quot;chat.completion&quot;,
+            &quot;created&quot;: int(time.time()),
+            &quot;model&quot;: request.model,
+            &quot;choices&quot;: [
+                {
+                    &quot;index&quot;: 0,
+                    &quot;message&quot;: message,
+                    &quot;finish_reason&quot;: &quot;tool_calls&quot; if tool_calls else result[&quot;finish_reason&quot;],
+                }
+            ],
+        }
+
+    @app.get(&quot;/health&quot;)
+    async def health():
+        return {&quot;status&quot;: &quot;ok&quot;}
+
+    logger.info(&quot;服务启动 http://%s:%d/v1/chat/completions&quot;, args.host, args.port)
+    uvicorn.run(app, host=args.host, port=args.port)
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre></div>
 </main>
-<script src="../../assets/course.js?v=9"></script>
+<script src="../../assets/course.js?v=10"></script>
 </body>
 </html>

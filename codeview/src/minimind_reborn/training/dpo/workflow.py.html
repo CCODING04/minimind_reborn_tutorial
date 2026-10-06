@@ -5,75 +5,81 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>workflow.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../../../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
   <a class="cv-back" href="../../../../../index.html">← 课程地图</a>
   <span class="cv-crumb">Reproduce/minimind_reborn/src/minimind_reborn/training/dpo/workflow.py</span>
-  <span class="cv-meta">60 行 · 2KB · minimind_reborn</span>
+  <span class="cv-meta">66 行 · 2KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/dpo/workflow.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;DPO workflow：策略模型 + 冻结参考模型，差异在 compute_loss。&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import torch
-
-from minimind_reborn.configuration.schemas import RunConfig
-from minimind_reborn.loggers import get_logger, setup_logging
-from minimind_reborn.models.weights import load_inference_weights, resolve_weight_path
-from minimind_reborn.training.common.setup import build_model, build_preference_dataset, load_tokenizer
-from minimind_reborn.training.common.trainer import Trainer
-from minimind_reborn.training.dpo.loss import dpo_loss, logits_to_log_probs
-
-logger = get_logger(&quot;dpo&quot;)
-
-
-def run(cfg: RunConfig, *, device: str | None = None, local_rank: int = 0) -&gt; Trainer:
-    setup_logging(cfg.run_dir)
-    tokenizer = load_tokenizer()
-    model = build_model(cfg, tokenizer)
-
-    # 参考模型：与策略同权重、冻结、只前向——引用漂移的&quot;锚&quot;
-    ref_model = build_model(cfg, tokenizer)
-    init = resolve_weight_path(
-        cfg.train.init_from or &quot;full_sft&quot;, cfg.output_dir, cfg.model.hidden_size, cfg.model.use_moe
-    )
-    load_inference_weights(ref_model, init, strict=True)
-    ref_model.eval().requires_grad_(False).to(device or (&quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;))
-    load_inference_weights(model, init, strict=True)  # 策略模型同起点（Trainer 的 resume 在其后仍可接管）
-    logger.info(&quot;DPO 起点：%s | beta=%.3f&quot;, init.name, cfg.dpo.beta)
-
-    train_ds = build_preference_dataset(cfg, tokenizer)
-
-    def compute_loss(batch, m):
-        # chosen/rejected 拼成一个 batch 前后两半，一次前向
-        x = torch.cat([batch[&quot;x_chosen&quot;], batch[&quot;x_rejected&quot;]], dim=0)
-        y = torch.cat([batch[&quot;y_chosen&quot;], batch[&quot;y_rejected&quot;]], dim=0)
-        mask = torch.cat([batch[&quot;mask_chosen&quot;], batch[&quot;mask_rejected&quot;]], dim=0)
-        with torch.no_grad():
-            ref_logp = logits_to_log_probs(ref_model(x).logits, y)
-        out = m(x)
-        policy_logp = logits_to_log_probs(out.logits, y)
-        loss_val = dpo_loss(ref_logp, policy_logp, mask, beta=cfg.dpo.beta)
-        loss = loss_val + out.aux_loss
-        return loss, {&quot;train/dpo_loss&quot;: loss_val.item(), &quot;train/aux_loss&quot;: float(out.aux_loss)}
-
-    trainer = Trainer(
-        cfg,
-        model,
-        tokenizer,
-        train_ds,
-        None,
-        compute_loss=compute_loss,
-        save_weight=&quot;dpo&quot;,
-        device=device,
-        local_rank=local_rank,
-    )
-    trainer.run()
-    return trainer</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/dpo/workflow.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;DPO workflow：策略模型 + 冻结参考模型，差异在 compute_loss。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import torch
+
+from minimind_reborn.configuration.schemas import RunConfig
+from minimind_reborn.loggers import get_logger, setup_logging
+from minimind_reborn.models.weights import load_inference_weights, resolve_weight_path
+from minimind_reborn.training.common.setup import build_model, build_preference_dataset, load_tokenizer
+from minimind_reborn.training.common.trainer import Trainer
+from minimind_reborn.training.dpo.loss import dpo_loss, logits_to_log_probs
+from minimind_reborn.utils import dist
+
+logger = get_logger(&quot;dpo&quot;)
+
+
+def run(cfg: RunConfig, *, device: str | None = None, local_rank: int = 0) -&gt; Trainer:
+    setup_logging(cfg.run_dir)
+    tokenizer = load_tokenizer()
+    model = build_model(cfg, tokenizer)
+
+    # 参考模型：与策略同权重、冻结、只前向——引用漂移的&quot;锚&quot;。
+    # 设备跟随 local_rank（对齐 Trainer/RLSession 的折算；修复：2026-10-06 前裸 &quot;cuda&quot;
+    # 在多卡 DDP 下 rank≥1 的 ref 落 cuda:0，ref 前向直接 RuntimeError）
+    ref_model = build_model(cfg, tokenizer)
+    init = resolve_weight_path(
+        cfg.train.init_from or &quot;full_sft&quot;, cfg.output_dir, cfg.model.hidden_size, cfg.model.use_moe
+    )
+    ref_device = device or (&quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;)
+    if dist.is_initialized():
+        ref_device = f&quot;cuda:{local_rank}&quot;
+    load_inference_weights(ref_model, init, strict=True)
+    ref_model.eval().requires_grad_(False).to(ref_device)
+    load_inference_weights(model, init, strict=True)  # 策略模型同起点（Trainer 的 resume 在其后仍可接管）
+    logger.info(&quot;DPO 起点：%s | beta=%.3f&quot;, init.name, cfg.dpo.beta)
+
+    train_ds = build_preference_dataset(cfg, tokenizer)
+
+    def compute_loss(batch, m):
+        # chosen/rejected 拼成一个 batch 前后两半，一次前向
+        x = torch.cat([batch[&quot;x_chosen&quot;], batch[&quot;x_rejected&quot;]], dim=0)
+        y = torch.cat([batch[&quot;y_chosen&quot;], batch[&quot;y_rejected&quot;]], dim=0)
+        mask = torch.cat([batch[&quot;mask_chosen&quot;], batch[&quot;mask_rejected&quot;]], dim=0)
+        with torch.no_grad():
+            ref_logp = logits_to_log_probs(ref_model(x).logits, y)
+        out = m(x)
+        policy_logp = logits_to_log_probs(out.logits, y)
+        loss_val = dpo_loss(ref_logp, policy_logp, mask, beta=cfg.dpo.beta)
+        loss = loss_val + out.aux_loss
+        return loss, {&quot;train/dpo_loss&quot;: loss_val.item(), &quot;train/aux_loss&quot;: float(out.aux_loss)}
+
+    trainer = Trainer(
+        cfg,
+        model,
+        tokenizer,
+        train_ds,
+        None,
+        compute_loss=compute_loss,
+        save_weight=&quot;dpo&quot;,
+        device=device,
+        local_rank=local_rank,
+    )
+    trainer.run()
+    return trainer</code></pre></div>
 </main>
-<script src="../../../../../assets/course.js?v=9"></script>
+<script src="../../../../../assets/course.js?v=10"></script>
 </body>
 </html>

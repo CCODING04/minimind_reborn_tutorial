@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>envs.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -14,77 +14,77 @@
   <span class="cv-meta">71 行 · 2KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/envs.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;环境变量单一来源（python-style §3：全部 os.environ 读取集中在此）。
-
-惰性读取 + 进程内缓存 + 类型化；业务代码不允许直接摸 os.environ。
-&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import os
-from pathlib import Path
-from typing import Any
-
-_CACHE: dict[str, Any] = {}
-
-
-def _get_str(key: str, default: str) -&gt; str:
-    if key not in _CACHE:
-        _CACHE[key] = os.environ.get(key, default)
-    return str(_CACHE[key])  # type: ignore[return-value]
-
-
-def _get_int(key: str, default: int) -&gt; int:
-    if key not in _CACHE:
-        raw = os.environ.get(key)
-        _CACHE[key] = int(raw) if raw not in (None, &quot;&quot;) else default
-    return int(_CACHE[key])  # type: ignore[return-value]
-
-
-def data_root() -&gt; Path:
-    &quot;&quot;&quot;数据集根目录（jsonl 所在地）。默认指向工作区已有的 minimind 数据目录。&quot;&quot;&quot;
-    return Path(_get_str(&quot;MINIMIND_REBORN_DATA_ROOT&quot;, &quot;~/Code/WorkSpace/minimind-reproduce/dataset&quot;)).expanduser()
-
-
-def out_root() -&gt; Path:
-    &quot;&quot;&quot;训练产物（推理权重 .pth）输出目录。&quot;&quot;&quot;
-    return Path(_get_str(&quot;MINIMIND_REBORN_OUT_ROOT&quot;, &quot;out&quot;))
-
-
-def checkpoint_root() -&gt; Path:
-    &quot;&quot;&quot;续训 checkpoint（resume 六件套）输出目录。&quot;&quot;&quot;
-    return Path(_get_str(&quot;MINIMIND_REBORN_CHECKPOINT_ROOT&quot;, &quot;checkpoints&quot;))
-
-
-def run_root() -&gt; Path:
-    &quot;&quot;&quot;一次运行的可观测四件套（train.log/metrics.jsonl/config.json/env.json）目录。&quot;&quot;&quot;
-    return Path(_get_str(&quot;MINIMIND_REBORN_RUN_ROOT&quot;, &quot;runs&quot;))
-
-
-def tokenizer_path() -&gt; Path:
-    &quot;&quot;&quot;官方已训好 tokenizer（6400 词表，与官方权重/数据互通；自训能力见 tools/train_tokenizer.py）。&quot;&quot;&quot;
-    default = Path(__file__).resolve().parents[2] / &quot;assets&quot; / &quot;tokenizer&quot;
-    return Path(_get_str(&quot;MINIMIND_REBORN_TOKENIZER_PATH&quot;, str(default)))
-
-
-def metrics_disabled() -&gt; bool:
-    &quot;&quot;&quot;测试/CI 强制禁用云端上报（logging-metrics §6 测试纪律）。&quot;&quot;&quot;
-    return _get_int(&quot;MINIMIND_REBORN_METRICS_DISABLED&quot;, 0) == 1
-
-
-def log_all_ranks() -&gt; bool:
-    &quot;&quot;&quot;调试分布式时放开非 rank0 的控制台日志（默认只 rank0，防多卡交错刷屏）。&quot;&quot;&quot;
-    return _get_int(&quot;MINIMIND_REBORN_LOG_ALL_RANKS&quot;, 0) == 1
-
-
-def torch_threads() -&gt; int:
-    &quot;&quot;&quot;主进程 torch intraop 线程数（实测 4 worker 即饱和、8 线程富余，见 docs/pretrain_readiness.md §2）。&quot;&quot;&quot;
-    return _get_int(&quot;MINIMIND_REBORN_TORCH_THREADS&quot;, 8)
-
-
-# 库代码在 import 期唯一允许设置的环境变量：关闭 tokenizers 的 fork 并行告警
-os.environ.setdefault(&quot;TOKENIZERS_PARALLELISM&quot;, &quot;false&quot;)</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/envs.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;环境变量单一来源（python-style §3：全部 os.environ 读取集中在此）。
+
+惰性读取 + 进程内缓存 + 类型化；业务代码不允许直接摸 os.environ。
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any
+
+_CACHE: dict[str, Any] = {}
+
+
+def _get_str(key: str, default: str) -&gt; str:
+    if key not in _CACHE:
+        _CACHE[key] = os.environ.get(key, default)
+    return str(_CACHE[key])  # type: ignore[return-value]
+
+
+def _get_int(key: str, default: int) -&gt; int:
+    if key not in _CACHE:
+        raw = os.environ.get(key)
+        _CACHE[key] = int(raw) if raw not in (None, &quot;&quot;) else default
+    return int(_CACHE[key])  # type: ignore[return-value]
+
+
+def data_root() -&gt; Path:
+    &quot;&quot;&quot;数据集根目录（jsonl 所在地）。默认指向工作区已有的 minimind 数据目录。&quot;&quot;&quot;
+    return Path(_get_str(&quot;MINIMIND_REBORN_DATA_ROOT&quot;, &quot;~/Code/WorkSpace/minimind-reproduce/dataset&quot;)).expanduser()
+
+
+def out_root() -&gt; Path:
+    &quot;&quot;&quot;训练产物（推理权重 .pth）输出目录。&quot;&quot;&quot;
+    return Path(_get_str(&quot;MINIMIND_REBORN_OUT_ROOT&quot;, &quot;out&quot;))
+
+
+def checkpoint_root() -&gt; Path:
+    &quot;&quot;&quot;续训 checkpoint（resume 六件套）输出目录。&quot;&quot;&quot;
+    return Path(_get_str(&quot;MINIMIND_REBORN_CHECKPOINT_ROOT&quot;, &quot;checkpoints&quot;))
+
+
+def run_root() -&gt; Path:
+    &quot;&quot;&quot;一次运行的可观测四件套（train.log/metrics.jsonl/config.json/env.json）目录。&quot;&quot;&quot;
+    return Path(_get_str(&quot;MINIMIND_REBORN_RUN_ROOT&quot;, &quot;runs&quot;))
+
+
+def tokenizer_path() -&gt; Path:
+    &quot;&quot;&quot;官方已训好 tokenizer（6400 词表，与官方权重/数据互通；自训能力见 tools/train_tokenizer.py）。&quot;&quot;&quot;
+    default = Path(__file__).resolve().parents[2] / &quot;assets&quot; / &quot;tokenizer&quot;
+    return Path(_get_str(&quot;MINIMIND_REBORN_TOKENIZER_PATH&quot;, str(default)))
+
+
+def metrics_disabled() -&gt; bool:
+    &quot;&quot;&quot;测试/CI 强制禁用云端上报（logging-metrics §6 测试纪律）。&quot;&quot;&quot;
+    return _get_int(&quot;MINIMIND_REBORN_METRICS_DISABLED&quot;, 0) == 1
+
+
+def log_all_ranks() -&gt; bool:
+    &quot;&quot;&quot;调试分布式时放开非 rank0 的控制台日志（默认只 rank0，防多卡交错刷屏）。&quot;&quot;&quot;
+    return _get_int(&quot;MINIMIND_REBORN_LOG_ALL_RANKS&quot;, 0) == 1
+
+
+def torch_threads() -&gt; int:
+    &quot;&quot;&quot;主进程 torch intraop 线程数（实测 4 worker 即饱和、8 线程富余，见 docs/pretrain_readiness.md §2）。&quot;&quot;&quot;
+    return _get_int(&quot;MINIMIND_REBORN_TORCH_THREADS&quot;, 8)
+
+
+# 库代码在 import 期唯一允许设置的环境变量：关闭 tokenizers 的 fork 并行告警
+os.environ.setdefault(&quot;TOKENIZERS_PARALLELISM&quot;, &quot;false&quot;)</code></pre></div>
 </main>
-<script src="../../../assets/course.js?v=9"></script>
+<script src="../../../assets/course.js?v=10"></script>
 </body>
 </html>

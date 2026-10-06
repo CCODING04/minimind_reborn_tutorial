@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>eval_cont_train.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
-<link rel="stylesheet" href="../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -14,98 +14,98 @@
   <span class="cv-meta">92 行 · 3KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>tools/eval_cont_train.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;续训验收门（重训计划档二 4a）：防遗忘 + 长文本改善，双指标对比新旧底座。
-
-指标 A（防遗忘）：随机短文档（&lt;340 token）上新旧底座的交叉熵，新底座劣化 ≤5%。
-指标 B（长文本改善）：随机长文档（≥1024 token，1536 窗口）上新旧底座的交叉熵，
-新底座应显著更低（续训的直接目标——底座在长位置上的语言建模能力）。
-
-用法：uv run python tools/eval_cont_train.py [--n 200]
-&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import argparse
-import json
-import random
-
-import torch
-
-
-@torch.no_grad()
-def ce_loss(model, tokenizer, texts: list[str], max_length: int, device: str) -&gt; float:
-    total, count = 0.0, 0
-    for text in texts:
-        tokens = tokenizer(text, add_special_tokens=False).input_ids[: max_length - 2]
-        ids = [tokenizer.bos_token_id] + tokens + [tokenizer.eos_token_id]
-        ids += [tokenizer.pad_token_id] * (max_length - len(ids))
-        x = torch.tensor([ids], dtype=torch.long, device=device)
-        out = model(x, labels=x.clone())
-        n_valid = len(tokens) + 2
-        total += float(out.loss) * n_valid
-        count += n_valid
-    return total / max(count, 1)
-
-
-def main() -&gt; None:
-    parser = argparse.ArgumentParser(description=&quot;续训验收门：防遗忘 + 长文本改善&quot;)
-    parser.add_argument(&quot;--n&quot;, type=int, default=200)
-    parser.add_argument(&quot;--device&quot;, default=&quot;cuda:0&quot;)
-    args = parser.parse_args()
-
-    from transformers import AutoTokenizer
-
-    from minimind_reborn import envs
-    from minimind_reborn.models.config import MiniMindConfig
-    from minimind_reborn.models.model import MiniMindForCausalLM
-    from minimind_reborn.models.weights import load_inference_weights
-
-    tokenizer = AutoTokenizer.from_pretrained(envs.tokenizer_path())
-    device = args.device
-
-    def load(path: str) -&gt; MiniMindForCausalLM:
-        m = MiniMindForCausalLM(MiniMindConfig()).eval().to(device)
-        load_inference_weights(m, path, strict=True)
-        return m
-
-    old = load(&quot;out/archive/era1/pretrain_768.pth&quot;)
-    new = load(&quot;out/pretrain_768.pth&quot;)  # 续训产物（save_weight=pretrain 覆盖同名）
-
-    rng = random.Random(42)
-    short_pool, long_pool = [], []
-    with (envs.data_root() / &quot;pretrain_t2t.jsonl&quot;).open(&quot;rb&quot;) as f:
-        for line in f:
-            if len(short_pool) &gt;= 4000 and len(long_pool) &gt;= 4000:
-                break
-            text = str(json.loads(line)[&quot;text&quot;])
-            if len(text) &lt; 340 * 0.95 and len(short_pool) &lt; 4000:
-                short_pool.append(text)
-            elif len(text) &gt; 1024 and len(long_pool) &lt; 4000:
-                long_pool.append(text)
-    shorts = rng.sample(short_pool, args.n)
-    longs = rng.sample(long_pool, args.n)
-
-    res = {}
-    for name, texts, window in [(&quot;short_docs&quot;, shorts, 384), (&quot;long_docs&quot;, longs, 1536)]:
-        l_old = ce_loss(old, tokenizer, texts, window, device)
-        l_new = ce_loss(new, tokenizer, texts, window, device)
-        res[name] = {
-            &quot;old_base&quot;: round(l_old, 4),
-            &quot;new_base&quot;: round(l_new, 4),
-            &quot;delta_pct&quot;: round((l_new - l_old) / l_old * 100, 2),
-        }
-    res[&quot;gate&quot;] = {
-        &quot;forgetting_ok&quot;: res[&quot;short_docs&quot;][&quot;delta_pct&quot;] &lt;= 5.0,
-        &quot;long_improved&quot;: res[&quot;long_docs&quot;][&quot;delta_pct&quot;] &lt; 0,
-    }
-    print(json.dumps(res, ensure_ascii=False, indent=2))
-    if not all(res[&quot;gate&quot;].values()):
-        raise SystemExit(&quot;验收门未通过：防遗忘劣化 &gt;5% 或长文本无改善——按回退线处置（lr 降 2e-5 或窗口 1024）&quot;)
-
-
-if __name__ == &quot;__main__&quot;:
-    main()</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>tools/eval_cont_train.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;续训验收门（重训计划档二 4a）：防遗忘 + 长文本改善，双指标对比新旧底座。
+
+指标 A（防遗忘）：随机短文档（&lt;340 token）上新旧底座的交叉熵，新底座劣化 ≤5%。
+指标 B（长文本改善）：随机长文档（≥1024 token，1536 窗口）上新旧底座的交叉熵，
+新底座应显著更低（续训的直接目标——底座在长位置上的语言建模能力）。
+
+用法：uv run python tools/eval_cont_train.py [--n 200]
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import argparse
+import json
+import random
+
+import torch
+
+
+@torch.no_grad()
+def ce_loss(model, tokenizer, texts: list[str], max_length: int, device: str) -&gt; float:
+    total, count = 0.0, 0
+    for text in texts:
+        tokens = tokenizer(text, add_special_tokens=False).input_ids[: max_length - 2]
+        ids = [tokenizer.bos_token_id] + tokens + [tokenizer.eos_token_id]
+        ids += [tokenizer.pad_token_id] * (max_length - len(ids))
+        x = torch.tensor([ids], dtype=torch.long, device=device)
+        out = model(x, labels=x.clone())
+        n_valid = len(tokens) + 2
+        total += float(out.loss) * n_valid
+        count += n_valid
+    return total / max(count, 1)
+
+
+def main() -&gt; None:
+    parser = argparse.ArgumentParser(description=&quot;续训验收门：防遗忘 + 长文本改善&quot;)
+    parser.add_argument(&quot;--n&quot;, type=int, default=200)
+    parser.add_argument(&quot;--device&quot;, default=&quot;cuda:0&quot;)
+    args = parser.parse_args()
+
+    from transformers import AutoTokenizer
+
+    from minimind_reborn import envs
+    from minimind_reborn.models.config import MiniMindConfig
+    from minimind_reborn.models.model import MiniMindForCausalLM
+    from minimind_reborn.models.weights import load_inference_weights
+
+    tokenizer = AutoTokenizer.from_pretrained(envs.tokenizer_path())
+    device = args.device
+
+    def load(path: str) -&gt; MiniMindForCausalLM:
+        m = MiniMindForCausalLM(MiniMindConfig()).eval().to(device)
+        load_inference_weights(m, path, strict=True)
+        return m
+
+    old = load(&quot;out/archive/era1/pretrain_768.pth&quot;)
+    new = load(&quot;out/pretrain_768.pth&quot;)  # 续训产物（save_weight=pretrain 覆盖同名）
+
+    rng = random.Random(42)
+    short_pool, long_pool = [], []
+    with (envs.data_root() / &quot;pretrain_t2t.jsonl&quot;).open(&quot;rb&quot;) as f:
+        for line in f:
+            if len(short_pool) &gt;= 4000 and len(long_pool) &gt;= 4000:
+                break
+            text = str(json.loads(line)[&quot;text&quot;])
+            if len(text) &lt; 340 * 0.95 and len(short_pool) &lt; 4000:
+                short_pool.append(text)
+            elif len(text) &gt; 1024 and len(long_pool) &lt; 4000:
+                long_pool.append(text)
+    shorts = rng.sample(short_pool, args.n)
+    longs = rng.sample(long_pool, args.n)
+
+    res = {}
+    for name, texts, window in [(&quot;short_docs&quot;, shorts, 384), (&quot;long_docs&quot;, longs, 1536)]:
+        l_old = ce_loss(old, tokenizer, texts, window, device)
+        l_new = ce_loss(new, tokenizer, texts, window, device)
+        res[name] = {
+            &quot;old_base&quot;: round(l_old, 4),
+            &quot;new_base&quot;: round(l_new, 4),
+            &quot;delta_pct&quot;: round((l_new - l_old) / l_old * 100, 2),
+        }
+    res[&quot;gate&quot;] = {
+        &quot;forgetting_ok&quot;: res[&quot;short_docs&quot;][&quot;delta_pct&quot;] &lt;= 5.0,
+        &quot;long_improved&quot;: res[&quot;long_docs&quot;][&quot;delta_pct&quot;] &lt; 0,
+    }
+    print(json.dumps(res, ensure_ascii=False, indent=2))
+    if not all(res[&quot;gate&quot;].values()):
+        raise SystemExit(&quot;验收门未通过：防遗忘劣化 &gt;5% 或长文本无改善——按回退线处置（lr 降 2e-5 或窗口 1024）&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre></div>
 </main>
-<script src="../../assets/course.js?v=9"></script>
+<script src="../../assets/course.js?v=10"></script>
 </body>
 </html>

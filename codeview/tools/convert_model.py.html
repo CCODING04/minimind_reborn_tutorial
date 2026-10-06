@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>convert_model.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
-<link rel="stylesheet" href="../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -14,134 +14,134 @@
   <span class="cv-meta">128 行 · 4KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>tools/convert_model.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;模型格式转换（官方 convert_model.py 的重构精简版）。
-
-- torch .pth → HF transformers 格式（minimind 自定义类 或 Qwen3/Qwen3-MoE 兼容结构）
-- LoRA 合并回基模
-&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import argparse
-
-import torch
-
-from minimind_reborn.models.config import MiniMindConfig
-from minimind_reborn.models.lora import apply_lora
-from minimind_reborn.models.model import MiniMindForCausalLM
-from minimind_reborn.models.weights import load_inference_weights
-
-
-def convert_to_qwen(
-    torch_path: str,
-    out_path: str,
-    *,
-    hidden_size: int,
-    num_layers: int,
-    use_moe: bool,
-    vocab_size: int = 6400,
-    dtype=torch.float16,
-) -&gt; None:
-    &quot;&quot;&quot;转成 Qwen3（dense）/ Qwen3-MoE 结构，进入 HF 生态（vLLM/ollama 等可直接消费）。&quot;&quot;&quot;
-    from transformers import AutoTokenizer, Qwen3Config, Qwen3ForCausalLM, Qwen3MoeConfig, Qwen3MoeForCausalLM
-
-    mm_cfg = MiniMindConfig(
-        hidden_size=hidden_size, num_hidden_layers=num_layers, use_moe=use_moe, vocab_size=vocab_size
-    )
-    common = dict(
-        vocab_size=mm_cfg.vocab_size,
-        hidden_size=mm_cfg.hidden_size,
-        intermediate_size=mm_cfg.intermediate_size,
-        num_hidden_layers=mm_cfg.num_hidden_layers,
-        num_attention_heads=mm_cfg.num_attention_heads,
-        num_key_value_heads=mm_cfg.num_key_value_heads,
-        head_dim=mm_cfg.head_dim,
-        max_position_embeddings=mm_cfg.max_position_embeddings,
-        rms_norm_eps=mm_cfg.rms_norm_eps,
-        rope_theta=mm_cfg.rope_theta,
-        tie_word_embeddings=mm_cfg.tie_word_embeddings,
-    )
-    if not use_moe:
-        model = Qwen3ForCausalLM(Qwen3Config(**common, use_sliding_window=False, sliding_window=None))
-    else:
-        model = Qwen3MoeForCausalLM(
-            Qwen3MoeConfig(
-                **common,
-                num_experts=mm_cfg.num_experts,
-                num_experts_per_tok=mm_cfg.num_experts_per_tok,
-                moe_intermediate_size=mm_cfg.moe_intermediate_size,
-                norm_topk_prob=mm_cfg.norm_topk_prob,
-            )
-        )
-    state = torch.load(torch_path, map_location=&quot;cpu&quot;, weights_only=True)
-    model.load_state_dict(state, strict=True)
-    model = model.to(dtype)
-    model.save_pretrained(out_path)
-    tokenizer = AutoTokenizer.from_pretrained(&quot;assets/tokenizer&quot;)
-    tokenizer.save_pretrained(out_path)
-    params = sum(p.numel() for p in model.parameters())
-    print(f&quot;已保存 HF(Qwen3{&#x27;-MoE&#x27; if use_moe else &#x27;&#x27;}) 格式：{out_path}（{params / 1e6:.1f}M）&quot;)
-
-
-def merge_lora_into_base(
-    base_path: str,
-    lora_path: str,
-    out_path: str,
-    *,
-    hidden_size: int,
-    num_layers: int,
-    use_moe: bool,
-    vocab_size: int = 6400,
-) -&gt; None:
-    cfg = MiniMindConfig(hidden_size=hidden_size, num_hidden_layers=num_layers, use_moe=use_moe, vocab_size=vocab_size)
-    model = MiniMindForCausalLM(cfg)
-    load_inference_weights(model, base_path, strict=True)
-    apply_lora(model)
-    from minimind_reborn.models.lora import merge_lora
-
-    out = merge_lora(model, lora_path, out_path)
-    print(f&quot;LoRA 已合并：{out}&quot;)
-
-
-def main() -&gt; None:
-    parser = argparse.ArgumentParser(description=&quot;minimind_reborn 模型转换&quot;)
-    sub = parser.add_subparsers(dest=&quot;cmd&quot;, required=True)
-    p_qwen = sub.add_parser(&quot;to-qwen&quot;, help=&quot;torch .pth → HF Qwen3 格式&quot;)
-    p_qwen.add_argument(&quot;--torch-path&quot;, required=True)
-    p_qwen.add_argument(&quot;--out&quot;, required=True)
-    p_qwen.add_argument(&quot;--hidden-size&quot;, type=int, default=768)
-    p_qwen.add_argument(&quot;--num-hidden-layers&quot;, type=int, default=8)
-    p_qwen.add_argument(&quot;--use-moe&quot;, action=&quot;store_true&quot;)
-    p_merge = sub.add_parser(&quot;merge-lora&quot;, help=&quot;LoRA 合并回基模&quot;)
-    p_merge.add_argument(&quot;--base&quot;, required=True)
-    p_merge.add_argument(&quot;--lora&quot;, required=True)
-    p_merge.add_argument(&quot;--out&quot;, required=True)
-    p_merge.add_argument(&quot;--hidden-size&quot;, type=int, default=768)
-    p_merge.add_argument(&quot;--num-hidden-layers&quot;, type=int, default=8)
-    args = parser.parse_args()
-
-    if args.cmd == &quot;to-qwen&quot;:
-        convert_to_qwen(
-            args.torch_path,
-            args.out,
-            hidden_size=args.hidden_size,
-            num_layers=args.num_hidden_layers,
-            use_moe=args.use_moe,
-        )
-    elif args.cmd == &quot;merge-lora&quot;:
-        merge_lora_into_base(
-            args.base,
-            args.lora,
-            args.out,
-            hidden_size=args.hidden_size,
-            num_layers=args.num_hidden_layers,
-            use_moe=False,
-        )
-
-
-if __name__ == &quot;__main__&quot;:
-    main()</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>tools/convert_model.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;模型格式转换（官方 convert_model.py 的重构精简版）。
+
+- torch .pth → HF transformers 格式（minimind 自定义类 或 Qwen3/Qwen3-MoE 兼容结构）
+- LoRA 合并回基模
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import argparse
+
+import torch
+
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.lora import apply_lora
+from minimind_reborn.models.model import MiniMindForCausalLM
+from minimind_reborn.models.weights import load_inference_weights
+
+
+def convert_to_qwen(
+    torch_path: str,
+    out_path: str,
+    *,
+    hidden_size: int,
+    num_layers: int,
+    use_moe: bool,
+    vocab_size: int = 6400,
+    dtype=torch.float16,
+) -&gt; None:
+    &quot;&quot;&quot;转成 Qwen3（dense）/ Qwen3-MoE 结构，进入 HF 生态（vLLM/ollama 等可直接消费）。&quot;&quot;&quot;
+    from transformers import AutoTokenizer, Qwen3Config, Qwen3ForCausalLM, Qwen3MoeConfig, Qwen3MoeForCausalLM
+
+    mm_cfg = MiniMindConfig(
+        hidden_size=hidden_size, num_hidden_layers=num_layers, use_moe=use_moe, vocab_size=vocab_size
+    )
+    common = dict(
+        vocab_size=mm_cfg.vocab_size,
+        hidden_size=mm_cfg.hidden_size,
+        intermediate_size=mm_cfg.intermediate_size,
+        num_hidden_layers=mm_cfg.num_hidden_layers,
+        num_attention_heads=mm_cfg.num_attention_heads,
+        num_key_value_heads=mm_cfg.num_key_value_heads,
+        head_dim=mm_cfg.head_dim,
+        max_position_embeddings=mm_cfg.max_position_embeddings,
+        rms_norm_eps=mm_cfg.rms_norm_eps,
+        rope_theta=mm_cfg.rope_theta,
+        tie_word_embeddings=mm_cfg.tie_word_embeddings,
+    )
+    if not use_moe:
+        model = Qwen3ForCausalLM(Qwen3Config(**common, use_sliding_window=False, sliding_window=None))
+    else:
+        model = Qwen3MoeForCausalLM(
+            Qwen3MoeConfig(
+                **common,
+                num_experts=mm_cfg.num_experts,
+                num_experts_per_tok=mm_cfg.num_experts_per_tok,
+                moe_intermediate_size=mm_cfg.moe_intermediate_size,
+                norm_topk_prob=mm_cfg.norm_topk_prob,
+            )
+        )
+    state = torch.load(torch_path, map_location=&quot;cpu&quot;, weights_only=True)
+    model.load_state_dict(state, strict=True)
+    model = model.to(dtype)
+    model.save_pretrained(out_path)
+    tokenizer = AutoTokenizer.from_pretrained(&quot;assets/tokenizer&quot;)
+    tokenizer.save_pretrained(out_path)
+    params = sum(p.numel() for p in model.parameters())
+    print(f&quot;已保存 HF(Qwen3{&#x27;-MoE&#x27; if use_moe else &#x27;&#x27;}) 格式：{out_path}（{params / 1e6:.1f}M）&quot;)
+
+
+def merge_lora_into_base(
+    base_path: str,
+    lora_path: str,
+    out_path: str,
+    *,
+    hidden_size: int,
+    num_layers: int,
+    use_moe: bool,
+    vocab_size: int = 6400,
+) -&gt; None:
+    cfg = MiniMindConfig(hidden_size=hidden_size, num_hidden_layers=num_layers, use_moe=use_moe, vocab_size=vocab_size)
+    model = MiniMindForCausalLM(cfg)
+    load_inference_weights(model, base_path, strict=True)
+    apply_lora(model)
+    from minimind_reborn.models.lora import merge_lora
+
+    out = merge_lora(model, lora_path, out_path)
+    print(f&quot;LoRA 已合并：{out}&quot;)
+
+
+def main() -&gt; None:
+    parser = argparse.ArgumentParser(description=&quot;minimind_reborn 模型转换&quot;)
+    sub = parser.add_subparsers(dest=&quot;cmd&quot;, required=True)
+    p_qwen = sub.add_parser(&quot;to-qwen&quot;, help=&quot;torch .pth → HF Qwen3 格式&quot;)
+    p_qwen.add_argument(&quot;--torch-path&quot;, required=True)
+    p_qwen.add_argument(&quot;--out&quot;, required=True)
+    p_qwen.add_argument(&quot;--hidden-size&quot;, type=int, default=768)
+    p_qwen.add_argument(&quot;--num-hidden-layers&quot;, type=int, default=8)
+    p_qwen.add_argument(&quot;--use-moe&quot;, action=&quot;store_true&quot;)
+    p_merge = sub.add_parser(&quot;merge-lora&quot;, help=&quot;LoRA 合并回基模&quot;)
+    p_merge.add_argument(&quot;--base&quot;, required=True)
+    p_merge.add_argument(&quot;--lora&quot;, required=True)
+    p_merge.add_argument(&quot;--out&quot;, required=True)
+    p_merge.add_argument(&quot;--hidden-size&quot;, type=int, default=768)
+    p_merge.add_argument(&quot;--num-hidden-layers&quot;, type=int, default=8)
+    args = parser.parse_args()
+
+    if args.cmd == &quot;to-qwen&quot;:
+        convert_to_qwen(
+            args.torch_path,
+            args.out,
+            hidden_size=args.hidden_size,
+            num_layers=args.num_hidden_layers,
+            use_moe=args.use_moe,
+        )
+    elif args.cmd == &quot;merge-lora&quot;:
+        merge_lora_into_base(
+            args.base,
+            args.lora,
+            args.out,
+            hidden_size=args.hidden_size,
+            num_layers=args.num_hidden_layers,
+            use_moe=False,
+        )
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre></div>
 </main>
-<script src="../../assets/course.js?v=9"></script>
+<script src="../../assets/course.js?v=10"></script>
 </body>
 </html>

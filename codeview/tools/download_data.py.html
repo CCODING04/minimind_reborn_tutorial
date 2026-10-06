@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>download_data.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
-<link rel="stylesheet" href="../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -14,51 +14,51 @@
   <span class="cv-meta">45 行 · 1KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>tools/download_data.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;数据集下载（modelscope）：本地缺失的注册表数据集从这里补齐。
-
-用法：uv run python tools/download_data.py --name rlaif_mini
-&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import argparse
-from pathlib import Path
-
-from minimind_reborn import envs
-from minimind_reborn.data.registry import _REGISTRY
-
-# 官方 minimind 数据集仓库（modelscope datasets，namespace 为 gongjy）
-MODELSCOPE_REPO = &quot;gongjy/minimind_dataset&quot;
-
-
-def main() -&gt; None:
-    parser = argparse.ArgumentParser(description=&quot;从 modelscope 下载注册表数据集&quot;)
-    parser.add_argument(&quot;--name&quot;, required=True, choices=sorted(_REGISTRY), help=&quot;注册表数据集名&quot;)
-    args = parser.parse_args()
-
-    try:
-        from modelscope import snapshot_download
-    except ImportError as e:
-        raise SystemExit(f&quot;缺少下载依赖（{e}）。请安装：uv sync --extra download&quot;) from None
-
-    entry = _REGISTRY[args.name]
-    target = envs.data_root() / entry.file
-    if target.exists():
-        print(f&quot;已存在，跳过：{target}&quot;)
-        return
-    print(f&quot;从 modelscope 下载 {MODELSCOPE_REPO}/{entry.file} …&quot;)
-    repo_dir = Path(snapshot_download(MODELSCOPE_REPO, repo_type=&quot;dataset&quot;, allow_patterns=[entry.file]))
-    source = repo_dir / entry.file
-    if not source.exists():
-        raise SystemExit(f&quot;下载完成但未找到 {entry.file}（仓库布局可能已变化），请检查 {repo_dir}&quot;)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    source.rename(target)
-    print(f&quot;完成：{target}&quot;)
-
-
-if __name__ == &quot;__main__&quot;:
-    main()</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>tools/download_data.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;数据集下载（modelscope）：本地缺失的注册表数据集从这里补齐。
+
+用法：uv run python tools/download_data.py --name rlaif_mini
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from minimind_reborn import envs
+from minimind_reborn.data.registry import _REGISTRY
+
+# 官方 minimind 数据集仓库（modelscope datasets，namespace 为 gongjy）
+MODELSCOPE_REPO = &quot;gongjy/minimind_dataset&quot;
+
+
+def main() -&gt; None:
+    parser = argparse.ArgumentParser(description=&quot;从 modelscope 下载注册表数据集&quot;)
+    parser.add_argument(&quot;--name&quot;, required=True, choices=sorted(_REGISTRY), help=&quot;注册表数据集名&quot;)
+    args = parser.parse_args()
+
+    try:
+        from modelscope import snapshot_download
+    except ImportError as e:
+        raise SystemExit(f&quot;缺少下载依赖（{e}）。请安装：uv sync --extra download&quot;) from None
+
+    entry = _REGISTRY[args.name]
+    target = envs.data_root() / entry.file
+    if target.exists():
+        print(f&quot;已存在，跳过：{target}&quot;)
+        return
+    print(f&quot;从 modelscope 下载 {MODELSCOPE_REPO}/{entry.file} …&quot;)
+    repo_dir = Path(snapshot_download(MODELSCOPE_REPO, repo_type=&quot;dataset&quot;, allow_patterns=[entry.file]))
+    source = repo_dir / entry.file
+    if not source.exists():
+        raise SystemExit(f&quot;下载完成但未找到 {entry.file}（仓库布局可能已变化），请检查 {repo_dir}&quot;)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source.rename(target)
+    print(f&quot;完成：{target}&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre></div>
 </main>
-<script src="../../assets/course.js?v=9"></script>
+<script src="../../assets/course.js?v=10"></script>
 </body>
 </html>

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>constants.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -14,25 +14,25 @@
   <span class="cv-meta">19 行 · 1KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/constants.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;全局常量：特殊 token、模型默认值。
-
-只放&quot;代码自身无法推导&quot;的固定语义；可调参数一律走 configuration。
-&quot;&quot;&quot;
-
-from __future__ import annotations
-
-# ===== 特殊 token（与官方 minimind tokenizer 完全一致，保证权重与数据互通） =====
-PAD_TEXT = &quot;&lt;|endoftext|&gt;&quot;
-BOS_TEXT = &quot;&lt;|im_start|&gt;&quot;
-EOS_TEXT = &quot;&lt;|im_end|&gt;&quot;
-
-# ===== SFT/DPO loss mask 的区间标记模式 =====
-# chat template 渲染后 assistant 回答总是夹在 &quot;&lt;|im_start|&gt;assistant\n&quot; 与 &quot;&lt;|im_end|&gt;\n&quot; 之间，
-# loss mask 依赖对这两个 token 序列的模式匹配（data/loss_mask.py），这是全系统最脆的耦合点，
-# 由 tests/test_data/test_loss_mask.py 逐 token 断言锁定。
-ASSISTANT_PREFIX_TEXT = f&quot;{BOS_TEXT}assistant\n&quot;
-RESPONSE_SUFFIX_TEXT = f&quot;{EOS_TEXT}\n&quot;</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/constants.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;全局常量：特殊 token、模型默认值。
+
+只放&quot;代码自身无法推导&quot;的固定语义；可调参数一律走 configuration。
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+# ===== 特殊 token（与官方 minimind tokenizer 完全一致，保证权重与数据互通） =====
+PAD_TEXT = &quot;&lt;|endoftext|&gt;&quot;
+BOS_TEXT = &quot;&lt;|im_start|&gt;&quot;
+EOS_TEXT = &quot;&lt;|im_end|&gt;&quot;
+
+# ===== SFT/DPO loss mask 的区间标记模式 =====
+# chat template 渲染后 assistant 回答总是夹在 &quot;&lt;|im_start|&gt;assistant\n&quot; 与 &quot;&lt;|im_end|&gt;\n&quot; 之间，
+# loss mask 依赖对这两个 token 序列的模式匹配（data/loss_mask.py），这是全系统最脆的耦合点，
+# 由 tests/test_data/test_loss_mask.py 逐 token 断言锁定。
+ASSISTANT_PREFIX_TEXT = f&quot;{BOS_TEXT}assistant\n&quot;
+RESPONSE_SUFFIX_TEXT = f&quot;{EOS_TEXT}\n&quot;</code></pre></div>
 </main>
-<script src="../../../assets/course.js?v=9"></script>
+<script src="../../../assets/course.js?v=10"></script>
 </body>
 </html>

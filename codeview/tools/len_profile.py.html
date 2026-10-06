@@ -5,272 +5,272 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>len_profile.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
-<link rel="stylesheet" href="../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
   <a class="cv-back" href="../../index.html">← 课程地图</a>
   <span class="cv-crumb">Reproduce/minimind_reborn/tools/len_profile.py</span>
-  <span class="cv-meta">257 行 · 10KB · minimind_reborn</span>
+  <span class="cv-meta">257 行 · 9KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>tools/len_profile.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;token 级长度画像：长上下文维度的截断损毁测量（与 data_profile.py 的字符级互补）。
-
-测量内容（采样 seed 42，字节偏移随机采样避免头部偏差）：
-- pretrain：token 长度分布、≥训练截断(380) 占比、截断保留率（实际进入训练的 token 比例）、长样本潜力
-- sft：渲染后会话 token 分布、≥768 占比、多轮样本截断损毁
-  （assistant 完整回复区间存活率 / loss-mask 全零样本率 / 半截残段计数）
-- dpo：chosen/rejected ≥1024 占比（配对级）
-
-用法：
-  uv run python tools/len_profile.py --name pretrain_t2t --sample 30000
-  uv run python tools/len_profile.py --name sft_t2t --sample 30000
-输出 JSON 到 stdout。
-&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import argparse
-import json
-import math
-import os
-import random
-import statistics
-from pathlib import Path
-from typing import Any
-
-TOK: Any = None  # 惰性初始化（main 里加载）
-PRE_IDS: list[int] = []
-SUF_IDS: list[int] = []
-LPRE = LSUF = 0
-SEED = 42
-
-
-def init_tokenizer() -&gt; None:
-    global TOK, PRE_IDS, SUF_IDS, LPRE, LSUF
-    if TOK is not None:
-        return
-    from transformers import AutoTokenizer
-
-    from minimind_reborn import envs
-    from minimind_reborn.data.loss_mask import pattern_ids
-
-    TOK = AutoTokenizer.from_pretrained(envs.tokenizer_path())
-    PRE_IDS, SUF_IDS = pattern_ids(TOK)
-    LPRE, LSUF = len(PRE_IDS), len(SUF_IDS)
-
-
-def sample_lines(path: str | Path, n: int, seed: int = SEED) -&gt; list[bytes]:
-    &quot;&quot;&quot;字节偏移随机采样完整行（避免头部偏差）。&quot;&quot;&quot;
-    rng = random.Random(seed)
-    size = os.path.getsize(path)
-    seen: set[int] = set()
-    out: list[bytes] = []
-
-    def batch(k: int) -&gt; None:
-        offsets = sorted(rng.sample(range(size), k))
-        with open(path, &quot;rb&quot;) as f:
-            for pos in offsets:
-                f.seek(pos)
-                f.readline()  # 丢弃残行
-                start = f.tell()
-                line = f.readline()
-                if not line or not line.strip() or start in seen:
-                    continue
-                seen.add(start)
-                out.append(line)
-
-    guard = 0
-    while len(out) &lt; n and guard &lt; 10:
-        guard += 1
-        batch(int((n - len(out)) * 1.15) + 16)
-    return out[:n]
-
-
-def pctl(s: list[float], p: float) -&gt; float:
-    s = sorted(s)
-    idx = (len(s) - 1) * p / 100.0
-    lo, hi = int(math.floor(idx)), int(math.ceil(idx))
-    return float(s[lo]) if lo == hi else s[lo] * (hi - idx) + s[hi] * (idx - lo)
-
-
-def describe(vals: list[float]) -&gt; dict[str, float]:
-    return {
-        &quot;n&quot;: len(vals),
-        &quot;mean&quot;: round(sum(vals) / len(vals), 1),
-        &quot;p10&quot;: round(pctl(vals, 10)),
-        &quot;p50&quot;: round(pctl(vals, 50)),
-        &quot;p90&quot;: round(pctl(vals, 90)),
-        &quot;p99&quot;: round(pctl(vals, 99)),
-        &quot;max&quot;: int(max(vals)),
-    }
-
-
-def frac_ge(vals: list[float], t: int) -&gt; float:
-    return round(sum(1 for v in vals if v &gt;= t) / len(vals), 4)
-
-
-def scan_spans(ids: list[int]) -&gt; tuple[int, int]:
-    &quot;&quot;&quot;扫描 assistant 完整区间与残段——已与训练同源（loss_mask.scan_response_spans）。
-
-    C2 语义：残段（有 &lt;|im_start|&gt;assistant\\n 开头但 &lt;|im_end|&gt;\\n 被截断丢失）
-    不计入监督区间，仅计数供诊断。
-    &quot;&quot;&quot;
-    from minimind_reborn.data.loss_mask import scan_response_spans
-
-    spans, dangling = scan_response_spans(ids, PRE_IDS, SUF_IDS)
-    return len(spans), dangling
-
-
-def render_conv(convs: list[dict]) -&gt; str:
-    &quot;&quot;&quot;渲染单条对话（与 SFTDataset.render 同源，经 render_conversations；无随机 system 插入）。&quot;&quot;&quot;
-    from minimind_reborn.data.datasets import render_conversations
-
-    return render_conversations(TOK, convs, remove_empty_think=False)
-
-
-def profile_pretrain_len(lines: list[bytes], train_seq: int) -&gt; dict[str, Any]:
-    lens = [len(TOK(json.loads(line)[&quot;text&quot;], add_special_tokens=False).input_ids) for line in lines]
-    kept = sum(min(v, train_seq - 2) for v in lens)  # -2 给 bos/eos 让位
-    total = sum(lens)
-    return {
-        &quot;token_len&quot;: describe([float(v) for v in lens]),
-        &quot;truncated_at_train_seq&quot;: frac_ge([float(v) for v in lens], train_seq),
-        &quot;truncation_retention_rate&quot;: round(kept / total, 4),
-        &quot;token_never_trained_rate&quot;: round(1 - kept / total, 4),
-        &quot;long_sample_potential&quot;: {
-            &quot;ge_1024&quot;: frac_ge([float(v) for v in lens], 1024),
-            &quot;ge_2048&quot;: frac_ge([float(v) for v in lens], 2048),
-        },
-    }
-
-
-def profile_sft_len(lines: list[bytes], train_seq: int) -&gt; dict[str, Any]:
-    &quot;&quot;&quot;SFT 截断损毁画像——与训练完全同源（encode_sft_sample：C1 轮次适配 + C2 残段不计损）。
-
-    测量口径：full_len 为渲染全长（未适配）；survival = 适配后完整回复数 / 适配前完整回复数；
-    dangling/hard_truncated/zero_loss 均为适配后的最终训练语义。
-    &quot;&quot;&quot;
-    from minimind_reborn.data.datasets import encode_sft_sample
-
-    conv_lens: list[float] = []
-    multi_lens: list[float] = []
-    survival: list[float] = []
-    zero_mask = 0
-    multi_n = 0
-    damaged_n = 0  # full_len &gt; train_seq 的多轮样本（旧口径下必然拦腰受损）
-    fitted_n = 0  # 触发轮次适配
-    hard_trunc_n = 0  # 单回复超窗硬截
-    dangling_total = 0  # 残段总数（C2 后不计损，仅诊断）
-    complete_after_total = 0
-    for line in lines:
-        convs = json.loads(line)[&quot;conversations&quot;]
-        out = encode_sft_sample(TOK, PRE_IDS, SUF_IDS, convs, train_seq, remove_empty_think=False)
-        stats = out[&quot;stats&quot;]
-        conv_lens.append(float(stats[&quot;full_len&quot;]))
-        if len(convs) &gt; 2:
-            multi_n += 1
-            multi_lens.append(float(stats[&quot;full_len&quot;]))
-            if stats[&quot;full_len&quot;] &gt; train_seq:
-                damaged_n += 1
-                if stats[&quot;fitted&quot;]:
-                    fitted_n += 1
-                if stats[&quot;hard_truncated&quot;]:
-                    hard_trunc_n += 1
-                dangling_total += stats[&quot;dangling&quot;]
-                complete_after_total += stats[&quot;complete_after&quot;]
-                if stats[&quot;complete_before&quot;] &gt; 0:
-                    survival.append(stats[&quot;complete_after&quot;] / stats[&quot;complete_before&quot;])
-                if stats[&quot;zero_loss&quot;]:
-                    zero_mask += 1
-    kept_total_spans = complete_after_total + dangling_total
-    return {
-        &quot;conv_token_len&quot;: describe(conv_lens),
-        &quot;truncated_at_train_seq&quot;: frac_ge(conv_lens, train_seq),
-        &quot;multi_turn&quot;: {
-            &quot;share_of_sample&quot;: round(multi_n / max(len(lines), 1), 4),
-            &quot;token_len&quot;: describe(multi_lens) if multi_lens else {},
-            &quot;truncated_at_train_seq&quot;: frac_ge(multi_lens, train_seq) if multi_lens else 0,
-            &quot;damaged_over_seq&quot;: damaged_n,
-            &quot;turn_fitted_rate&quot;: round(fitted_n / max(damaged_n, 1), 4),
-            &quot;hard_truncated_rate&quot;: round(hard_trunc_n / max(damaged_n, 1), 4),
-            &quot;dangling_per_damaged&quot;: round(dangling_total / max(damaged_n, 1), 4),
-            # 结构保证主指标（§4.1）：留下的回复区间中完整区间的占比，目标 100%
-            # （残段唯一来源是「单条回复自身超窗」的硬截，这类样本由 C3 在训练期过滤）
-            &quot;assistant_span_intact_rate&quot;: round(complete_after_total / max(kept_total_spans, 1), 4),
-            # 旧口径（完整后/完整前）：轮次丢弃按设计减少分子（旧轮次回复被整轮舍弃），
-            # 与旧拦腰截断的「完整存活率」语义不同，不可直比
-            &quot;assistant_span_survival_rate&quot;: round(statistics.mean(survival), 4) if survival else None,
-            &quot;zero_loss_mask_rate&quot;: round(zero_mask / max(multi_n, 1), 4) if multi_n else 0,
-        },
-    }
-
-
-def _render_side(convs: list[dict]) -&gt; str:  # pragma: no cover
-    return TOK.apply_chat_template(convs, tokenize=False, add_generation_prompt=False)
-
-
-def profile_dpo_len(lines: list[bytes], train_seq: int) -&gt; dict[str, Any]:
-    chosen: list[float] = []
-    rejected: list[float] = []
-    pair_trunc = 0
-    for line in lines:
-        d = json.loads(line)
-        cl = len(TOK(_render_side(d[&quot;chosen&quot;]), add_special_tokens=False).input_ids)
-        rl = len(TOK(_render_side(d[&quot;rejected&quot;]), add_special_tokens=False).input_ids)
-        chosen.append(float(cl))
-        rejected.append(float(rl))
-        if cl &gt; train_seq or rl &gt; train_seq:
-            pair_trunc += 1
-    n = max(len(lines), 1)
-    return {
-        &quot;chosen_token_len&quot;: describe(chosen),
-        &quot;rejected_token_len&quot;: describe(rejected),
-        &quot;pair_truncated_at_train_seq&quot;: round(pair_trunc / n, 4),
-    }
-
-
-def main() -&gt; None:
-    parser = argparse.ArgumentParser(description=&quot;token 级长度画像（长上下文截断损毁测量）&quot;)
-    parser.add_argument(&quot;--name&quot;, required=True, help=&quot;注册表数据集名&quot;)
-    parser.add_argument(&quot;--sample&quot;, type=int, default=30000)
-    parser.add_argument(
-        &quot;--train-seq&quot;, type=int, default=None, help=&quot;该数据集训练时的截断长度（默认按 kind：380/768/1024）&quot;
-    )
-    parser.add_argument(&quot;--seed&quot;, type=int, default=SEED)
-    args = parser.parse_args()
-
-    from minimind_reborn.data.registry import file_path, resolve_dataset
-
-    init_tokenizer()
-    entry = resolve_dataset(args.name)
-    path = file_path(entry)
-    train_seq = args.train_seq or {&quot;pretrain&quot;: 380, &quot;sft&quot;: 768, &quot;dpo&quot;: 1024}.get(entry.kind, 1024)
-
-    if entry.kind == &quot;dpo&quot;:
-        lines = path.open(&quot;rb&quot;).readlines()  # dpo 仅 1.7 万行，全量普查
-    else:
-        lines = sample_lines(path, args.sample, args.seed)
-
-    if entry.kind == &quot;pretrain&quot;:
-        result: dict[str, Any] = profile_pretrain_len(lines, train_seq)
-    elif entry.kind == &quot;sft&quot;:
-        result = profile_sft_len(lines, train_seq)
-    else:
-        result = profile_dpo_len(lines, train_seq)
-
-    print(
-        json.dumps(
-            {&quot;dataset&quot;: args.name, &quot;train_seq&quot;: train_seq, &quot;sampled&quot;: len(lines), **result},
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
-
-
-if __name__ == &quot;__main__&quot;:
-    main()</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>tools/len_profile.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;token 级长度画像：长上下文维度的截断损毁测量（与 data_profile.py 的字符级互补）。
+
+测量内容（采样 seed 42，字节偏移随机采样避免头部偏差）：
+- pretrain：token 长度分布、≥训练截断(380) 占比、截断保留率（实际进入训练的 token 比例）、长样本潜力
+- sft：渲染后会话 token 分布、≥768 占比、多轮样本截断损毁
+  （assistant 完整回复区间存活率 / loss-mask 全零样本率 / 半截残段计数）
+- dpo：chosen/rejected ≥1024 占比（配对级）
+
+用法：
+  uv run python tools/len_profile.py --name pretrain_t2t --sample 30000
+  uv run python tools/len_profile.py --name sft_t2t --sample 30000
+输出 JSON 到 stdout。
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import random
+import statistics
+from pathlib import Path
+from typing import Any
+
+TOK: Any = None  # 惰性初始化（main 里加载）
+PRE_IDS: list[int] = []
+SUF_IDS: list[int] = []
+LPRE = LSUF = 0
+SEED = 42
+
+
+def init_tokenizer() -&gt; None:
+    global TOK, PRE_IDS, SUF_IDS, LPRE, LSUF
+    if TOK is not None:
+        return
+    from transformers import AutoTokenizer
+
+    from minimind_reborn import envs
+    from minimind_reborn.data.loss_mask import pattern_ids
+
+    TOK = AutoTokenizer.from_pretrained(envs.tokenizer_path())
+    PRE_IDS, SUF_IDS = pattern_ids(TOK)
+    LPRE, LSUF = len(PRE_IDS), len(SUF_IDS)
+
+
+def sample_lines(path: str | Path, n: int, seed: int = SEED) -&gt; list[bytes]:
+    &quot;&quot;&quot;字节偏移随机采样完整行（避免头部偏差）。&quot;&quot;&quot;
+    rng = random.Random(seed)
+    size = os.path.getsize(path)
+    seen: set[int] = set()
+    out: list[bytes] = []
+
+    def batch(k: int) -&gt; None:
+        offsets = sorted(rng.sample(range(size), k))
+        with open(path, &quot;rb&quot;) as f:
+            for pos in offsets:
+                f.seek(pos)
+                f.readline()  # 丢弃残行
+                start = f.tell()
+                line = f.readline()
+                if not line or not line.strip() or start in seen:
+                    continue
+                seen.add(start)
+                out.append(line)
+
+    guard = 0
+    while len(out) &lt; n and guard &lt; 10:
+        guard += 1
+        batch(int((n - len(out)) * 1.15) + 16)
+    return out[:n]
+
+
+def pctl(s: list[float], p: float) -&gt; float:
+    s = sorted(s)
+    idx = (len(s) - 1) * p / 100.0
+    lo, hi = int(math.floor(idx)), int(math.ceil(idx))
+    return float(s[lo]) if lo == hi else s[lo] * (hi - idx) + s[hi] * (idx - lo)
+
+
+def describe(vals: list[float]) -&gt; dict[str, float]:
+    return {
+        &quot;n&quot;: len(vals),
+        &quot;mean&quot;: round(sum(vals) / len(vals), 1),
+        &quot;p10&quot;: round(pctl(vals, 10)),
+        &quot;p50&quot;: round(pctl(vals, 50)),
+        &quot;p90&quot;: round(pctl(vals, 90)),
+        &quot;p99&quot;: round(pctl(vals, 99)),
+        &quot;max&quot;: int(max(vals)),
+    }
+
+
+def frac_ge(vals: list[float], t: int) -&gt; float:
+    return round(sum(1 for v in vals if v &gt;= t) / len(vals), 4)
+
+
+def scan_spans(ids: list[int]) -&gt; tuple[int, int]:
+    &quot;&quot;&quot;扫描 assistant 完整区间与残段——已与训练同源（loss_mask.scan_response_spans）。
+
+    C2 语义：残段（有 &lt;|im_start|&gt;assistant\\n 开头但 &lt;|im_end|&gt;\\n 被截断丢失）
+    不计入监督区间，仅计数供诊断。
+    &quot;&quot;&quot;
+    from minimind_reborn.data.loss_mask import scan_response_spans
+
+    spans, dangling = scan_response_spans(ids, PRE_IDS, SUF_IDS)
+    return len(spans), dangling
+
+
+def render_conv(convs: list[dict]) -&gt; str:
+    &quot;&quot;&quot;渲染单条对话（与 SFTDataset.render 同源，经 render_conversations；无随机 system 插入）。&quot;&quot;&quot;
+    from minimind_reborn.data.datasets import render_conversations
+
+    return render_conversations(TOK, convs, remove_empty_think=False)
+
+
+def profile_pretrain_len(lines: list[bytes], train_seq: int) -&gt; dict[str, Any]:
+    lens = [len(TOK(json.loads(line)[&quot;text&quot;], add_special_tokens=False).input_ids) for line in lines]
+    kept = sum(min(v, train_seq - 2) for v in lens)  # -2 给 bos/eos 让位
+    total = sum(lens)
+    return {
+        &quot;token_len&quot;: describe([float(v) for v in lens]),
+        &quot;truncated_at_train_seq&quot;: frac_ge([float(v) for v in lens], train_seq),
+        &quot;truncation_retention_rate&quot;: round(kept / total, 4),
+        &quot;token_never_trained_rate&quot;: round(1 - kept / total, 4),
+        &quot;long_sample_potential&quot;: {
+            &quot;ge_1024&quot;: frac_ge([float(v) for v in lens], 1024),
+            &quot;ge_2048&quot;: frac_ge([float(v) for v in lens], 2048),
+        },
+    }
+
+
+def profile_sft_len(lines: list[bytes], train_seq: int) -&gt; dict[str, Any]:
+    &quot;&quot;&quot;SFT 截断损毁画像——与训练完全同源（encode_sft_sample：C1 轮次适配 + C2 残段不计损）。
+
+    测量口径：full_len 为渲染全长（未适配）；survival = 适配后完整回复数 / 适配前完整回复数；
+    dangling/hard_truncated/zero_loss 均为适配后的最终训练语义。
+    &quot;&quot;&quot;
+    from minimind_reborn.data.datasets import encode_sft_sample
+
+    conv_lens: list[float] = []
+    multi_lens: list[float] = []
+    survival: list[float] = []
+    zero_mask = 0
+    multi_n = 0
+    damaged_n = 0  # full_len &gt; train_seq 的多轮样本（旧口径下必然拦腰受损）
+    fitted_n = 0  # 触发轮次适配
+    hard_trunc_n = 0  # 单回复超窗硬截
+    dangling_total = 0  # 残段总数（C2 后不计损，仅诊断）
+    complete_after_total = 0
+    for line in lines:
+        convs = json.loads(line)[&quot;conversations&quot;]
+        out = encode_sft_sample(TOK, PRE_IDS, SUF_IDS, convs, train_seq, remove_empty_think=False)
+        stats = out[&quot;stats&quot;]
+        conv_lens.append(float(stats[&quot;full_len&quot;]))
+        if len(convs) &gt; 2:
+            multi_n += 1
+            multi_lens.append(float(stats[&quot;full_len&quot;]))
+            if stats[&quot;full_len&quot;] &gt; train_seq:
+                damaged_n += 1
+                if stats[&quot;fitted&quot;]:
+                    fitted_n += 1
+                if stats[&quot;hard_truncated&quot;]:
+                    hard_trunc_n += 1
+                dangling_total += stats[&quot;dangling&quot;]
+                complete_after_total += stats[&quot;complete_after&quot;]
+                if stats[&quot;complete_before&quot;] &gt; 0:
+                    survival.append(stats[&quot;complete_after&quot;] / stats[&quot;complete_before&quot;])
+                if stats[&quot;zero_loss&quot;]:
+                    zero_mask += 1
+    kept_total_spans = complete_after_total + dangling_total
+    return {
+        &quot;conv_token_len&quot;: describe(conv_lens),
+        &quot;truncated_at_train_seq&quot;: frac_ge(conv_lens, train_seq),
+        &quot;multi_turn&quot;: {
+            &quot;share_of_sample&quot;: round(multi_n / max(len(lines), 1), 4),
+            &quot;token_len&quot;: describe(multi_lens) if multi_lens else {},
+            &quot;truncated_at_train_seq&quot;: frac_ge(multi_lens, train_seq) if multi_lens else 0,
+            &quot;damaged_over_seq&quot;: damaged_n,
+            &quot;turn_fitted_rate&quot;: round(fitted_n / max(damaged_n, 1), 4),
+            &quot;hard_truncated_rate&quot;: round(hard_trunc_n / max(damaged_n, 1), 4),
+            &quot;dangling_per_damaged&quot;: round(dangling_total / max(damaged_n, 1), 4),
+            # 结构保证主指标（§4.1）：留下的回复区间中完整区间的占比，目标 100%
+            # （残段唯一来源是「单条回复自身超窗」的硬截，这类样本由 C3 在训练期过滤）
+            &quot;assistant_span_intact_rate&quot;: round(complete_after_total / max(kept_total_spans, 1), 4),
+            # 旧口径（完整后/完整前）：轮次丢弃按设计减少分子（旧轮次回复被整轮舍弃），
+            # 与旧拦腰截断的「完整存活率」语义不同，不可直比
+            &quot;assistant_span_survival_rate&quot;: round(statistics.mean(survival), 4) if survival else None,
+            &quot;zero_loss_mask_rate&quot;: round(zero_mask / max(multi_n, 1), 4) if multi_n else 0,
+        },
+    }
+
+
+def _render_side(convs: list[dict]) -&gt; str:  # pragma: no cover
+    return TOK.apply_chat_template(convs, tokenize=False, add_generation_prompt=False)
+
+
+def profile_dpo_len(lines: list[bytes], train_seq: int) -&gt; dict[str, Any]:
+    chosen: list[float] = []
+    rejected: list[float] = []
+    pair_trunc = 0
+    for line in lines:
+        d = json.loads(line)
+        cl = len(TOK(_render_side(d[&quot;chosen&quot;]), add_special_tokens=False).input_ids)
+        rl = len(TOK(_render_side(d[&quot;rejected&quot;]), add_special_tokens=False).input_ids)
+        chosen.append(float(cl))
+        rejected.append(float(rl))
+        if cl &gt; train_seq or rl &gt; train_seq:
+            pair_trunc += 1
+    n = max(len(lines), 1)
+    return {
+        &quot;chosen_token_len&quot;: describe(chosen),
+        &quot;rejected_token_len&quot;: describe(rejected),
+        &quot;pair_truncated_at_train_seq&quot;: round(pair_trunc / n, 4),
+    }
+
+
+def main() -&gt; None:
+    parser = argparse.ArgumentParser(description=&quot;token 级长度画像（长上下文截断损毁测量）&quot;)
+    parser.add_argument(&quot;--name&quot;, required=True, help=&quot;注册表数据集名&quot;)
+    parser.add_argument(&quot;--sample&quot;, type=int, default=30000)
+    parser.add_argument(
+        &quot;--train-seq&quot;, type=int, default=None, help=&quot;该数据集训练时的截断长度（默认按 kind：380/768/1024）&quot;
+    )
+    parser.add_argument(&quot;--seed&quot;, type=int, default=SEED)
+    args = parser.parse_args()
+
+    from minimind_reborn.data.registry import file_path, resolve_dataset
+
+    init_tokenizer()
+    entry = resolve_dataset(args.name)
+    path = file_path(entry)
+    train_seq = args.train_seq or {&quot;pretrain&quot;: 380, &quot;sft&quot;: 768, &quot;dpo&quot;: 1024}.get(entry.kind, 1024)
+
+    if entry.kind == &quot;dpo&quot;:
+        lines = path.open(&quot;rb&quot;).readlines()  # dpo 仅 1.7 万行，全量普查
+    else:
+        lines = sample_lines(path, args.sample, args.seed)
+
+    if entry.kind == &quot;pretrain&quot;:
+        result: dict[str, Any] = profile_pretrain_len(lines, train_seq)
+    elif entry.kind == &quot;sft&quot;:
+        result = profile_sft_len(lines, train_seq)
+    else:
+        result = profile_dpo_len(lines, train_seq)
+
+    print(
+        json.dumps(
+            {&quot;dataset&quot;: args.name, &quot;train_seq&quot;: train_seq, &quot;sampled&quot;: len(lines), **result},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre></div>
 </main>
-<script src="../../assets/course.js?v=9"></script>
+<script src="../../assets/course.js?v=10"></script>
 </body>
 </html>

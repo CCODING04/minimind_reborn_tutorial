@@ -22,10 +22,10 @@ mkdirSync(SHOTS, { recursive: true });
 
 const pages = [
   "index.html",
-  ...["m01_get_started","m02_chat","m03_pipeline","m04_config","m05_layers","m06_kv_cache",
+  ...["m00_week0","m01_get_started","m02_chat","m03_pipeline","m04_config","m05_layers","m06_kv_cache",
      "m07_attention","m08_ffn_moe","m09_model","m10_tokenizer","m11_data_access","m12_datasets",
      "m13_trainer","m14_checkpoint","m15_ddp","m16_pretrain_sft","m17_dpo","m18_distill_lora",
-     "m19_rl","m20_inference","m21_eval","m22_graduation"].map(m => m + ".html"),
+     "m19_rl","m20_inference","m21_eval","m22_graduation","btrack","pytorch_guide"].map(m => m + ".html"),
 ];
 const cvPages = existsSync(resolve(ROOT, "codeview"))
   ? ["codeview/src/minimind_reborn/training/common/trainer.py.html",
@@ -143,7 +143,7 @@ async function interactions(browser) {
       dot: document.querySelector('.sidebar .mod.current')?.classList.contains("done"),
       store: JSON.parse(localStorage.getItem("mrt-progress-v1") || "[]"),
     }));
-    if (checks.btn.includes("已完成") && checks.top === "1/22" && checks.dot && checks.store.includes("m07"))
+    if (checks.btn.includes("已完成") && checks.top === "1/23" && checks.dot && checks.store.includes("m07"))
       ok("完成按钮：文字/顶栏/侧栏圆点/localStorage 四处联动");
     else bad("完成按钮联动", JSON.stringify(checks));
     await pg.reload({ waitUntil: "domcontentloaded" });
@@ -151,16 +151,16 @@ async function interactions(browser) {
       top: document.getElementById("topbar-progress").textContent,
       btn: document.getElementById("complete-btn").textContent,
     }));
-    if (after.top === "1/22" && after.btn.includes("已完成")) ok("完成状态刷新持久化"); else bad("持久化", JSON.stringify(after));
+    if (after.top === "1/23" && after.btn.includes("已完成")) ok("完成状态刷新持久化"); else bad("持久化", JSON.stringify(after));
     await pg.locator("#complete-btn").click();
     const back = await pg.evaluate(() => document.getElementById("topbar-progress").textContent);
-    if (back === "0/22") ok("再次点击撤销完成"); else bad("撤销", back);
+    if (back === "0/23") ok("再次点击撤销完成"); else bad("撤销", back);
     // 侧栏圆点点击不跳转（点当前篇内的 M08，保证可见）
     await pg.locator('.sidebar a.mod:has-text("M08")').first().locator(".done-dot").click({ force: true });
     await pg.waitForTimeout(300);
     if (pg.url().includes("m07_attention")) {
       const n = await pg.evaluate(() => document.getElementById("topbar-progress").textContent);
-      if (n === "1/22") ok("侧栏圆点切换完成且不触发跳转"); else bad("侧栏圆点", "计数 " + n);
+      if (n === "1/23") ok("侧栏圆点切换完成且不触发跳转"); else bad("侧栏圆点", "计数 " + n);
     } else bad("侧栏圆点", "发生了跳转 " + pg.url());
     // 篇折叠切换 + 刷新持久化（第 3 篇默认折叠：点击应展开；再点应折叠——断言"翻转"而非固定方向）
     const p3 = pg.locator(".sidebar .part").nth(2);
@@ -181,7 +181,7 @@ async function interactions(browser) {
     await pg.goto(BASE + "/index.html", { waitUntil: "domcontentloaded" });
     await pg.locator(".part-card .pc-mods li").first().locator(".done-dot").click();
     const n = await pg.evaluate(() => document.getElementById("topbar-progress").textContent);
-    if (n === "1/22") ok("index 网格圆点可点且联动顶栏"); else bad("index 圆点", n);
+    if (n === "1/23") ok("index 网格圆点可点且联动顶栏"); else bad("index 圆点", n);
     await ctx.close();
   }
   // E. 移动端抽屉（390px）：开/遮罩关/Esc 关/锁滚动
@@ -226,10 +226,12 @@ async function interactions(browser) {
   {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const pg = await ctx.newPage();
-    await pg.goto(BASE + "/m01_get_started.html", { waitUntil: "domcontentloaded" });
+    await pg.goto(BASE + "/m00_week0.html", { waitUntil: "domcontentloaded" });
     const first = await pg.locator(".pager .pg.disabled").count();
-    if (first >= 1) ok("m01 上一课为禁用占位"); else bad("m01 pager", "无 disabled 占位");
-    let hops = 0;
+    if (first >= 1) ok("m00 上一课为禁用占位"); else bad("m00 pager", "无 disabled 占位");
+    await pg.locator(".pager a.pg.next").click();
+    await pg.waitForLoadState("domcontentloaded");
+    let hops = 1;
     for (let i = 2; i <= 22; i++) {
       const next = pg.locator(".pager a.pg.next");
       if (!(await next.count())) { bad("pager 链", `第 ${i - 1} 课缺下一课链接`); break; }
@@ -238,7 +240,7 @@ async function interactions(browser) {
       hops++;
       if (!pg.url().includes(`m${String(i).padStart(2, "0")}`)) { bad("pager 链", `跳到了 ${pg.url()}`); break; }
     }
-    if (hops === 21) ok("pager 下一课链 m01→m22 全通（21 跳）");
+    if (hops === 22) ok("pager 下一课链 m00→m22 全通（22 跳）");
     const last = await pg.locator(".pager .pg.disabled").count();
     if (pg.url().includes("m22") && last >= 1) ok("m22 下一课为禁用占位（课程终点）");
     await ctx.close();

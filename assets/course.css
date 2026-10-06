@@ -200,8 +200,13 @@ a:hover{text-decoration:underline}
   .topbar{gap:10px;padding:0 12px}
   .topbar .brand span:not(.logo){font-size:13.5px}
   .topbar .progress-wrap .progress-bar{display:none}
-  .topbar .map-link{font-size:12.5px}
+  /* 640px 以下隐藏"课程地图"快捷入口：brand 本身可点回主页，避免顶栏挤出视口 */
+  .topbar .map-link{display:none}
   .hero h1{font-size:25px}
+}
+/* 极窄档（≤359px）：进度文字也退场——完成状态仍可从侧栏圆点/页底按钮观察 */
+@media(max-width:359px){
+  .topbar .progress-wrap{display:none}
 }
 
 .layout{
@@ -388,6 +393,8 @@ ul,ol{margin:0 0 14px;padding-left:26px}
 li{margin:4px 0}
 li>p{margin-bottom:6px}
 strong{font-weight:640}
+/* 长不可断 token（存档路径、URL 等）允许在任意字符处折行，防 320px 档正文撑破视口 */
+.content p,.content li,.content td,.content th,.content .co-title,.content .pit-note,.content summary,.content dt,.content dd{overflow-wrap:anywhere}
 hr{border:0;border-top:1px solid var(--border);margin:36px 0}
 :not(pre)>code{
   font-family:var(--mono);font-size:.86em;

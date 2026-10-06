@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>chat.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -14,116 +14,116 @@
   <span class="cv-meta">110 行 · 4KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/inference/chat.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;对话封装（llm-inference §1 内核与文本分层）：文本进、文本出，内核只认 token。&quot;&quot;&quot;
-
-from __future__ import annotations
-
-from typing import Any
-
-from minimind_reborn.configuration.schemas import GenerateConfig
-
-
-def render_chat(
-    tokenizer,
-    messages: list[dict[str, Any]],
-    *,
-    tools: list | None = None,
-    open_thinking: bool = False,
-    add_generation_prompt: bool = True,
-) -&gt; str:
-    &quot;&quot;&quot;消息列表 → chat template 文本。模板进 tokenizer_config.json（单一事实源）。&quot;&quot;&quot;
-    return tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=add_generation_prompt,
-        tools=tools,
-        open_thinking=open_thinking,
-    )
-
-
-def split_reasoning(text: str) -&gt; tuple[str | None, str]:
-    &quot;&quot;&quot;把 `&lt;think&gt;...&lt;/think&gt;` 前缀拆成 (reasoning_content, content)。无 think 标签时 (None, 原文)。&quot;&quot;&quot;
-    if &quot;&lt;think&gt;&quot; in text and &quot;&lt;/think&gt;&quot; in text:
-        reasoning = text.split(&quot;&lt;think&gt;&quot;, 1)[1].split(&quot;&lt;/think&gt;&quot;, 1)[0].strip()
-        content = text.split(&quot;&lt;/think&gt;&quot;, 1)[1].lstrip(&quot;\n&quot;)
-        return reasoning, content
-    if &quot;&lt;/think&gt;&quot; in text:
-        reasoning, content = text.split(&quot;&lt;/think&gt;&quot;, 1)
-        return reasoning.strip() or None, content.lstrip(&quot;\n&quot;)
-    return None, text
-
-
-class ChatSession:
-    &quot;&quot;&quot;带历史的会话：append 用户消息 → 模板渲染 → 生成 → 截断 eos → append 回复。
-
-    history_budget 给出时启用滑动窗口：渲染后的 prompt 超预算则从最旧一轮（user+assistant
-    成对）丢弃，只剩最后一对仍超时左截该轮用户内容（保尾部）——与训练侧轮次截断策略同构，
-    防止长会话把上下文推过训练窗口后质量塌缩（multiturn #3 的推理侧止血）。
-    &quot;&quot;&quot;
-
-    def __init__(
-        self,
-        tokenizer,
-        generate_fn,
-        gen: GenerateConfig,
-        *,
-        pretrain_mode: bool = False,
-        history_budget: int | None = None,
-    ):
-        self.tokenizer = tokenizer
-        self.generate_fn = generate_fn  # 注入生成函数（engine 或测试的桩）
-        self.gen = gen
-        self.pretrain_mode = pretrain_mode  # base 模型无对话能力，走 bos+text 直拼
-        self.history_budget = history_budget  # None = 不限（旧行为）
-        self.history: list[dict[str, str]] = []
-        self.dropped_turns = 0  # 滑窗丢弃的轮次计数（可观测）
-
-    def respond(self, user_text: str, *, open_thinking: bool = False) -&gt; str:
-        self.history.append({&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: user_text})
-        if self.pretrain_mode:
-            prompt = self.tokenizer.bos_token + user_text
-        else:
-            self._trim_history()
-            prompt = render_chat(self.tokenizer, self.history, open_thinking=open_thinking)
-        inputs = self.tokenizer(prompt, return_tensors=&quot;pt&quot;, truncation=True)
-        out = self.generate_fn(inputs[&quot;input_ids&quot;], inputs[&quot;attention_mask&quot;], self.gen)
-        prompt_len = inputs[&quot;input_ids&quot;].shape[1]
-        new_tokens = out[&quot;sequences&quot;][0, prompt_len:]
-        text = self._decode_truncated(new_tokens)
-        self.history.append({&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: text})
-        return text
-
-    def _prompt_tokens(self, prompt: str) -&gt; int:
-        return len(self.tokenizer(prompt).input_ids)
-
-    def _trim_history(self) -&gt; None:
-        &quot;&quot;&quot;历史超预算时成对丢最旧轮次（至少保留当前 user 消息）；仅剩当前消息仍超时左截其内容保尾部。&quot;&quot;&quot;
-        budget = self.history_budget
-        if budget is None:
-            return
-
-        def over(msgs: list[dict[str, str]]) -&gt; bool:
-            return self._prompt_tokens(render_chat(self.tokenizer, msgs)) &gt; budget
-
-        # history 形如 [user, assistant, ..., user(本轮)]，每次丢最旧的 (user, assistant) 对
-        while len(self.history) &gt; 1 and over(self.history):
-            self.history = self.history[2:]
-            self.dropped_turns += 1
-        # 只剩当前 user 消息仍超预算：左截内容保尾部（截字符近似，与训练侧保尾策略同构）
-        if len(self.history) == 1 and over(self.history):
-            text = self.history[0][&quot;content&quot;]
-            while len(text) &gt; 32 and over([{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: text}]):
-                text = text[max(1, len(text) // 5) :]
-            self.history[0][&quot;content&quot;] = text
-
-    def _decode_truncated(self, token_ids) -&gt; str:
-        &quot;&quot;&quot;停止三重之 3：解码后按 eos 截断尾部残留。&quot;&quot;&quot;
-        token_ids = token_ids.tolist()
-        for special in (self.tokenizer.eos_token_id,):
-            if special is not None and special in token_ids:
-                token_ids = token_ids[: token_ids.index(special)]
-        return self.tokenizer.decode(token_ids, skip_special_tokens=True)</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/inference/chat.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;对话封装（llm-inference §1 内核与文本分层）：文本进、文本出，内核只认 token。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+from typing import Any
+
+from minimind_reborn.configuration.schemas import GenerateConfig
+
+
+def render_chat(
+    tokenizer,
+    messages: list[dict[str, Any]],
+    *,
+    tools: list | None = None,
+    open_thinking: bool = False,
+    add_generation_prompt: bool = True,
+) -&gt; str:
+    &quot;&quot;&quot;消息列表 → chat template 文本。模板进 tokenizer_config.json（单一事实源）。&quot;&quot;&quot;
+    return tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=add_generation_prompt,
+        tools=tools,
+        open_thinking=open_thinking,
+    )
+
+
+def split_reasoning(text: str) -&gt; tuple[str | None, str]:
+    &quot;&quot;&quot;把 `&lt;think&gt;...&lt;/think&gt;` 前缀拆成 (reasoning_content, content)。无 think 标签时 (None, 原文)。&quot;&quot;&quot;
+    if &quot;&lt;think&gt;&quot; in text and &quot;&lt;/think&gt;&quot; in text:
+        reasoning = text.split(&quot;&lt;think&gt;&quot;, 1)[1].split(&quot;&lt;/think&gt;&quot;, 1)[0].strip()
+        content = text.split(&quot;&lt;/think&gt;&quot;, 1)[1].lstrip(&quot;\n&quot;)
+        return reasoning, content
+    if &quot;&lt;/think&gt;&quot; in text:
+        reasoning, content = text.split(&quot;&lt;/think&gt;&quot;, 1)
+        return reasoning.strip() or None, content.lstrip(&quot;\n&quot;)
+    return None, text
+
+
+class ChatSession:
+    &quot;&quot;&quot;带历史的会话：append 用户消息 → 模板渲染 → 生成 → 截断 eos → append 回复。
+
+    history_budget 给出时启用滑动窗口：渲染后的 prompt 超预算则从最旧一轮（user+assistant
+    成对）丢弃，只剩最后一对仍超时左截该轮用户内容（保尾部）——与训练侧轮次截断策略同构，
+    防止长会话把上下文推过训练窗口后质量塌缩（multiturn #3 的推理侧止血）。
+    &quot;&quot;&quot;
+
+    def __init__(
+        self,
+        tokenizer,
+        generate_fn,
+        gen: GenerateConfig,
+        *,
+        pretrain_mode: bool = False,
+        history_budget: int | None = None,
+    ):
+        self.tokenizer = tokenizer
+        self.generate_fn = generate_fn  # 注入生成函数（engine 或测试的桩）
+        self.gen = gen
+        self.pretrain_mode = pretrain_mode  # base 模型无对话能力，走 bos+text 直拼
+        self.history_budget = history_budget  # None = 不限（旧行为）
+        self.history: list[dict[str, str]] = []
+        self.dropped_turns = 0  # 滑窗丢弃的轮次计数（可观测）
+
+    def respond(self, user_text: str, *, open_thinking: bool = False) -&gt; str:
+        self.history.append({&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: user_text})
+        if self.pretrain_mode:
+            prompt = self.tokenizer.bos_token + user_text
+        else:
+            self._trim_history()
+            prompt = render_chat(self.tokenizer, self.history, open_thinking=open_thinking)
+        inputs = self.tokenizer(prompt, return_tensors=&quot;pt&quot;, truncation=True)
+        out = self.generate_fn(inputs[&quot;input_ids&quot;], self.gen, attention_mask=inputs[&quot;attention_mask&quot;])
+        prompt_len = inputs[&quot;input_ids&quot;].shape[1]
+        new_tokens = out[&quot;sequences&quot;][0, prompt_len:]
+        text = self._decode_truncated(new_tokens)
+        self.history.append({&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: text})
+        return text
+
+    def _prompt_tokens(self, prompt: str) -&gt; int:
+        return len(self.tokenizer(prompt).input_ids)
+
+    def _trim_history(self) -&gt; None:
+        &quot;&quot;&quot;历史超预算时成对丢最旧轮次（至少保留当前 user 消息）；仅剩当前消息仍超时左截其内容保尾部。&quot;&quot;&quot;
+        budget = self.history_budget
+        if budget is None:
+            return
+
+        def over(msgs: list[dict[str, str]]) -&gt; bool:
+            return self._prompt_tokens(render_chat(self.tokenizer, msgs)) &gt; budget
+
+        # history 形如 [user, assistant, ..., user(本轮)]，每次丢最旧的 (user, assistant) 对
+        while len(self.history) &gt; 1 and over(self.history):
+            self.history = self.history[2:]
+            self.dropped_turns += 1
+        # 只剩当前 user 消息仍超预算：左截内容保尾部（截字符近似，与训练侧保尾策略同构）
+        if len(self.history) == 1 and over(self.history):
+            text = self.history[0][&quot;content&quot;]
+            while len(text) &gt; 32 and over([{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: text}]):
+                text = text[max(1, len(text) // 5) :]
+            self.history[0][&quot;content&quot;] = text
+
+    def _decode_truncated(self, token_ids) -&gt; str:
+        &quot;&quot;&quot;停止三重之 3：解码后按 eos 截断尾部残留。&quot;&quot;&quot;
+        token_ids = token_ids.tolist()
+        for special in (self.tokenizer.eos_token_id,):
+            if special is not None and special in token_ids:
+                token_ids = token_ids[: token_ids.index(special)]
+        return self.tokenizer.decode(token_ids, skip_special_tokens=True)</code></pre></div>
 </main>
-<script src="../../../../assets/course.js?v=9"></script>
+<script src="../../../../assets/course.js?v=10"></script>
 </body>
 </html>

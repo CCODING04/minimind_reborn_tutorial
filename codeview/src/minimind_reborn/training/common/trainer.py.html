@@ -5,477 +5,477 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>trainer.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../../../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
   <a class="cv-back" href="../../../../../index.html">← 课程地图</a>
   <span class="cv-crumb">Reproduce/minimind_reborn/src/minimind_reborn/training/common/trainer.py</span>
-  <span class="cv-meta">462 行 · 21KB · minimind_reborn</span>
+  <span class="cv-meta">462 行 · 20KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/common/trainer.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;Trainer 基件（training §7 生命周期钩子 + §1-§6 全部不变量的落点）。
-
-train = before → try: epoch 循环 → finally: after。
-范式子包只提供 compute_loss(batch, model) -&gt; (loss, log_metrics) 与数据组装。
-梯度/AMP/裁剪/续训/评估/保存的顺序与不变量固定在此处，任何范式不得绕过。
-&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import time
-from collections.abc import Callable
-from contextlib import nullcontext
-from pathlib import Path
-from typing import Any
-
-import torch
-from torch.nn.parallel import DistributedDataParallel
-from torch.utils.data import DataLoader, DistributedSampler, Sampler
-
-from minimind_reborn import env_fingerprint
-from minimind_reborn.configuration.schemas import RunConfig
-from minimind_reborn.loggers import get_logger
-from minimind_reborn.metrics import MetricLogger, build_backends
-from minimind_reborn.models.weights import resolve_weight_path, save_inference_weights
-from minimind_reborn.training.common.amp import autocast_context, build_scaler, resolve_dtype
-from minimind_reborn.training.common.checkpoint import checkpoint_path, load_checkpoint, save_checkpoint
-from minimind_reborn.training.common.lr import get_lr
-from minimind_reborn.training.common.optim import configure_optimizers
-from minimind_reborn.training.common.prefetch import CUDAPrefetcher
-from minimind_reborn.utils import dist
-from minimind_reborn.utils.io import atomic_write_json
-
-logger = get_logger(&quot;trainer&quot;)
-
-LossFn = Callable[[dict, torch.nn.Module], tuple[torch.Tensor, dict[str, float]]]
-SaveWeightsFn = Callable[[torch.nn.Module, Path], None]
-
-
-class SkipBatchSampler(Sampler):
-    &quot;&quot;&quot;跳过前 skip_batches 个 batch（断点在 epoch 中间续训时对齐数据顺序）。
-
-    官方同款语义：外层 sampler 的产出顺序不变，只是前 k 个 batch 不产出——
-    因此 worker 也不会加载被跳过的样本。
-    &quot;&quot;&quot;
-
-    def __init__(self, sampler: DistributedSampler | list[int], batch_size: int, skip_batches: int = 0):
-        self.sampler = sampler
-        self.batch_size = batch_size
-        self.skip_batches = skip_batches
-
-    def __iter__(self):
-        batch: list[int] = []
-        skipped = 0
-        for idx in self.sampler:
-            batch.append(idx)
-            if len(batch) == self.batch_size:
-                if skipped &lt; self.skip_batches:
-                    skipped += 1
-                    batch = []
-                    continue
-                yield batch
-                batch = []
-        if len(batch) &gt; 0 and skipped &gt;= self.skip_batches:
-            yield batch
-
-    def __len__(self) -&gt; int:
-        total = (len(self.sampler) + self.batch_size - 1) // self.batch_size
-        return max(0, total - self.skip_batches)
-
-
-def estimate_eta_minutes(elapsed_total_s: float, steps_done: int, steps_left: int) -&gt; float:
-    &quot;&quot;&quot;ETA 纯函数：epoch 开局至今总耗时 / 已完成步数 × 剩余步数（分钟）。
-
-    此前误用&quot;距上次日志的窗口耗时&quot;做分子——窗口只有几秒而步数是全量的，
-    商恒为 0.0（真实缺陷，2026-09-24 修复）。
-    &quot;&quot;&quot;
-    if steps_done &lt;= 0 or steps_left &lt;= 0:
-        return 0.0
-    return elapsed_total_s / steps_done * steps_left / 60
-
-
-def per_rank_full_iters(n_samples: int, batch_size: int, world_size: int) -&gt; int:
-    &quot;&quot;&quot;本 rank 每 epoch 的完整 micro 步数（LR 调度 / 全局步数记账的分母）。
-
-    DDP 下 DistributedSampler 给每 rank 只分 1/world 样本，本 rank 每 epoch 实际迭代
-    约为全量口径的 1/world——分母必须按本 rank 口径折算。此前按全量计算，双卡时余弦
-    分母 ×2：2 epochs 跑完 LR 只退到 75% 进度处（≈lr×0.23），到不了 lr×min_ratio
-    地板（2026-09-29 perf_analysis 案 B；单卡 world=1 时两种口径恰好一致，mini 时代
-    因此未暴露）。双重 ceil 的 ≤1 步偏差与 DistributedSampler 的 padding 语义对齐。
-    &quot;&quot;&quot;
-    full = (n_samples + batch_size - 1) // batch_size
-    if world_size &lt;= 1:
-        return full
-    return (full + world_size - 1) // world_size
-
-
-def _to_device(batch: dict, device: str) -&gt; dict:
-    return {k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-
-
-class Trainer:
-    def __init__(
-        self,
-        cfg: RunConfig,
-        model: torch.nn.Module,
-        tokenizer,
-        train_ds,
-        eval_ds,
-        *,
-        compute_loss: LossFn,
-        save_weight: str,
-        device: str | None = None,
-        local_rank: int = 0,
-        collate_fn=None,
-        save_weights_fn: SaveWeightsFn | None = None,
-        optimizer_params: list | None = None,
-    ):
-        self.cfg = cfg
-        self.tokenizer = tokenizer
-        self.train_ds = train_ds
-        self.eval_ds = eval_ds
-        self.compute_loss = compute_loss
-        self.save_weight = save_weight
-        self.local_rank = local_rank
-        self.collate_fn = collate_fn
-        self.save_weights_fn = save_weights_fn or (lambda m, p: save_inference_weights(m, p))
-        self.optimizer_params = optimizer_params
-
-        t = cfg.train
-        self.device = device or (&quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;)
-        if dist.is_initialized():
-            self.device = f&quot;cuda:{local_rank}&quot;
-        self.dtype = resolve_dtype(t.dtype)
-        self.autocast_ctx = autocast_context(self.dtype, self.device)
-
-        self.run_dir = Path(cfg.run_dir)
-        self.out_dir = Path(cfg.output_dir)
-        self.ckpt_dir = Path(cfg.checkpoint_dir)
-        for d in (self.run_dir, self.out_dir, self.ckpt_dir):
-            d.mkdir(parents=True, exist_ok=True)
-
-        # ---- 可追溯四件套：config 快照 + env 指纹（train.log/metrics.jsonl 由 logging/metrics 层写） ----
-        if dist.is_main_process():
-            from minimind_reborn.configuration import snapshot
-
-            atomic_write_json(snapshot(cfg), self.run_dir / &quot;config.json&quot;)
-            env_fingerprint.dump(self.run_dir, seed=t.seed)
-
-        self.metrics = MetricLogger(
-            build_backends(cfg.metrics.backends, self.run_dir, project=cfg.metrics.project, run_name=cfg.recipe_name)
-        )
-
-        self.raw_model: torch.nn.Module = model.to(self.device)
-        self.scaler = build_scaler(self.dtype)
-        self.optimizer = configure_optimizers(
-            self.raw_model,
-            t.learning_rate,
-            t.weight_decay,
-            params=self.optimizer_params if self.optimizer_params is not None else None,
-        )
-        self.best_val_loss: float | None = None
-        self.start_epoch, self.start_step = 0, 0
-        self.optimizer_steps = 0
-        # MFU 估算基数（training §7：硬件效率入日志）。RTX 4090 bf16 dense 峰值 ~165 TFLOPS；
-        # 换卡型请同步修改。混合卡（4090+4090D）取慢卡口径保守估计。
-        self.n_params = sum(p.numel() for p in self.raw_model.parameters() if p.requires_grad)
-        self.peak_tflops_per_gpu = 165.0
-
-        # ---- 初始化语义三选一（resume &gt; finetune &gt; init_from，互斥由使用场景保证） ----
-        self._load_initial_weights()
-        # ---- compile 与 DDP 包装（优化器建在裸模型上，之后包装） ----
-        if t.compile:
-            self.raw_model = torch.compile(self.raw_model)  # type: ignore[assignment]  # type: ignore[assignment]
-            logger.info(&quot;torch.compile 已启用&quot;)
-        if dist.is_initialized():
-            # 非持久 buffer（RoPE 表）各 rank 由同一 config 确定性算出，广播纯属浪费
-            self.model: torch.nn.Module = DistributedDataParallel(
-                self.raw_model, device_ids=[local_rank], broadcast_buffers=False
-            )
-        else:
-            self.model = self.raw_model
-
-    # ============ 生命周期 ============
-    def run(self) -&gt; None:
-        cfg = self.cfg
-        total = sum(p.numel() for p in self.raw_model.parameters() if p.requires_grad) / 1e6
-        logger.info(
-            &quot;训练启动 stage=%s recipe=%s | %.2fM 可训练参数 | dtype=%s device=%s world=%d | 数据=%s&quot;,
-            cfg.stage,
-            cfg.recipe_name,
-            total,
-            cfg.train.dtype,
-            self.device,
-            dist.get_world_size(),
-            cfg.data.dataset,
-        )
-        try:
-            for epoch in range(self.start_epoch, cfg.train.epochs):
-                last_step, exhausted = self._train_epoch(epoch)
-                val = self.evaluate()
-                if val is not None:
-                    improved = self.best_val_loss is None or val &lt; self.best_val_loss
-                    if improved:
-                        self.best_val_loss = val
-                        self._save(epoch, last_step, is_best=True)
-                self._save(epoch, last_step)
-                if exhausted:
-                    break
-        finally:
-            self.metrics.close()
-            logger.info(&quot;训练结束：best_val_loss=%s optimizer_steps=%d&quot;, self.best_val_loss, self.optimizer_steps)
-
-    def _train_epoch(self, epoch: int) -&gt; tuple[int, bool]:
-        cfg = self.cfg
-        t = cfg.train
-        loader, iters = self._build_loader(epoch)
-        # CUDA 侧流预取（training §8）：H2D 拷贝与计算重叠；CPU 设备自动旁路
-        data_iter: DataLoader[Any] | CUDAPrefetcher = loader
-        if self.device.startswith(&quot;cuda&quot;):
-            from minimind_reborn.training.common.prefetch import CUDAPrefetcher
-
-            data_iter = CUDAPrefetcher(loader, self.device)
-        start_step = self.start_step if epoch == self.start_epoch else 0
-        if start_step &gt; 0:
-            logger.info(&quot;Epoch %d：跳过前 %d 个 micro step 续训&quot;, epoch + 1, start_step)
-        # 完整 epoch 步数（不扣 skip）：全局步数记账/LR 调度的分母必须用它。
-        # iters 是&quot;本次实际迭代数&quot;（续训时 = 完整步数 - start_step），只用于循环结束判定。
-        full_iters = per_rank_full_iters(len(self.train_ds), t.batch_size, dist.get_world_size())
-
-        self.model.train()
-        window_start = time.time()  # 吞吐窗口（每次日志重置）
-        epoch_start = time.time()  # ETA 基准（epoch 开局，不重置）——此前误用窗口耗时导致 ETA 恒 0
-        window_tokens = 0
-        window_steps = 0
-        running_loss = 0.0
-        last_grad_norm: torch.Tensor | float = 0.0
-
-        for offset, batch in enumerate(data_iter, start=start_step):
-            global_micro = epoch * full_iters + offset
-            total_micro = (
-                min(cfg.train.epochs * full_iters, cfg.train.max_steps)
-                if cfg.train.max_steps &gt; 0
-                else cfg.train.epochs * full_iters
-            )
-            lr = get_lr(
-                global_micro, total_micro, t.learning_rate, warmup_steps=t.warmup_steps, min_ratio=t.lr_min_ratio
-            )
-            for group in self.optimizer.param_groups:
-                group[&quot;lr&quot;] = lr
-
-            batch = _to_device(batch, self.device)
-            is_last = offset == start_step + iters - 1  # 续训时按实际迭代终点判定（而非 full_iters-1）
-            is_sync_step = (offset + 1) % t.gradient_accumulation_steps == 0 or is_last
-            # DDP 梯度累积：仅最后一个 micro step 同步梯度（training §3），其余步 no_sync
-            # 省掉 (accum-1)/accum 的 allreduce——64M×2B×8 步在 PCIe PHB 上实测拖累 scaling 至 67.6%
-            no_sync = getattr(self.model, &quot;no_sync&quot;, None)  # 仅 DDP 包装有此方法
-            sync_ctx = nullcontext() if (no_sync is None or is_sync_step) else no_sync()
-
-            with sync_ctx:  # 注意：sync_ctx 已是上下文实例，不能再加调用括号
-                with self.autocast_ctx:
-                    loss, log_metrics = self.compute_loss(batch, self.model)
-                scaled = loss / t.gradient_accumulation_steps
-                self.scaler.scale(scaled).backward()
-
-            # 优化步门：末个 micro step 或累积满 → unscale_ 后裁剪（阈值语义才正确）→ step
-            if is_sync_step:
-                self.scaler.unscale_(self.optimizer)
-                params = [p for p in self.model.parameters() if p.requires_grad]
-                last_grad_norm = torch.nn.utils.clip_grad_norm_(params, t.grad_clip)
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-                self.optimizer.zero_grad(set_to_none=True)  # 省内存：引用置 None 不留僵尸梯度
-                self.optimizer_steps += 1
-
-            running_loss += loss.item()
-            window_steps += 1
-            # 范式 batch 结构不同（pretrain 有 input_ids，DPO 是 x/y/mask）——取首个 tensor 的 batch 维
-            first_tensor = next(v for v in batch.values() if isinstance(v, torch.Tensor))
-            window_tokens += int(first_tensor.shape[0]) * dist.get_world_size() * cfg.data.max_seq_len
-
-            if (offset + 1) % t.log_interval == 0 or is_last:
-                window_elapsed = time.time() - window_start
-                tokens_per_s = window_tokens / max(window_elapsed, 1e-6)
-                train_loss = running_loss / max(window_steps, 1)
-                running_loss = 0.0
-                window_start = time.time()
-                window_tokens = 0
-                window_steps = 0
-                eta_min = estimate_eta_minutes(time.time() - epoch_start, offset + 1 - start_step, iters - offset - 1)
-                # MFU 估算（training §7）：训练 FLOPs ≈ 6·N·tokens/s，除以各卡峰值算力×卡数
-                mfu = 6.0 * self.n_params * tokens_per_s / (dist.get_world_size() * self.peak_tflops_per_gpu * 1e12)
-                stats = {
-                    **log_metrics,
-                    &quot;train/lr&quot;: lr,
-                    &quot;train/grad_norm&quot;: float(last_grad_norm),
-                    &quot;train/tokens_per_s&quot;: tokens_per_s,
-                    &quot;train/mfu_est&quot;: round(mfu, 4),
-                }
-                # train/val 统一用 optimizer step（模型当前步长）；此前 train 用 micro step、
-                # val 用另一计数，两把尺子导致曲线 x 轴错位
-                self.metrics.log(stats, self.optimizer_steps)
-                logger.info(
-                    &quot;Epoch[%d/%d](%d/%d) loss=%.4f lr=%.2e grad_norm=%.2f tok/s=%.0f mfu=%.1f%% eta=%.1fmin&quot;,
-                    epoch + 1,
-                    t.epochs,
-                    offset + 1,
-                    full_iters,
-                    train_loss,
-                    lr,
-                    float(last_grad_norm),
-                    tokens_per_s,
-                    mfu * 100,
-                    eta_min,
-                )
-
-            if t.eval_interval_steps &gt; 0 and (offset + 1) % t.eval_interval_steps == 0:
-                val = self.evaluate()
-                if val is not None and (self.best_val_loss is None or val &lt; self.best_val_loss):
-                    self.best_val_loss = val
-                    self._save(epoch, offset + 1, is_best=True)
-
-            if (offset + 1) % t.save_interval_steps == 0:
-                self._save(epoch, offset + 1)
-
-            if 0 &lt; t.max_steps &lt;= global_micro + 1:
-                logger.info(&quot;达到 max_steps=%d 截断（冒烟/调试预算）&quot;, t.max_steps)
-                self._save(epoch, offset + 1)
-                return offset + 1, True
-        return iters, False
-
-    # ============ 评估（training §7：模板成对出现） ============
-    @torch.no_grad()
-    def evaluate(self) -&gt; float | None:
-        if self.eval_ds is None or len(self.eval_ds) == 0:
-            return None
-        loader = DataLoader(
-            self.eval_ds,
-            batch_size=self.cfg.train.batch_size,
-            shuffle=False,
-            collate_fn=self.collate_fn,
-            **_loader_extras(self.cfg.data.num_workers),
-        )
-        self.model.eval()
-        losses: list[float] = []
-        for i, batch in enumerate(loader):
-            if i &gt;= self.cfg.data.eval_iters:
-                break
-            batch = _to_device(batch, self.device)
-            with self.autocast_ctx:
-                loss, _ = self.compute_loss(batch, self.model)
-            losses.append(loss.item())
-        self.model.train()  # 成对切回，训练态不被评估污染
-        # 全 ignore（如 SFT 尾段全是 pad）时 cross_entropy 产生 NaN——过滤而非污染曲线
-        finite = [v for v in losses if torch.isfinite(torch.tensor(v))]
-        if not finite:
-            logger.warning(&quot;评估 batch 全部为非有限 loss（验证段全是 ignore token？），本次评估跳过&quot;)
-            return None
-        mean = sum(finite) / len(finite)
-        mean = dist.all_reduce_mean(mean, device=self.device)  # 多卡指标聚合，防各卡统计漂移
-        self.metrics.log({&quot;val/loss&quot;: mean}, self.optimizer_steps)
-        logger.info(&quot;评估：val/loss=%.4f（固定 %d batch）&quot;, mean, len(finite))
-        return mean
-
-    # ============ 保存（rank0 独占 + best 另存 + 原子写） ============
-    def _save(self, epoch: int, step: int, is_best: bool = False) -&gt; None:
-        if not dist.is_main_process():
-            return
-        from minimind_reborn.configuration import snapshot
-
-        weight_path = self._weight_path()
-        self.save_weights_fn(self.model, weight_path)
-        if is_best:
-            self.save_weights_fn(self.model, self._weight_path(suffix=&quot;_best&quot;))
-        save_checkpoint(
-            checkpoint_path(self.ckpt_dir, self.save_weight, self.cfg.model.hidden_size, self.cfg.model.use_moe),
-            model=self.model,
-            optimizer=self.optimizer,
-            scaler=self.scaler,
-            epoch=epoch,
-            step=step,
-            config_snapshot=snapshot(self.cfg),
-            best_val_loss=self.best_val_loss,
-        )
-        logger.info(
-            &quot;已保存：%s%s（epoch=%d step=%d best_val=%s）&quot;,
-            weight_path.name,
-            &quot; + best&quot; if is_best else &quot;&quot;,
-            epoch + 1,
-            step,
-            self.best_val_loss,
-        )
-
-    def _weight_path(self, suffix: str = &quot;&quot;) -&gt; Path:
-        cfg = self.cfg
-        moe = &quot;_moe&quot; if cfg.model.use_moe else &quot;&quot;
-        return self.out_dir / f&quot;{self.save_weight}_{cfg.model.hidden_size}{moe}{suffix}.pth&quot;
-
-    # ============ 数据装载 ============
-    def _build_loader(self, epoch: int) -&gt; tuple[DataLoader, int]:
-        cfg = self.cfg
-        sampler: DistributedSampler | None
-        if dist.is_initialized():
-            sampler = DistributedSampler(self.train_ds, shuffle=True)
-            sampler.set_epoch(epoch)
-            inner: DistributedSampler | list[int] = sampler
-        else:
-            g = torch.Generator()
-            g.manual_seed(cfg.train.seed + epoch)  # 采样器显式携带种子（training §1）
-            inner = torch.randperm(len(self.train_ds), generator=g).tolist()
-        batch_sampler = SkipBatchSampler(
-            inner, cfg.train.batch_size, self.start_step if epoch == self.start_epoch else 0
-        )
-        loader = DataLoader(
-            self.train_ds,
-            batch_sampler=batch_sampler,
-            collate_fn=self.collate_fn,
-            **_loader_extras(cfg.data.num_workers),
-        )
-        return loader, len(loader)
-
-    # ============ 初始权重 ============
-    def _load_initial_weights(self) -&gt; None:
-        cfg = self.cfg
-        t = cfg.train
-        out_root = cfg.output_dir
-        if t.finetune_from:
-            path = resolve_weight_path(t.finetune_from, out_root, cfg.model.hidden_size, cfg.model.use_moe)
-            from minimind_reborn.models.weights import load_finetune_weights
-
-            load_finetune_weights(self.raw_model, path)
-            logger.info(&quot;微调加载（非严格，缺失 key 已逐条 warning）：%s&quot;, path)
-        if t.init_from:
-            path = resolve_weight_path(t.init_from, out_root, cfg.model.hidden_size, cfg.model.use_moe)
-            from minimind_reborn.models.weights import load_inference_weights
-
-            load_inference_weights(self.raw_model, path, strict=True)
-            logger.info(&quot;严格加载起点权重：%s&quot;, path)
-        # 铁律 8：续训做成默认行为——checkpoint 在场即恢复
-        ckpt = checkpoint_path(self.ckpt_dir, self.save_weight, cfg.model.hidden_size, cfg.model.use_moe)
-        if t.resume and ckpt.exists():
-            data = load_checkpoint(ckpt, world_size=dist.get_world_size())
-            self.raw_model.load_state_dict(data[&quot;model&quot;], strict=True)
-            self.optimizer.load_state_dict(data[&quot;optimizer&quot;])
-            self.scaler.load_state_dict(data[&quot;scaler&quot;])
-            self.start_epoch = data[&quot;epoch&quot;]
-            self.start_step = data.get(&quot;step&quot;, 0)
-            self.best_val_loss = data.get(&quot;best_val_loss&quot;)
-            logger.info(
-                &quot;续训恢复清单：epoch=%d step=%d best_val=%s optimizer=%s scaler=%s（恢复清单让加载错误第一步现形）&quot;,
-                self.start_epoch,
-                self.start_step,
-                self.best_val_loss,
-                list(data[&quot;optimizer&quot;].keys())[:3],
-                &quot;ok&quot;,
-            )
-
-
-def _loader_extras(num_workers: int) -&gt; dict:
-    from minimind_reborn.utils.seed import loader_kwargs
-
-    return loader_kwargs(num_workers)</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/common/trainer.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;Trainer 基件（training §7 生命周期钩子 + §1-§6 全部不变量的落点）。
+
+train = before → try: epoch 循环 → finally: after。
+范式子包只提供 compute_loss(batch, model) -&gt; (loss, log_metrics) 与数据组装。
+梯度/AMP/裁剪/续训/评估/保存的顺序与不变量固定在此处，任何范式不得绕过。
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable
+from contextlib import nullcontext
+from pathlib import Path
+from typing import Any
+
+import torch
+from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data import DataLoader, DistributedSampler, Sampler
+
+from minimind_reborn import env_fingerprint
+from minimind_reborn.configuration.schemas import RunConfig
+from minimind_reborn.loggers import get_logger
+from minimind_reborn.metrics import MetricLogger, build_backends
+from minimind_reborn.models.weights import resolve_weight_path, save_inference_weights
+from minimind_reborn.training.common.amp import autocast_context, build_scaler, resolve_dtype
+from minimind_reborn.training.common.checkpoint import checkpoint_path, load_checkpoint, save_checkpoint
+from minimind_reborn.training.common.lr import get_lr
+from minimind_reborn.training.common.optim import configure_optimizers
+from minimind_reborn.training.common.prefetch import CUDAPrefetcher
+from minimind_reborn.utils import dist
+from minimind_reborn.utils.io import atomic_write_json
+
+logger = get_logger(&quot;trainer&quot;)
+
+LossFn = Callable[[dict, torch.nn.Module], tuple[torch.Tensor, dict[str, float]]]
+SaveWeightsFn = Callable[[torch.nn.Module, Path], None]
+
+
+class SkipBatchSampler(Sampler):
+    &quot;&quot;&quot;跳过前 skip_batches 个 batch（断点在 epoch 中间续训时对齐数据顺序）。
+
+    官方同款语义：外层 sampler 的产出顺序不变，只是前 k 个 batch 不产出——
+    因此 worker 也不会加载被跳过的样本。
+    &quot;&quot;&quot;
+
+    def __init__(self, sampler: DistributedSampler | list[int], batch_size: int, skip_batches: int = 0):
+        self.sampler = sampler
+        self.batch_size = batch_size
+        self.skip_batches = skip_batches
+
+    def __iter__(self):
+        batch: list[int] = []
+        skipped = 0
+        for idx in self.sampler:
+            batch.append(idx)
+            if len(batch) == self.batch_size:
+                if skipped &lt; self.skip_batches:
+                    skipped += 1
+                    batch = []
+                    continue
+                yield batch
+                batch = []
+        if len(batch) &gt; 0 and skipped &gt;= self.skip_batches:
+            yield batch
+
+    def __len__(self) -&gt; int:
+        total = (len(self.sampler) + self.batch_size - 1) // self.batch_size
+        return max(0, total - self.skip_batches)
+
+
+def estimate_eta_minutes(elapsed_total_s: float, steps_done: int, steps_left: int) -&gt; float:
+    &quot;&quot;&quot;ETA 纯函数：epoch 开局至今总耗时 / 已完成步数 × 剩余步数（分钟）。
+
+    此前误用&quot;距上次日志的窗口耗时&quot;做分子——窗口只有几秒而步数是全量的，
+    商恒为 0.0（真实缺陷，2026-09-24 修复）。
+    &quot;&quot;&quot;
+    if steps_done &lt;= 0 or steps_left &lt;= 0:
+        return 0.0
+    return elapsed_total_s / steps_done * steps_left / 60
+
+
+def per_rank_full_iters(n_samples: int, batch_size: int, world_size: int) -&gt; int:
+    &quot;&quot;&quot;本 rank 每 epoch 的完整 micro 步数（LR 调度 / 全局步数记账的分母）。
+
+    DDP 下 DistributedSampler 给每 rank 只分 1/world 样本，本 rank 每 epoch 实际迭代
+    约为全量口径的 1/world——分母必须按本 rank 口径折算。此前按全量计算，双卡时余弦
+    分母 ×2：2 epochs 跑完 LR 只退到 75% 进度处（≈lr×0.23），到不了 lr×min_ratio
+    地板（2026-09-29 perf_analysis 案 B；单卡 world=1 时两种口径恰好一致，mini 时代
+    因此未暴露）。双重 ceil 的 ≤1 步偏差与 DistributedSampler 的 padding 语义对齐。
+    &quot;&quot;&quot;
+    full = (n_samples + batch_size - 1) // batch_size
+    if world_size &lt;= 1:
+        return full
+    return (full + world_size - 1) // world_size
+
+
+def _to_device(batch: dict, device: str) -&gt; dict:
+    return {k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+
+
+class Trainer:
+    def __init__(
+        self,
+        cfg: RunConfig,
+        model: torch.nn.Module,
+        tokenizer,
+        train_ds,
+        eval_ds,
+        *,
+        compute_loss: LossFn,
+        save_weight: str,
+        device: str | None = None,
+        local_rank: int = 0,
+        collate_fn=None,
+        save_weights_fn: SaveWeightsFn | None = None,
+        optimizer_params: list | None = None,
+    ):
+        self.cfg = cfg
+        self.tokenizer = tokenizer
+        self.train_ds = train_ds
+        self.eval_ds = eval_ds
+        self.compute_loss = compute_loss
+        self.save_weight = save_weight
+        self.local_rank = local_rank
+        self.collate_fn = collate_fn
+        self.save_weights_fn = save_weights_fn or (lambda m, p: save_inference_weights(m, p))
+        self.optimizer_params = optimizer_params
+
+        t = cfg.train
+        self.device = device or (&quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;)
+        if dist.is_initialized():
+            self.device = f&quot;cuda:{local_rank}&quot;
+        self.dtype = resolve_dtype(t.dtype)
+        self.autocast_ctx = autocast_context(self.dtype, self.device)
+
+        self.run_dir = Path(cfg.run_dir)
+        self.out_dir = Path(cfg.output_dir)
+        self.ckpt_dir = Path(cfg.checkpoint_dir)
+        for d in (self.run_dir, self.out_dir, self.ckpt_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
+        # ---- 可追溯四件套：config 快照 + env 指纹（train.log/metrics.jsonl 由 logging/metrics 层写） ----
+        if dist.is_main_process():
+            from minimind_reborn.configuration import snapshot
+
+            atomic_write_json(snapshot(cfg), self.run_dir / &quot;config.json&quot;)
+            env_fingerprint.dump(self.run_dir, seed=t.seed)
+
+        self.metrics = MetricLogger(
+            build_backends(cfg.metrics.backends, self.run_dir, project=cfg.metrics.project, run_name=cfg.recipe_name)
+        )
+
+        self.raw_model: torch.nn.Module = model.to(self.device)
+        self.scaler = build_scaler(self.dtype)
+        self.optimizer = configure_optimizers(
+            self.raw_model,
+            t.learning_rate,
+            t.weight_decay,
+            params=self.optimizer_params if self.optimizer_params is not None else None,
+        )
+        self.best_val_loss: float | None = None
+        self.start_epoch, self.start_step = 0, 0
+        self.optimizer_steps = 0
+        # MFU 估算基数（training §7：硬件效率入日志）。RTX 4090 bf16 dense 峰值 ~165 TFLOPS；
+        # 换卡型请同步修改。混合卡（4090+4090D）取慢卡口径保守估计。
+        self.n_params = sum(p.numel() for p in self.raw_model.parameters() if p.requires_grad)
+        self.peak_tflops_per_gpu = 165.0
+
+        # ---- 初始化语义三选一（resume &gt; finetune &gt; init_from，互斥由使用场景保证） ----
+        self._load_initial_weights()
+        # ---- compile 与 DDP 包装（优化器建在裸模型上，之后包装） ----
+        if t.compile:
+            self.raw_model = torch.compile(self.raw_model)  # type: ignore[assignment]  # type: ignore[assignment]
+            logger.info(&quot;torch.compile 已启用&quot;)
+        if dist.is_initialized():
+            # 非持久 buffer（RoPE 表）各 rank 由同一 config 确定性算出，广播纯属浪费
+            self.model: torch.nn.Module = DistributedDataParallel(
+                self.raw_model, device_ids=[local_rank], broadcast_buffers=False
+            )
+        else:
+            self.model = self.raw_model
+
+    # ============ 生命周期 ============
+    def run(self) -&gt; None:
+        cfg = self.cfg
+        total = sum(p.numel() for p in self.raw_model.parameters() if p.requires_grad) / 1e6
+        logger.info(
+            &quot;训练启动 stage=%s recipe=%s | %.2fM 可训练参数 | dtype=%s device=%s world=%d | 数据=%s&quot;,
+            cfg.stage,
+            cfg.recipe_name,
+            total,
+            cfg.train.dtype,
+            self.device,
+            dist.get_world_size(),
+            cfg.data.dataset,
+        )
+        try:
+            for epoch in range(self.start_epoch, cfg.train.epochs):
+                last_step, exhausted = self._train_epoch(epoch)
+                val = self.evaluate()
+                if val is not None:
+                    improved = self.best_val_loss is None or val &lt; self.best_val_loss
+                    if improved:
+                        self.best_val_loss = val
+                        self._save(epoch, last_step, is_best=True)
+                self._save(epoch, last_step)
+                if exhausted:
+                    break
+        finally:
+            self.metrics.close()
+            logger.info(&quot;训练结束：best_val_loss=%s optimizer_steps=%d&quot;, self.best_val_loss, self.optimizer_steps)
+
+    def _train_epoch(self, epoch: int) -&gt; tuple[int, bool]:
+        cfg = self.cfg
+        t = cfg.train
+        loader, iters = self._build_loader(epoch)
+        # CUDA 侧流预取（training §8）：H2D 拷贝与计算重叠；CPU 设备自动旁路
+        data_iter: DataLoader[Any] | CUDAPrefetcher = loader
+        if self.device.startswith(&quot;cuda&quot;):
+            from minimind_reborn.training.common.prefetch import CUDAPrefetcher
+
+            data_iter = CUDAPrefetcher(loader, self.device)
+        start_step = self.start_step if epoch == self.start_epoch else 0
+        if start_step &gt; 0:
+            logger.info(&quot;Epoch %d：跳过前 %d 个 micro step 续训&quot;, epoch + 1, start_step)
+        # 完整 epoch 步数（不扣 skip）：全局步数记账/LR 调度的分母必须用它。
+        # iters 是&quot;本次实际迭代数&quot;（续训时 = 完整步数 - start_step），只用于循环结束判定。
+        full_iters = per_rank_full_iters(len(self.train_ds), t.batch_size, dist.get_world_size())
+
+        self.model.train()
+        window_start = time.time()  # 吞吐窗口（每次日志重置）
+        epoch_start = time.time()  # ETA 基准（epoch 开局，不重置）——此前误用窗口耗时导致 ETA 恒 0
+        window_tokens = 0
+        window_steps = 0
+        running_loss = 0.0
+        last_grad_norm: torch.Tensor | float = 0.0
+
+        for offset, batch in enumerate(data_iter, start=start_step):
+            global_micro = epoch * full_iters + offset
+            total_micro = (
+                min(cfg.train.epochs * full_iters, cfg.train.max_steps)
+                if cfg.train.max_steps &gt; 0
+                else cfg.train.epochs * full_iters
+            )
+            lr = get_lr(
+                global_micro, total_micro, t.learning_rate, warmup_steps=t.warmup_steps, min_ratio=t.lr_min_ratio
+            )
+            for group in self.optimizer.param_groups:
+                group[&quot;lr&quot;] = lr
+
+            batch = _to_device(batch, self.device)
+            is_last = offset == start_step + iters - 1  # 续训时按实际迭代终点判定（而非 full_iters-1）
+            is_sync_step = (offset + 1) % t.gradient_accumulation_steps == 0 or is_last
+            # DDP 梯度累积：仅最后一个 micro step 同步梯度（training §3），其余步 no_sync
+            # 省掉 (accum-1)/accum 的 allreduce——64M×2B×8 步在 PCIe PHB 上实测拖累 scaling 至 67.6%
+            no_sync = getattr(self.model, &quot;no_sync&quot;, None)  # 仅 DDP 包装有此方法
+            sync_ctx = nullcontext() if (no_sync is None or is_sync_step) else no_sync()
+
+            with sync_ctx:  # 注意：sync_ctx 已是上下文实例，不能再加调用括号
+                with self.autocast_ctx:
+                    loss, log_metrics = self.compute_loss(batch, self.model)
+                scaled = loss / t.gradient_accumulation_steps
+                self.scaler.scale(scaled).backward()
+
+            # 优化步门：末个 micro step 或累积满 → unscale_ 后裁剪（阈值语义才正确）→ step
+            if is_sync_step:
+                self.scaler.unscale_(self.optimizer)
+                params = [p for p in self.model.parameters() if p.requires_grad]
+                last_grad_norm = torch.nn.utils.clip_grad_norm_(params, t.grad_clip)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                self.optimizer.zero_grad(set_to_none=True)  # 省内存：引用置 None 不留僵尸梯度
+                self.optimizer_steps += 1
+
+            running_loss += loss.item()
+            window_steps += 1
+            # 范式 batch 结构不同（pretrain 有 input_ids，DPO 是 x/y/mask）——取首个 tensor 的 batch 维
+            first_tensor = next(v for v in batch.values() if isinstance(v, torch.Tensor))
+            window_tokens += int(first_tensor.shape[0]) * dist.get_world_size() * cfg.data.max_seq_len
+
+            if (offset + 1) % t.log_interval == 0 or is_last:
+                window_elapsed = time.time() - window_start
+                tokens_per_s = window_tokens / max(window_elapsed, 1e-6)
+                train_loss = running_loss / max(window_steps, 1)
+                running_loss = 0.0
+                window_start = time.time()
+                window_tokens = 0
+                window_steps = 0
+                eta_min = estimate_eta_minutes(time.time() - epoch_start, offset + 1 - start_step, iters - offset - 1)
+                # MFU 估算（training §7）：训练 FLOPs ≈ 6·N·tokens/s，除以各卡峰值算力×卡数
+                mfu = 6.0 * self.n_params * tokens_per_s / (dist.get_world_size() * self.peak_tflops_per_gpu * 1e12)
+                stats = {
+                    **log_metrics,
+                    &quot;train/lr&quot;: lr,
+                    &quot;train/grad_norm&quot;: float(last_grad_norm),
+                    &quot;train/tokens_per_s&quot;: tokens_per_s,
+                    &quot;train/mfu_est&quot;: round(mfu, 4),
+                }
+                # train/val 统一用 optimizer step（模型当前步长）；此前 train 用 micro step、
+                # val 用另一计数，两把尺子导致曲线 x 轴错位
+                self.metrics.log(stats, self.optimizer_steps)
+                logger.info(
+                    &quot;Epoch[%d/%d](%d/%d) loss=%.4f lr=%.2e grad_norm=%.2f tok/s=%.0f mfu=%.1f%% eta=%.1fmin&quot;,
+                    epoch + 1,
+                    t.epochs,
+                    offset + 1,
+                    full_iters,
+                    train_loss,
+                    lr,
+                    float(last_grad_norm),
+                    tokens_per_s,
+                    mfu * 100,
+                    eta_min,
+                )
+
+            if t.eval_interval_steps &gt; 0 and (offset + 1) % t.eval_interval_steps == 0:
+                val = self.evaluate()
+                if val is not None and (self.best_val_loss is None or val &lt; self.best_val_loss):
+                    self.best_val_loss = val
+                    self._save(epoch, offset + 1, is_best=True)
+
+            if (offset + 1) % t.save_interval_steps == 0:
+                self._save(epoch, offset + 1)
+
+            if 0 &lt; t.max_steps &lt;= global_micro + 1:
+                logger.info(&quot;达到 max_steps=%d 截断（冒烟/调试预算）&quot;, t.max_steps)
+                self._save(epoch, offset + 1)
+                return offset + 1, True
+        return iters, False
+
+    # ============ 评估（training §7：模板成对出现） ============
+    @torch.no_grad()
+    def evaluate(self) -&gt; float | None:
+        if self.eval_ds is None or len(self.eval_ds) == 0:
+            return None
+        loader = DataLoader(
+            self.eval_ds,
+            batch_size=self.cfg.train.batch_size,
+            shuffle=False,
+            collate_fn=self.collate_fn,
+            **_loader_extras(self.cfg.data.num_workers),
+        )
+        self.model.eval()
+        losses: list[float] = []
+        for i, batch in enumerate(loader):
+            if i &gt;= self.cfg.data.eval_iters:
+                break
+            batch = _to_device(batch, self.device)
+            with self.autocast_ctx:
+                loss, _ = self.compute_loss(batch, self.model)
+            losses.append(loss.item())
+        self.model.train()  # 成对切回，训练态不被评估污染
+        # 全 ignore（如 SFT 尾段全是 pad）时 cross_entropy 产生 NaN——过滤而非污染曲线
+        finite = [v for v in losses if torch.isfinite(torch.tensor(v))]
+        if not finite:
+            logger.warning(&quot;评估 batch 全部为非有限 loss（验证段全是 ignore token？），本次评估跳过&quot;)
+            return None
+        mean = sum(finite) / len(finite)
+        mean = dist.all_reduce_mean(mean, device=self.device)  # 多卡指标聚合，防各卡统计漂移
+        self.metrics.log({&quot;val/loss&quot;: mean}, self.optimizer_steps)
+        logger.info(&quot;评估：val/loss=%.4f（固定 %d batch）&quot;, mean, len(finite))
+        return mean
+
+    # ============ 保存（rank0 独占 + best 另存 + 原子写） ============
+    def _save(self, epoch: int, step: int, is_best: bool = False) -&gt; None:
+        if not dist.is_main_process():
+            return
+        from minimind_reborn.configuration import snapshot
+
+        weight_path = self._weight_path()
+        self.save_weights_fn(self.model, weight_path)
+        if is_best:
+            self.save_weights_fn(self.model, self._weight_path(suffix=&quot;_best&quot;))
+        save_checkpoint(
+            checkpoint_path(self.ckpt_dir, self.save_weight, self.cfg.model.hidden_size, self.cfg.model.use_moe),
+            model=self.model,
+            optimizer=self.optimizer,
+            scaler=self.scaler,
+            epoch=epoch,
+            step=step,
+            config_snapshot=snapshot(self.cfg),
+            best_val_loss=self.best_val_loss,
+        )
+        logger.info(
+            &quot;已保存：%s%s（epoch=%d step=%d best_val=%s）&quot;,
+            weight_path.name,
+            &quot; + best&quot; if is_best else &quot;&quot;,
+            epoch + 1,
+            step,
+            self.best_val_loss,
+        )
+
+    def _weight_path(self, suffix: str = &quot;&quot;) -&gt; Path:
+        cfg = self.cfg
+        moe = &quot;_moe&quot; if cfg.model.use_moe else &quot;&quot;
+        return self.out_dir / f&quot;{self.save_weight}_{cfg.model.hidden_size}{moe}{suffix}.pth&quot;
+
+    # ============ 数据装载 ============
+    def _build_loader(self, epoch: int) -&gt; tuple[DataLoader, int]:
+        cfg = self.cfg
+        sampler: DistributedSampler | None
+        if dist.is_initialized():
+            sampler = DistributedSampler(self.train_ds, shuffle=True)
+            sampler.set_epoch(epoch)
+            inner: DistributedSampler | list[int] = sampler
+        else:
+            g = torch.Generator()
+            g.manual_seed(cfg.train.seed + epoch)  # 采样器显式携带种子（training §1）
+            inner = torch.randperm(len(self.train_ds), generator=g).tolist()
+        batch_sampler = SkipBatchSampler(
+            inner, cfg.train.batch_size, self.start_step if epoch == self.start_epoch else 0
+        )
+        loader = DataLoader(
+            self.train_ds,
+            batch_sampler=batch_sampler,
+            collate_fn=self.collate_fn,
+            **_loader_extras(cfg.data.num_workers),
+        )
+        return loader, len(loader)
+
+    # ============ 初始权重 ============
+    def _load_initial_weights(self) -&gt; None:
+        cfg = self.cfg
+        t = cfg.train
+        out_root = cfg.output_dir
+        if t.finetune_from:
+            path = resolve_weight_path(t.finetune_from, out_root, cfg.model.hidden_size, cfg.model.use_moe)
+            from minimind_reborn.models.weights import load_finetune_weights
+
+            load_finetune_weights(self.raw_model, path)
+            logger.info(&quot;微调加载（非严格，缺失 key 已逐条 warning）：%s&quot;, path)
+        if t.init_from:
+            path = resolve_weight_path(t.init_from, out_root, cfg.model.hidden_size, cfg.model.use_moe)
+            from minimind_reborn.models.weights import load_inference_weights
+
+            load_inference_weights(self.raw_model, path, strict=True)
+            logger.info(&quot;严格加载起点权重：%s&quot;, path)
+        # 铁律 8：续训做成默认行为——checkpoint 在场即恢复
+        ckpt = checkpoint_path(self.ckpt_dir, self.save_weight, cfg.model.hidden_size, cfg.model.use_moe)
+        if t.resume and ckpt.exists():
+            data = load_checkpoint(ckpt, world_size=dist.get_world_size())
+            self.raw_model.load_state_dict(data[&quot;model&quot;], strict=True)
+            self.optimizer.load_state_dict(data[&quot;optimizer&quot;])
+            self.scaler.load_state_dict(data[&quot;scaler&quot;])
+            self.start_epoch = data[&quot;epoch&quot;]
+            self.start_step = data.get(&quot;step&quot;, 0)
+            self.best_val_loss = data.get(&quot;best_val_loss&quot;)
+            logger.info(
+                &quot;续训恢复清单：epoch=%d step=%d best_val=%s optimizer=%s scaler=%s（恢复清单让加载错误第一步现形）&quot;,
+                self.start_epoch,
+                self.start_step,
+                self.best_val_loss,
+                list(data[&quot;optimizer&quot;].keys())[:3],
+                &quot;ok&quot;,
+            )
+
+
+def _loader_extras(num_workers: int) -&gt; dict:
+    from minimind_reborn.utils.seed import loader_kwargs
+
+    return loader_kwargs(num_workers)</code></pre></div>
 </main>
-<script src="../../../../../assets/course.js?v=9"></script>
+<script src="../../../../../assets/course.js?v=10"></script>
 </body>
 </html>

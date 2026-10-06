@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M18 · 蒸馏与 LoRA：小成本改造 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=9">
+<link rel="stylesheet" href="assets/course.css?v=10">
 </head>
 <body data-module="m18">
 
@@ -109,21 +109,28 @@
         </p>
       </div>
       <p>
-        还有一个读源码前必须拆穿的陷阱：PyTorch 的 <code>F.kl_div(input, target)</code> 参数序是
-        <b>input = log Q、target = P</b>，算出来的是 $\sum_i P_i(\log P_i - \log Q_i)=\mathrm{KL}(P\|Q)$。
-        reborn 写的是 <code>F.kl_div(student_log_probs, teacher_probs)</code>——所以实际方向是
-        $\mathrm{KL}(\text{教师} \| \text{学生})$（loss.py 的 docstring 写反了，以代码为准）。
+        还有一个读源码前必须拆穿的陷阱：PyTorch 的 <code>F.kl_div(input, target)</code> 参数序容易记反——
+        它算的是 $\mathrm{KL}(\text{target} \| \text{input})$。沿用上方严谨卡的记号（$p$=学生、$q$=教师）：
+        reborn 写的是 <code>F.kl_div(student_log_probs, teacher_probs)</code>，即
+        input $=\log p$（学生）、target $=q$（教师），算出来是
+        $\sum_i q_i(\log q_i - \log p_i)=\mathrm{KL}(q\|p)=\mathrm{KL}(\text{教师} \| \text{学生})$。
         这个方向正是 Hinton 的选择：最小化它时，学生必须<b>覆盖</b>教师的每个概率高峰，不许漏。
+        （loss.py 的 docstring 曾把这个方向写反成"KL(student‖teacher)"，2026-10-06 已修正——commit
+        <code>40829a9</code>，以代码为准的纪律没变，但现在代码与注释也一致了。）
       </p>
 
-      <h3 id="distill-code">精读：16 行损失 + 76 行 workflow</h3>
+      <h3 id="distill-code">精读：20 行损失 + 76 行 workflow</h3>
       <p>
-        全部数学落在一个 16 行的函数里，先看全文：
+        全部数学落在一个 20 行的函数文件里，先看全文：
       </p>
-      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/distill/loss.py.html">src/minimind_reborn/training/distill/loss.py</a> · 全文 16 行</span><span class="lang">python</span></div><pre class="code"><code>def distillation_loss(
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/distill/loss.py.html">src/minimind_reborn/training/distill/loss.py</a> · 全文 20 行</span><span class="lang">python</span></div><pre class="code"><code>def distillation_loss(
     student_logits: torch.Tensor, teacher_logits: torch.Tensor, temperature: float = 1.0
 ) -> torch.Tensor:
-    """softmax(T) 教师分布 → KL(student‖teacher) × T²，batchmean 归约。"""
+    """softmax(T) 软化：KL(teacher‖student) × T²，batchmean 归约。
+
+    F.kl_div(input, target) 实算 KL(target‖input)——此处 input=学生 log_softmax、
+    target=教师 softmax，即 KL(教师‖学生)（前向 KL，与官方蒸馏语义一致）。
+    """
     with torch.no_grad():
         teacher_probs = F.softmax(teacher_logits / temperature, dim=-1).detach()
     student_log_probs = F.log_softmax(student_logits / temperature, dim=-1)
@@ -183,17 +190,20 @@ teacher.eval().requires_grad_(False).to(device)              # 冻结三连：ev
         它要给出的正是"面对这个问题你怎么想"的分布。<b>③ 分项日志</b>：返回的字典里 CE 与 KL 分开记账
         （写进 metrics.jsonl），等下的实测靠它拆开看两项各自的动向。收尾看 64M 主配方：
       </p>
-      <div class="codeblock"><div class="code-head"><span><a href="codeview/configs/distill_64m.yaml.html">configs/distill_64m.yaml</a> · 全文</span><span class="lang">yaml</span></div><pre class="code"><code># 同构自蒸馏（teacher=pretrain 权重，student 从 SFT 权重继续）——对照官方 distill 配方
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/configs/distill_64m.yaml.html">configs/distill_64m.yaml</a> · 全文（行内注释为页内批注）</span><span class="lang">yaml</span></div><pre class="code"><code># 同构自蒸馏（teacher=pretrain 权重，student 从 SFT 权重继续）——对照官方 distill 配方
 stage: distill
 data:
   dataset: sft_t2t_mini
   max_seq_len: 340
+  eval_ratio: 0.005
 train:
   epochs: 2
   batch_size: 32
   learning_rate: 5.0e-6     # 比全参 SFT 的 1e-5 再小一半：精修中的精修
   dtype: bf16
   init_from: full_sft       # 学生从 SFT 权重继续（M16 的交接棒同款语义）
+  save_interval_steps: 500
+  log_interval: 50
 distill:
   teacher_weight: pretrain  # 教师权重名 → out/pretrain_768.pth
   teacher_hidden_size: 768
@@ -308,8 +318,12 @@ distill:
       <p>
         旁路怎么挂到模型上？<code>apply_lora(model, rank)</code> 扫描所有 Linear，<b>只挂方阵</b>（in==out）：
       </p>
-      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/lora.py.html">src/minimind_reborn/models/lora.py</a> · apply_lora（37–48 行）</span><span class="lang">python</span></div><pre class="code"><code>def apply_lora(model: Any, rank: int = 16) -> None:
-    """对方阵 Linear（in==out，即 q/k/v/o_proj 等）注入 LoRA 并接管 forward。"""
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/lora.py.html">src/minimind_reborn/models/lora.py</a> · apply_lora（37–52 行）</span><span class="lang">python</span></div><pre class="code"><code>def apply_lora(model: Any, rank: int = 16) -> None:
+    """对方阵 Linear（in==out）注入 LoRA 并接管 forward。
+
+    只挂方阵投影：默认 GQA 拓扑下 q/o_proj 是 768→768 方阵、可注入；k/v_proj 是
+    768→384 非方阵、不注入——注意力四投影实际只有 q/o 两侧有旁路。
+    """
     for module in model.modules():
         if isinstance(module, nn.Linear) and module.in_features == module.out_features:
             lora = LoRA(module.in_features, module.out_features, rank=rank).to(model.device)
@@ -325,10 +339,12 @@ distill:
         把命中条件的 Linear 的 forward 换成"原计算 + 旁路"。原 forward 用<b>默认参数</b>存进闭包
         （<code>layer1=original_forward</code>）而不是外层变量——避免循环变量晚绑定把所有层指到同一个 forward。
         <b>哪些矩阵恰好是方阵？</b>q_proj 输出维 = 头数 × head_dim = 8×96 = 768 = 输入维（M07 的形状约定），
-        o_proj 把拼接后的 768 投回 768——这两个天然方形。但<b>源码 docstring 写的"q/k/v/o_proj"在 GQA 下并不成立</b>：
-        M07 的 GQA 让 k/v_proj 是 768→384（KV 头只有 4 个），非方阵，挂不上；FFN 三个投影
-        （768→2432 / 2432→768，M08）也不是方阵。实测挂载点（下一节）只有 <b>q_proj 与 o_proj × 8 层 = 16 个</b>——
-        方阵判据是唯一事实，docstring 的举例按"无 GQA"口径写，读源码以判据为准。
+        o_proj 把拼接后的 768 投回 768——这两个天然方形。而 GQA 下 k/v_proj 是 768→384（KV 头只有 4 个），
+        非方阵，挂不上；FFN 三个投影（768→2432 / 2432→768，M08）也不是方阵。实测挂载点（下一节）只有
+        <b>q_proj 与 o_proj × 8 层 = 16 个</b>——方阵判据是唯一事实。
+        <b>一段勘误史（2026-10-06 已修正）：</b>这个 docstring 原来写的是"即 q/k/v/o_proj 等"——举例按"无 GQA"
+        口径写，在默认 GQA 拓扑下并不成立（k/v 挂不上），恰好被本课实测抓个正着；修复周期改为如实写明
+        "q/o 可注入、k/v 非方阵不注入"（commit <code>40829a9</code>）。读源码时，举例要拿判据复核——这一条保住了。
       </p>
 
       <h3 id="lora-ratio">实测一：参数账 0.615% &lt; 1%</h3>
@@ -541,7 +557,7 @@ trainer.run()</code></pre></div>
         <summary>测验 3 · LoRA 的 B 为什么零初始化？A 为什么不能也是零？GQA 下哪些投影挂不上？</summary>
         <div class="quiz-body">
           <div class="quiz-ans">
-            <p><b>答案：</b>ΔW = B·A，B 全零 ⇒ ΔW 全零 ⇒ 训练起点与基座逐位等价——外挂的第一原则是不破坏基座已会的东西。A 若也为零则梯度死锁：∂L/∂B ∝ A、∂L/∂A ∝ B，两个都为零则两个梯度恒为零，旁路永远学不动。A 非零保证第一步 B 先动，随后 A 也有梯度。挂载判据是"方形 Linear（in==out）"：q_proj（8×96=768→768）与 o_proj（768→768）中选；GQA（M07）下 k/v_proj 是 768→384 非方阵、FFN 三投影也不是方形——实测挂载点恰为 q/o × 8 层 = 16 个，docstring 里的"q/k/v/o"按无 GQA 口径写，以判据为准。</p>
+            <p><b>答案：</b>ΔW = B·A，B 全零 ⇒ ΔW 全零 ⇒ 训练起点与基座逐位等价——外挂的第一原则是不破坏基座已会的东西。A 若也为零则梯度死锁：∂L/∂B ∝ A、∂L/∂A ∝ B，两个都为零则两个梯度恒为零，旁路永远学不动。A 非零保证第一步 B 先动，随后 A 也有梯度。挂载判据是"方形 Linear（in==out）"：q_proj（8×96=768→768）与 o_proj（768→768）中选；GQA（M07）下 k/v_proj 是 768→384 非方阵、FFN 三投影也不是方形——实测挂载点恰为 q/o × 8 层 = 16 个。docstring 原按"无 GQA"口径举例 q/k/v/o，2026-10-06 已修正为如实写明 q/o 可注入、k/v 非方阵不注入。</p>
             <p class="back">答错回看：<a href="#lora-code">精读 lora.py</a>。</p>
           </div>
         </div>
@@ -698,6 +714,6 @@ print("3 checks passed")</code></pre></div>
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=9"></script>
+<script src="assets/course.js?v=10"></script>
 </body>
 </html>

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M03 · 全链路地图：一次请求的一生 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=9">
+<link rel="stylesheet" href="assets/course.css?v=10">
 </head>
 <body data-module="m03">
 
@@ -152,14 +152,14 @@ EOS_TEXT = "&lt;|im_end|&gt;"    <span class="c"># eos：对话结束——④�
       </p>
       <div class="codeblock"><div class="code-head"><span>engine.py:59-96 · build 精选：环境脏活全在这层</span><span class="lang">python</span></div><pre class="code"><code>device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 ...
-target_dtype = _resolve_dtype(dtype, device)      <span class="c"># 精度回退链（engine.py:206）</span>
+target_dtype = _resolve_dtype(dtype, device)      <span class="c"># 精度回退链（engine.py:213）</span>
 model = to_dtype(MiniMindForCausalLM(cfg), target_dtype)
 load_inference_weights(model, weight_path, strict=True)
 model = to_device(model, device)
 <span class="c"># 还有跨源校验：模型词表 ≠ tokenizer 词表直接报错（engine.py:96-100）</span></code></pre></div>
       <p>
         <b>停一下：</b><code>_resolve_dtype</code> 是<b>回退链</b>——首选 bf16，CPU 不支持回退 fp32 并<b>只警告一次</b>
-        （engine.py:206-212）。无 CUDA 的机器上跑巡游，③行打出 <code>dtype=torch.float32</code>——不是 bug，是链在退。
+        （engine.py:213-219）。无 CUDA 的机器上跑巡游，③行打出 <code>dtype=torch.float32</code>——不是 bug，是链在退。
       </p>
 
       <h3 id="st4">④ generator 内核：自回归主循环</h3>
@@ -189,8 +189,8 @@ for _ in range(steps):
       <p>
         <b>停止三重</b>（generator.py:1-7 文件头，缺一不可）：<b>token 级</b>——eos 掩码要求"生成位 ∧
         token ∈ 停止集合"，prompt 自带的 eos 不算；<b>循环级</b>——batch 全部序列结束才 break（支持长短不一）；
-        <b>后处理级</b>——解码后按 eos 截断残留（⑦站 <code>_decode_truncated</code>，engine.py:198）：
-        已结束序列在循环里被冻结为 eos 占位（generator.py:88），decode 前再切一刀。
+        <b>后处理级</b>——解码后按 eos 截断残留（⑦站 <code>_decode_truncated</code>，engine.py:205）：
+        已结束序列在循环里被冻结为 eos 占位（generator.py:89），decode 前再切一刀。
       </p>
       <p>
         <b>停一下：</b>对照实测 <code>k.shape=(8, 1, 10, 4, 96)</code> 反推五维——8 层、batch 1、
@@ -251,26 +251,29 @@ def sample_token(logits, gen, generator=None):      <span class="c"># ⑤ 单步
     probs = torch.softmax(logits, dim=-1)
     return torch.multinomial(probs, num_samples=1, generator=generator)  <span class="c"># 按概率抽签</span></code></pre></div>
       <p>
-        完整顺序（sampling.py:3 注释即契约）：<b>temperature → repetition_penalty → top_k → top_p → 采样</b>。
+        完整顺序（sampling.py:3 注释即契约）：<b>repetition_penalty（generator 施加）→ temperature → top_k → top_p → 采样</b>。
         repetition_penalty 需要"已见序列"这个随步变化的状态，由 generator 在调用前施加
-        （generator.py:82-83；默认 1.0 = 关闭）。<b>为什么顺序是契约：</b>temperature 用除法 <code>z_i / T</code>
+        （generator.py:83-84；默认 1.0 = 关闭）——它与 temperature 都是逐元素乘法、可交换先后。<b>为什么顺序是契约：</b>temperature 用除法 <code>z_i / T</code>
         改变 logits 相对间距（分布变尖/变平），top_k/top_p 按<b>改完之后</b>的排序截断——
         若先截断再调温，被截的尾巴会以不同比例"回来"，旋钮互相污染。先定型、再截断（测验 3 见）。
       </p>
       <p>
-        <b>停一下（进阶观察）：</b>并排读 generator.py:81 与 sampling.py:64——
+        <b>停一下（进阶观察，已修复）：</b>课程写作时（2026-09-29）并排读 generator.py 与 sampling.py 会发现
         <code>apply_temperature</code> 在 generate 路径上被调<b>两次</b>（实测：max_new_tokens=2 时插桩计数 4 次；
         等效缩放 logits/T²，T=0.85 时有效温度 ≈0.72，比旋钮读数更"尖"）
         <span class="prov">[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130 · apply_temperature 换计数包装插桩]</span>。
-        每个函数单独看都对——"纯函数都对、串起来的契约有缝隙"，M20 立案。
+        每个函数单独看都对——"纯函数都对、串起来的契约有缝隙"，M20 立案；2026-10-06 已修复
+        （commit <code>714f9c5</code>：删 generator 的外层调用，sampling.py 契约同步改为"温度恰好施加一次"，
+        回归测试 <code>test_temperature_applied_exactly_once_per_step</code> 锁定）——现在的 generator.py 只施加重复惩罚，
+        温度归 sample_token 独家。你在当前代码里插桩会数到每步恰 1 次。
       </p>
 
       <h3 id="st7">⑦ decode 与后处理：把 id 变回字</h3>
       <p>
         <b>职责：</b>生成段 id → 文本，顺带拆 <code>&lt;think&gt;</code>。engine 文本层只解码<b>生成段</b>
-        （engine.py:173-175）再走两道后处理：
+        （engine.py:180-182）再走两道后处理：
       </p>
-      <div class="codeblock"><div class="code-head"><span>engine.py:198-203 + chat.py:28-37 · 后处理两连</span><span class="lang">python</span></div><pre class="code"><code>new_tokens = out["sequences"][0, prompt_len:]   <span class="c"># 只取生成段 (n,)</span>
+      <div class="codeblock"><div class="code-head"><span>engine.py:205-210 + chat.py:28-37 · 后处理两连</span><span class="lang">python</span></div><pre class="code"><code>new_tokens = out["sequences"][0, prompt_len:]   <span class="c"># 只取生成段 (n,)</span>
 text = self._decode_truncated(new_tokens)       <span class="c"># 停止三重之 3：按 eos 截断后再 decode</span>
 reasoning, content = split_reasoning(text)      <span class="c"># 拆 &lt;think&gt;...&lt;/think&gt; 前缀</span>
 
@@ -328,7 +331,7 @@ def split_reasoning(text):                      <span class="c"># chat.py:28</sp
         <ul class="pit-stages">
           <li class="sym">用 <code>out/pretrain_768.pth</code> 按 M02 姿势对话，回答驴唇不对马嘴——甚至冒英文。</li>
           <li class="cause">base 权重没在 chat 模板格式上训练过，<code>&lt;|im_start|&gt;user</code> 对它只是普通 token；它只会文本续写。</li>
-          <li class="fix">两种都合法，但要<b>配套</b>：pretrain 权重用 <code>pretrain_mode=True</code>（bos + 裸文本，engine.py:159-160、chat.py:68）；要真对话换 <code>full_sft_768.pth</code>。实测（temperature=0 固定，排除采样随机性）：</li>
+          <li class="fix">两种都合法，但要<b>配套</b>：pretrain 权重用 <code>pretrain_mode=True</code>（bos + 裸文本，engine.py:166-167、chat.py:68）；要真对话换 <code>full_sft_768.pth</code>。实测（temperature=0 固定，排除采样随机性）：</li>
         </ul>
         <pre class="term"><code><span class="out">chat 模板姿势  → 'response:\n\n"I\'m sorry, but I can\'t assist with that. It\'s important to take'</span>
 <span class="ok">pretrain_mode  → '，我有一个问题想问。你好，欢迎来到这里。请问有什么问题需要我的帮助吗？我最近'</span></code></pre>
@@ -400,9 +403,9 @@ with torch.inference_mode():
       <details class="quiz">
         <summary>测验 1 · 为什么 decode 只解码 sequences[0, prompt_len:]，而不是整个序列？</summary>
         <div class="quiz-body">
-          <p>提示：<code>sequences</code> 怎么拼出来的？回顾 generator.py:89 的 <code>torch.cat</code>。</p>
+          <p>提示：<code>sequences</code> 怎么拼出来的？回顾 generator.py:90 的 <code>torch.cat</code>。</p>
           <div class="quiz-ans">
-            <p><b>答案：</b><code>sequences = prompt + 生成段</code>——generator 每步把新 token <code>torch.cat</code> 回输入（generator.py:89），返回<b>完整</b>序列；不切片就 decode 等于把提问复读一遍再接答案。生成段 eos 后的冻结占位残留由 <code>_decode_truncated</code>（停止三重之 3）解码前截掉。</p>
+            <p><b>答案：</b><code>sequences = prompt + 生成段</code>——generator 每步把新 token <code>torch.cat</code> 回输入（generator.py:90），返回<b>完整</b>序列；不切片就 decode 等于把提问复读一遍再接答案。生成段 eos 后的冻结占位残留由 <code>_decode_truncated</code>（停止三重之 3）解码前截掉。</p>
             <p class="back">答错回看：<a href="#st7">⑦ decode 与后处理</a> 与 <a href="#st4">④ generator 内核</a> 的 cat 一行。</p>
           </div>
         </div>
@@ -448,8 +451,8 @@ with torch.inference_mode():
             <p class="prov">[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130]</p>
             <p>
               <b>机制：</b>① 概率分布<b>不变</b>——<code>apply_temperature</code> 对 ≤0 原样返回 logits
-              （sampling.py:14-16），top5 仍是 <code>294:0.080, ...</code> 那组数；
-              ② 采样切到<b>贪心 argmax</b>（sampling.py:67-68）：必选第一名——294，
+              （sampling.py:16-18），top5 仍是 <code>294:0.080, ...</code> 那组数；
+              ② 采样切到<b>贪心 argmax</b>（sampling.py:69-70）：必选第一名——294，
               即①站见过的那个<b>逗号</b>「，」，实测输出恰好以「，」开头；
               ③ <code>multinomial</code> 不再被调用，输出跨运行确定。
               一句话：<b>分布没变，变的是"怎么挑"</b>。顺带：贪心对⑥站的双温度缝隙免疫——argmax 对正数缩放不变。
@@ -473,9 +476,10 @@ with torch.inference_mode():
           <details>
             <summary>失败了怎么办？（按报错第一行分流）</summary>
             <p>
-              <b>FileNotFoundError（权重不存在：out/pretrain_768.pth）</b> → 跑过 M01 冒烟的用
-              <code>MiniMindLLM.build("pretrain", hidden_size=64, num_attention_heads=4, num_key_value_heads=2)</code>（吃 <code>out/pretrain_64.pth</code>，
-              数字变小但结构不变——头参数不可省：build() 默认 8 头/4 KV 头，tiny 权重是 4 头/2 KV 头，省了会报 size mismatch，见 M02 路线 B）；
+              <b>FileNotFoundError（权重不存在：out/pretrain_768.pth）</b> → 跑过 M01 冒烟的改用 tiny 权重
+              （吃 <code>out/pretrain_64.pth</code>，数字变小但结构不变）——注意 <code>build()</code> 签名里<b>没有头数参数</b>（engine.py:43 起），
+              直接传 <code>num_attention_heads</code> 会 <code>TypeError</code>：tiny 的 4 头/2 KV 头须按
+              <a href="m02_chat.html#weights-where">M02 路线 B</a> 的裸构造器组装（或 M16 坑卡的 <code>config_path</code> 结构快照路线）；
               或按 <a href="m01_get_started.html#weights">M01 权重获取</a> 取得官方 768 权重（下载在 <code>out/official/</code>，把巡游脚本的 build 改为 <code>MiniMindLLM.build("pretrain", out_root="out/official")</code>）。
               <b>ModuleNotFoundError（minimind_reborn）</b> → 没在 reborn 目录下运行，<code>cd Reproduce/minimind_reborn</code> 或先 <code>uv sync --extra dev</code>。
               <b>CPU / 显存不足</b> → <code>MiniMindLLM.build("pretrain", device="cpu")</code>，
@@ -514,6 +518,6 @@ with torch.inference_mode():
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=9"></script>
+<script src="assets/course.js?v=10"></script>
 </body>
 </html>

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>rl_utils.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../../../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -14,107 +14,107 @@
   <span class="cv-meta">101 行 · 4KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/common/rl_utils.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;RL 系 workflow 公共件：四件套落盘 / 保存 / 续训（不走 Trainer 基件的循环用这些）。&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import time
-from pathlib import Path
-from typing import Any
-
-import torch
-
-from minimind_reborn import env_fingerprint
-from minimind_reborn.configuration import snapshot
-from minimind_reborn.configuration.schemas import RunConfig
-from minimind_reborn.loggers import get_logger, setup_logging
-from minimind_reborn.metrics import MetricLogger, build_backends
-from minimind_reborn.models.weights import save_inference_weights
-from minimind_reborn.training.common.amp import autocast_context, resolve_dtype
-from minimind_reborn.training.common.checkpoint import checkpoint_path, load_checkpoint, save_checkpoint
-from minimind_reborn.utils import dist
-from minimind_reborn.utils.io import atomic_write_json
-
-logger = get_logger(&quot;rl&quot;)
-
-
-class RLSession:
-    &quot;&quot;&quot;RL workflow 的公共状态：目录/日志/指标/精度上下文/保存与续训。&quot;&quot;&quot;
-
-    def __init__(self, cfg: RunConfig, *, save_weight: str, device: str | None = None, local_rank: int = 0):
-        self.cfg = cfg
-        self.save_weight = save_weight
-        self.local_rank = local_rank
-        setup_logging(cfg.run_dir)
-        self.device = device or (&quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;)
-        if dist.is_initialized():
-            self.device = f&quot;cuda:{local_rank}&quot;
-        self.dtype = resolve_dtype(cfg.train.dtype)
-        self.autocast_ctx = autocast_context(self.dtype, self.device)
-        self.run_dir = Path(cfg.run_dir)
-        self.out_dir = Path(cfg.output_dir)
-        self.ckpt_dir = Path(cfg.checkpoint_dir)
-        for d in (self.run_dir, self.out_dir, self.ckpt_dir):
-            d.mkdir(parents=True, exist_ok=True)
-        if dist.is_main_process():
-            atomic_write_json(snapshot(cfg), self.run_dir / &quot;config.json&quot;)
-            env_fingerprint.dump(self.run_dir, seed=cfg.train.seed)
-        self.metrics = MetricLogger(
-            build_backends(cfg.metrics.backends, self.run_dir, project=cfg.metrics.project, run_name=cfg.recipe_name)
-        )
-
-    # ---- 保存（rank0 门控 + best 语义不适用：RL 以 reward 曲线观测，仅存 last） ----
-    def save(self, model, optimizer, scheduler, epoch: int, step: int, extra_states: dict | None = None) -&gt; None:
-        if not dist.is_main_process():
-            return
-        weight_path = self.out_dir / self._weight_name()
-        save_inference_weights(model, weight_path)
-        save_checkpoint(
-            checkpoint_path(self.ckpt_dir, self.save_weight, self.cfg.model.hidden_size, self.cfg.model.use_moe),
-            model=model,
-            optimizer=optimizer,
-            scaler=None,  # RL 不用 scaler（bf16 无 scale 语义）
-            epoch=epoch,
-            step=step,
-            config_snapshot=snapshot(self.cfg),
-            best_val_loss=None,
-            extra_states=extra_states,
-        )
-        logger.info(&quot;已保存 %s（epoch=%d step=%d）&quot;, weight_path.name, epoch + 1, step)
-
-    def _weight_name(self) -&gt; str:
-        cfg = self.cfg
-        return f&quot;{self.save_weight}_{cfg.model.hidden_size}{&#x27;_moe&#x27; if cfg.model.use_moe else &#x27;&#x27;}.pth&quot;
-
-    def try_resume(self, model, optimizer, scheduler, extra: dict[str, Any] | None = None) -&gt; tuple[int, int]:
-        &quot;&quot;&quot;续训默认行为；extra: {checkpoint key → 带 load_state_dict 的对象}。返回 (start_epoch, start_step)。&quot;&quot;&quot;
-        cfg = self.cfg
-        ckpt = checkpoint_path(self.ckpt_dir, self.save_weight, cfg.model.hidden_size, cfg.model.use_moe)
-        if not (cfg.train.resume and ckpt.exists()):
-            return 0, 0
-        data = load_checkpoint(ckpt, world_size=dist.get_world_size())
-        model.load_state_dict(data[&quot;model&quot;], strict=True)
-        optimizer.load_state_dict(data[&quot;optimizer&quot;])
-        scheduler.load_state_dict(data[&quot;scheduler&quot;])
-        for key, obj in (extra or {}).items():
-            obj.load_state_dict(data[key])
-        logger.info(
-            &quot;RL 续训恢复：epoch=%d step=%d（含 %d 个扩展状态）&quot;, data[&quot;epoch&quot;], data.get(&quot;step&quot;, 0), len(extra or {})
-        )
-        return data[&quot;epoch&quot;], data.get(&quot;step&quot;, 0)
-
-    def close(self) -&gt; None:
-        self.metrics.close()
-
-
-def unwrap(model):
-    m = model.module if hasattr(model, &quot;module&quot;) else model
-    return getattr(m, &quot;_orig_mod&quot;, m)
-
-
-def now() -&gt; float:
-    return time.time()</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/common/rl_utils.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;RL 系 workflow 公共件：四件套落盘 / 保存 / 续训（不走 Trainer 基件的循环用这些）。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+from typing import Any
+
+import torch
+
+from minimind_reborn import env_fingerprint
+from minimind_reborn.configuration import snapshot
+from minimind_reborn.configuration.schemas import RunConfig
+from minimind_reborn.loggers import get_logger, setup_logging
+from minimind_reborn.metrics import MetricLogger, build_backends
+from minimind_reborn.models.weights import save_inference_weights
+from minimind_reborn.training.common.amp import autocast_context, resolve_dtype
+from minimind_reborn.training.common.checkpoint import checkpoint_path, load_checkpoint, save_checkpoint
+from minimind_reborn.utils import dist
+from minimind_reborn.utils.io import atomic_write_json
+
+logger = get_logger(&quot;rl&quot;)
+
+
+class RLSession:
+    &quot;&quot;&quot;RL workflow 的公共状态：目录/日志/指标/精度上下文/保存与续训。&quot;&quot;&quot;
+
+    def __init__(self, cfg: RunConfig, *, save_weight: str, device: str | None = None, local_rank: int = 0):
+        self.cfg = cfg
+        self.save_weight = save_weight
+        self.local_rank = local_rank
+        setup_logging(cfg.run_dir)
+        self.device = device or (&quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;)
+        if dist.is_initialized():
+            self.device = f&quot;cuda:{local_rank}&quot;
+        self.dtype = resolve_dtype(cfg.train.dtype)
+        self.autocast_ctx = autocast_context(self.dtype, self.device)
+        self.run_dir = Path(cfg.run_dir)
+        self.out_dir = Path(cfg.output_dir)
+        self.ckpt_dir = Path(cfg.checkpoint_dir)
+        for d in (self.run_dir, self.out_dir, self.ckpt_dir):
+            d.mkdir(parents=True, exist_ok=True)
+        if dist.is_main_process():
+            atomic_write_json(snapshot(cfg), self.run_dir / &quot;config.json&quot;)
+            env_fingerprint.dump(self.run_dir, seed=cfg.train.seed)
+        self.metrics = MetricLogger(
+            build_backends(cfg.metrics.backends, self.run_dir, project=cfg.metrics.project, run_name=cfg.recipe_name)
+        )
+
+    # ---- 保存（rank0 门控 + best 语义不适用：RL 以 reward 曲线观测，仅存 last） ----
+    def save(self, model, optimizer, scheduler, epoch: int, step: int, extra_states: dict | None = None) -&gt; None:
+        if not dist.is_main_process():
+            return
+        weight_path = self.out_dir / self._weight_name()
+        save_inference_weights(model, weight_path)
+        save_checkpoint(
+            checkpoint_path(self.ckpt_dir, self.save_weight, self.cfg.model.hidden_size, self.cfg.model.use_moe),
+            model=model,
+            optimizer=optimizer,
+            scaler=None,  # RL 不用 scaler（bf16 无 scale 语义）
+            epoch=epoch,
+            step=step,
+            config_snapshot=snapshot(self.cfg),
+            best_val_loss=None,
+            extra_states=extra_states,
+        )
+        logger.info(&quot;已保存 %s（epoch=%d step=%d）&quot;, weight_path.name, epoch + 1, step)
+
+    def _weight_name(self) -&gt; str:
+        cfg = self.cfg
+        return f&quot;{self.save_weight}_{cfg.model.hidden_size}{&#x27;_moe&#x27; if cfg.model.use_moe else &#x27;&#x27;}.pth&quot;
+
+    def try_resume(self, model, optimizer, scheduler, extra: dict[str, Any] | None = None) -&gt; tuple[int, int]:
+        &quot;&quot;&quot;续训默认行为；extra: {checkpoint key → 带 load_state_dict 的对象}。返回 (start_epoch, start_step)。&quot;&quot;&quot;
+        cfg = self.cfg
+        ckpt = checkpoint_path(self.ckpt_dir, self.save_weight, cfg.model.hidden_size, cfg.model.use_moe)
+        if not (cfg.train.resume and ckpt.exists()):
+            return 0, 0
+        data = load_checkpoint(ckpt, world_size=dist.get_world_size())
+        model.load_state_dict(data[&quot;model&quot;], strict=True)
+        optimizer.load_state_dict(data[&quot;optimizer&quot;])
+        scheduler.load_state_dict(data[&quot;scheduler&quot;])
+        for key, obj in (extra or {}).items():
+            obj.load_state_dict(data[key])
+        logger.info(
+            &quot;RL 续训恢复：epoch=%d step=%d（含 %d 个扩展状态）&quot;, data[&quot;epoch&quot;], data.get(&quot;step&quot;, 0), len(extra or {})
+        )
+        return data[&quot;epoch&quot;], data.get(&quot;step&quot;, 0)
+
+    def close(self) -&gt; None:
+        self.metrics.close()
+
+
+def unwrap(model):
+    m = model.module if hasattr(model, &quot;module&quot;) else model
+    return getattr(m, &quot;_orig_mod&quot;, m)
+
+
+def now() -&gt; float:
+    return time.time()</code></pre></div>
 </main>
-<script src="../../../../../assets/course.js?v=9"></script>
+<script src="../../../../../assets/course.js?v=10"></script>
 </body>
 </html>

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>runtime.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -14,44 +14,44 @@
   <span class="cv-meta">38 行 · 1KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/utils/runtime.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;运行时环境准备入口（training §8：ulimit、线程数在训练入口一次设置）。
-
-参数均有&quot;实测依据 + 允许覆盖&quot;注释；业务代码不直接调用本模块（入口统一调用）。
-&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import logging
-import resource
-
-import torch
-
-from minimind_reborn import envs
-
-logger = logging.getLogger(&quot;minimind.runtime&quot;)
-
-
-def configure_runtime() -&gt; None:
-    &quot;&quot;&quot;训练入口一次调用：线程数 + 文件句柄上限。
-
-    - torch 线程数默认 8：实测 8 worker 时数据管道 12× 富余于训练吞吐
-      （worker 扫描见 docs/pretrain_readiness.md §2），主进程留足 CPU 给
-      DataLoader 与系统；env MINIMIND_REBORN_TORCH_THREADS 可覆盖。
-    - RLIMIT_NOFILE 抬到 min(hard, 65536)：DataLoader 多 worker + 大量分词句柄
-      在默认 1024 软限制下会报 Too many open files。
-    &quot;&quot;&quot;
-    threads = envs.torch_threads()
-    torch.set_num_threads(threads)
-    try:
-        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-        target = min(hard, 65536)
-        if soft &lt; target:
-            resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
-            soft = target
-        logger.info(&quot;运行时准备：torch 线程=%d, RLIMIT_NOFILE=%d（硬上限 %d）&quot;, threads, soft, hard)
-    except (OSError, ValueError) as e:
-        logger.warning(&quot;RLIMIT_NOFILE 调整失败（不影响训练，降级留痕）：%s&quot;, e)</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/utils/runtime.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;运行时环境准备入口（training §8：ulimit、线程数在训练入口一次设置）。
+
+参数均有&quot;实测依据 + 允许覆盖&quot;注释；业务代码不直接调用本模块（入口统一调用）。
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import logging
+import resource
+
+import torch
+
+from minimind_reborn import envs
+
+logger = logging.getLogger(&quot;minimind.runtime&quot;)
+
+
+def configure_runtime() -&gt; None:
+    &quot;&quot;&quot;训练入口一次调用：线程数 + 文件句柄上限。
+
+    - torch 线程数默认 8：实测 8 worker 时数据管道 12× 富余于训练吞吐
+      （worker 扫描见 docs/pretrain_readiness.md §2），主进程留足 CPU 给
+      DataLoader 与系统；env MINIMIND_REBORN_TORCH_THREADS 可覆盖。
+    - RLIMIT_NOFILE 抬到 min(hard, 65536)：DataLoader 多 worker + 大量分词句柄
+      在默认 1024 软限制下会报 Too many open files。
+    &quot;&quot;&quot;
+    threads = envs.torch_threads()
+    torch.set_num_threads(threads)
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        target = min(hard, 65536)
+        if soft &lt; target:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+            soft = target
+        logger.info(&quot;运行时准备：torch 线程=%d, RLIMIT_NOFILE=%d（硬上限 %d）&quot;, threads, soft, hard)
+    except (OSError, ValueError) as e:
+        logger.warning(&quot;RLIMIT_NOFILE 调整失败（不影响训练，降级留痕）：%s&quot;, e)</code></pre></div>
 </main>
-<script src="../../../../assets/course.js?v=9"></script>
+<script src="../../../../assets/course.js?v=10"></script>
 </body>
 </html>

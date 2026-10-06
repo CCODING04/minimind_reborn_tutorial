@@ -5,46 +5,51 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>loss.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../../../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
   <a class="cv-back" href="../../../../../index.html">← 课程地图</a>
   <span class="cv-crumb">Reproduce/minimind_reborn/src/minimind_reborn/training/dpo/loss.py</span>
-  <span class="cv-meta">31 行 · 1KB · minimind_reborn</span>
+  <span class="cv-meta">36 行 · 1KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/dpo/loss.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;DPO 损失（与官方 train_dpo.py 的实现语义一致，纯函数可单测）。&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import torch
-import torch.nn.functional as F
-
-
-def logits_to_log_probs(logits: torch.Tensor, labels: torch.Tensor) -&gt; torch.Tensor:
-    &quot;&quot;&quot;logits (b, seq, vocab), labels (b, seq) → 每 token 的 log prob (b, seq)。&quot;&quot;&quot;
-    log_probs = F.log_softmax(logits, dim=2)
-    return torch.gather(log_probs, dim=2, index=labels.unsqueeze(2)).squeeze(-1)
-
-
-def dpo_loss(
-    ref_log_probs: torch.Tensor,
-    policy_log_probs: torch.Tensor,
-    mask: torch.Tensor,
-    beta: float,
-) -&gt; torch.Tensor:
-    &quot;&quot;&quot;sigmoid-DPO：-log σ(β·[(π_c-π_r) - (ref_c-ref_r)])，mask 限定回答区间求和。
-
-    输入 (b, seq)，batch 前半 chosen 后半 rejected。
-    &quot;&quot;&quot;
-    ref_log_probs = (ref_log_probs * mask).sum(dim=1)
-    policy_log_probs = (policy_log_probs * mask).sum(dim=1)
-    half = ref_log_probs.shape[0] // 2
-    pi_logratios = policy_log_probs[:half] - policy_log_probs[half:]
-    ref_logratios = ref_log_probs[:half] - ref_log_probs[half:]
-    return -F.logsigmoid(beta * (pi_logratios - ref_logratios)).mean()</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/dpo/loss.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;DPO 损失（与官方 train_dpo.py 的实现语义一致，纯函数可单测）。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import torch
+import torch.nn.functional as F
+
+
+def logits_to_log_probs(logits: torch.Tensor, labels: torch.Tensor) -&gt; torch.Tensor:
+    &quot;&quot;&quot;logits (b, seq, vocab), labels (b, seq) → 每 token 的 log prob (b, seq)。&quot;&quot;&quot;
+    log_probs = F.log_softmax(logits, dim=2)
+    return torch.gather(log_probs, dim=2, index=labels.unsqueeze(2)).squeeze(-1)
+
+
+def dpo_loss(
+    ref_log_probs: torch.Tensor,
+    policy_log_probs: torch.Tensor,
+    mask: torch.Tensor,
+    beta: float,
+) -&gt; torch.Tensor:
+    &quot;&quot;&quot;sigmoid-DPO：-log σ(β·[(π_c-π_r) - (ref_c-ref_r)])，mask 限定回答区间求和。
+
+    输入 (b, seq)，batch 前半 chosen 后半 rejected（要求偶数——奇数批经
+    `half = b // 2` 切分后形状不匹配，此前以难懂的张量广播错误抛出）。
+    &quot;&quot;&quot;
+    if ref_log_probs.shape[0] % 2 != 0:
+        raise ValueError(
+            f&quot;DPO 拼批要求偶数 batch（前半 chosen、后半 rejected 各半），得到 {ref_log_probs.shape[0]}&quot;
+        )
+    ref_log_probs = (ref_log_probs * mask).sum(dim=1)
+    policy_log_probs = (policy_log_probs * mask).sum(dim=1)
+    half = ref_log_probs.shape[0] // 2
+    pi_logratios = policy_log_probs[:half] - policy_log_probs[half:]
+    ref_logratios = ref_log_probs[:half] - ref_log_probs[half:]
+    return -F.logsigmoid(beta * (pi_logratios - ref_logratios)).mean()</code></pre></div>
 </main>
-<script src="../../../../../assets/course.js?v=9"></script>
+<script src="../../../../../assets/course.js?v=10"></script>
 </body>
 </html>

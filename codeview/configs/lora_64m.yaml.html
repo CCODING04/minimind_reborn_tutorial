@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>lora_64m.yaml · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
-<link rel="stylesheet" href="../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -14,23 +14,23 @@
   <span class="cv-meta">17 行 · 1KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>configs/lora_64m.yaml</span><span class="lang">yaml</span></div><pre class="code"><code data-lines="1"># LoRA 轻量微调（适配器只存 lora 权重）
-stage: lora
-data:
-  dataset: sft_t2t_mini
-  max_seq_len: 340
-  eval_ratio: 0.005
-train:
-  epochs: 2
-  batch_size: 32
-  learning_rate: 1.0e-4
-  dtype: bf16
-  init_from: full_sft
-  log_interval: 20
-lora:
-  rank: 16
-  lora_name: lora_reborn</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>configs/lora_64m.yaml</span><span class="lang">yaml</span></div><pre class="code"><code data-lines="1"># LoRA 轻量微调（适配器只存 lora 权重）
+stage: lora
+data:
+  dataset: sft_t2t_mini
+  max_seq_len: 340
+  eval_ratio: 0.005
+train:
+  epochs: 2
+  batch_size: 32
+  learning_rate: 1.0e-4
+  dtype: bf16
+  init_from: full_sft
+  log_interval: 20
+lora:
+  rank: 16
+  lora_name: lora_reborn</code></pre></div>
 </main>
-<script src="../../assets/course.js?v=9"></script>
+<script src="../../assets/course.js?v=10"></script>
 </body>
 </html>

@@ -45,6 +45,12 @@ const COURSE = [
   { id: "m22", file: "m22_graduation.html", part: 6, title: "全链路与毕业实验", minutes: 150, status: "done", milestone: "C" },
 ];
 
+/* 附录页：不进 COURSE 序列（无 pager、不计入 23 模块进度），侧栏与主页地图单独渲染 */
+const APPENDIX = [
+  { id: "btrack", file: "btrack.html", title: "B 轨 · 自写挑战总纲（🏁D）" },
+  { id: "pytorch-guide", file: "pytorch_guide.html", title: "PyTorch 特殊用法指南" },
+];
+
 /* —— 进度（localStorage）—— */
 const PROGRESS_KEY = "mrt-progress-v1";
 function loadProgress() {
@@ -124,6 +130,7 @@ function mountThemeToggle() {
 
 const byId = Object.fromEntries(COURSE.map((m) => [m.id, m]));
 const currentId = document.body.dataset.module || "";
+const currentPage = document.body.dataset.page || "";
 
 /* —— 侧栏课程树 —— */
 function renderSidebar() {
@@ -179,6 +186,26 @@ function renderSidebar() {
     }
     wrap.appendChild(list);
     frag.appendChild(wrap);
+  }
+  /* 附录区：纯链接，不进 23 模块进度口径、无 done-dot */
+  if (APPENDIX.length) {
+    const awrap = document.createElement("div");
+    awrap.className = "part appendix";
+    const ahead = document.createElement("div");
+    ahead.className = "part-head";
+    ahead.innerHTML = `<span class="caret">▼</span><span>附录</span>`;
+    awrap.appendChild(ahead);
+    const alist = document.createElement("div");
+    alist.className = "part-modules";
+    for (const m of APPENDIX) {
+      const a = document.createElement("a");
+      a.className = "mod" + (m.id === currentPage ? " current" : "");
+      a.href = m.file;
+      a.innerHTML = `<span class="num">附</span><span class="label">${m.title}</span>`;
+      alist.appendChild(a);
+    }
+    awrap.appendChild(alist);
+    frag.appendChild(awrap);
   }
   mount.innerHTML = "";
   mount.appendChild(frag);
@@ -342,6 +369,19 @@ function renderIndexGrid() {
         dot.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") flip(ev); });
       });
       frag.appendChild(card);
+  }
+  /* 主页地图的附录卡（与侧栏同源 APPENDIX） */
+  if (APPENDIX.length) {
+    const card = document.createElement("div");
+    card.className = "part-card appendix";
+    const items = APPENDIX.map((m) =>
+      `<li><span><b class="mod-num">附</b> <a href="${m.file}">${m.title}</a></span></li>`
+    ).join("");
+    card.innerHTML = `<div class="pc-head"><span class="pc-num">附</span>` +
+      `<span class="pc-name">附录</span></div>` +
+      `<p class="pc-desc">主线之外的两份常备参考：八站自写挑战轨道（终点 🏁D 自己的模型说话）与课程用到的 PyTorch 特殊用法即查手册。</p>` +
+      `<ul class="pc-mods">${items}</ul>`;
+    frag.appendChild(card);
   }
   mount.innerHTML = "";
   mount.appendChild(frag);

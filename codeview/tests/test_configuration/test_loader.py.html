@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>test_loader.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -14,77 +14,77 @@
   <span class="cv-meta">71 行 · 2KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>tests/test_configuration/test_loader.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;配置系统测试：未知 key / 类型断言 / 覆盖顺序 / 守门人派生 / 快照。&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import pytest
-
-from minimind_reborn.configuration import load_config, snapshot
-from minimind_reborn.configuration.schemas import ModelConfig
-
-
-def test_unknown_key_raises():
-    with pytest.raises(ValueError, match=&quot;未知配置项&quot;):
-        load_config(None, [&quot;train.typo_key=1&quot;])
-
-
-def test_unknown_domain_raises():
-    with pytest.raises(ValueError, match=&quot;未知配置域&quot;):
-        load_config(None, [&quot;trainn.lr=0.1&quot;])
-
-
-def test_type_mismatch_raises():
-    with pytest.raises(ValueError, match=&quot;float&quot;):
-        load_config(None, [&quot;train.learning_rate=abc&quot;])
-
-
-def test_unknown_stage_raises():
-    with pytest.raises(ValueError, match=&quot;未知训练范式&quot;):
-        load_config(None, [&quot;stage=nope&quot;])
-
-
-def test_unknown_metric_backend_raises():
-    cfg = load_config(None, [&quot;metrics.backends=[&#x27;no_such_backend&#x27;]&quot;])
-    with pytest.raises(ValueError, match=&quot;未知指标后端&quot;):
-        from minimind_reborn.metrics import build_backends
-
-        build_backends(cfg.metrics.backends, &quot;/tmp/x&quot;)
-
-
-def test_derived_fields(tmp_path):
-    cfg = load_config(None, [&quot;model.hidden_size=512&quot;, &quot;model.num_key_value_heads=8&quot;])
-    assert cfg.model.head_dim == 64
-    assert cfg.model.intermediate_size == 1664  # ceil(512π/64)=26 → 26*64
-    assert cfg.model.moe_intermediate_size == cfg.model.intermediate_size
-
-
-def test_gqa_constraint_validated():
-    with pytest.raises(ValueError, match=&quot;整除&quot;):
-        load_config(None, [&quot;model.num_attention_heads=8&quot;, &quot;model.num_key_value_heads=3&quot;])
-
-
-def test_yaml_then_cli_priority(tmp_path):
-    recipe = tmp_path / &quot;my_exp.yaml&quot;
-    recipe.write_text(&quot;stage: sft\ntrain:\n  learning_rate: 1.0e-5\n  batch_size: 16\n&quot;)
-    cfg = load_config(recipe, [&quot;train.batch_size=32&quot;])
-    assert cfg.recipe_name == &quot;my_exp&quot;  # 实验名 = 配方文件名
-    assert cfg.stage == &quot;sft&quot;
-    assert cfg.train.learning_rate == 1.0e-5  # yaml 生效
-    assert cfg.train.batch_size == 32  # CLI 后到覆盖
-
-
-def test_snapshot_roundtrip():
-    cfg = load_config(None, [&quot;train.max_steps=9&quot;])
-    snap = snapshot(cfg)
-    assert snap[&quot;train&quot;][&quot;max_steps&quot;] == 9
-    assert snap[&quot;model&quot;][&quot;hidden_size&quot;] == 768
-
-
-def test_model_config_default_heads():
-    m = ModelConfig()
-    assert m.num_attention_heads % m.num_key_value_heads == 0</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>tests/test_configuration/test_loader.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;配置系统测试：未知 key / 类型断言 / 覆盖顺序 / 守门人派生 / 快照。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import pytest
+
+from minimind_reborn.configuration import load_config, snapshot
+from minimind_reborn.configuration.schemas import ModelConfig
+
+
+def test_unknown_key_raises():
+    with pytest.raises(ValueError, match=&quot;未知配置项&quot;):
+        load_config(None, [&quot;train.typo_key=1&quot;])
+
+
+def test_unknown_domain_raises():
+    with pytest.raises(ValueError, match=&quot;未知配置域&quot;):
+        load_config(None, [&quot;trainn.lr=0.1&quot;])
+
+
+def test_type_mismatch_raises():
+    with pytest.raises(ValueError, match=&quot;float&quot;):
+        load_config(None, [&quot;train.learning_rate=abc&quot;])
+
+
+def test_unknown_stage_raises():
+    with pytest.raises(ValueError, match=&quot;未知训练范式&quot;):
+        load_config(None, [&quot;stage=nope&quot;])
+
+
+def test_unknown_metric_backend_raises():
+    cfg = load_config(None, [&quot;metrics.backends=[&#x27;no_such_backend&#x27;]&quot;])
+    with pytest.raises(ValueError, match=&quot;未知指标后端&quot;):
+        from minimind_reborn.metrics import build_backends
+
+        build_backends(cfg.metrics.backends, &quot;/tmp/x&quot;)
+
+
+def test_derived_fields(tmp_path):
+    cfg = load_config(None, [&quot;model.hidden_size=512&quot;, &quot;model.num_key_value_heads=8&quot;])
+    assert cfg.model.head_dim == 64
+    assert cfg.model.intermediate_size == 1664  # ceil(512π/64)=26 → 26*64
+    assert cfg.model.moe_intermediate_size == cfg.model.intermediate_size
+
+
+def test_gqa_constraint_validated():
+    with pytest.raises(ValueError, match=&quot;整除&quot;):
+        load_config(None, [&quot;model.num_attention_heads=8&quot;, &quot;model.num_key_value_heads=3&quot;])
+
+
+def test_yaml_then_cli_priority(tmp_path):
+    recipe = tmp_path / &quot;my_exp.yaml&quot;
+    recipe.write_text(&quot;stage: sft\ntrain:\n  learning_rate: 1.0e-5\n  batch_size: 16\n&quot;)
+    cfg = load_config(recipe, [&quot;train.batch_size=32&quot;])
+    assert cfg.recipe_name == &quot;my_exp&quot;  # 实验名 = 配方文件名
+    assert cfg.stage == &quot;sft&quot;
+    assert cfg.train.learning_rate == 1.0e-5  # yaml 生效
+    assert cfg.train.batch_size == 32  # CLI 后到覆盖
+
+
+def test_snapshot_roundtrip():
+    cfg = load_config(None, [&quot;train.max_steps=9&quot;])
+    snap = snapshot(cfg)
+    assert snap[&quot;train&quot;][&quot;max_steps&quot;] == 9
+    assert snap[&quot;model&quot;][&quot;hidden_size&quot;] == 768
+
+
+def test_model_config_default_heads():
+    m = ModelConfig()
+    assert m.num_attention_heads % m.num_key_value_heads == 0</code></pre></div>
 </main>
-<script src="../../../assets/course.js?v=9"></script>
+<script src="../../../assets/course.js?v=10"></script>
 </body>
 </html>

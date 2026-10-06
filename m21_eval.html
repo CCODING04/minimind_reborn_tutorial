@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M21 · 评测与官方对照 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=9">
+<link rel="stylesheet" href="assets/course.css?v=10">
 </head>
 <body data-module="m21">
 
@@ -345,7 +345,17 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
       <p class="prov"><b>[存档 out/official_compare.md · 2026-09-24 · fp16 · 同权重]</b>
       同档还有吞吐对比：reborn 344 tok/s vs official 318（1.08×，长 prompt 贪心 384 token 三次取中位）；
       显存列两行都记成 0 MB——测量代码失效的产物，<b>跑分脚本本身也会被跑分</b>，报告要带着怀疑读。</p>
+      <div class="callout warn">
+        <div class="co-title">⚠️ 坑卡（2026-10-06 审查发现）：这张表的"贪心"只有官方一侧在贪心——工具 bug，已修复</div>
+        <ul class="pit-stages">
+          <li class="sym">复查 <code>tools/compare_official.py</code> 发现：<code>our_generate</code> 的 <code>greedy</code> 形参<b>从未被使用</b>——我方恒以 <code>GenerateConfig(temperature=0.85)</code> 采样；官方侧 <code>do_sample=not greedy</code> 是对的。</li>
+          <li class="cause">上表（及 §9.2 的 fp32 复跑）由修复前的工具产出：<b>我方=采样、官方=贪心</b>——47.3% 这类"一致率"实为采样输出撞上贪心输出的比例，本质是噪声样本，不能作为"双实现数学一致"的证据；"浮点路径差异属预期"的解释也就失去了这份背书。</li>
+          <li class="fix">已于 2026-10-06 修复（commit <code>f9f511e</code>：greedy=True 时 temperature 取 0.0 走 argmax）。<b>干净的贪心对贪心一致率需要重跑 compare 才有</b>——这是比"读表"更好的毕业实验候选：重跑后若低一致率样例在 fp32 下逐位一致，§9.2 的浮点解释才算真正闭环。上表保留为存档 + 本坑卡的案发现场。</li>
+        </ul>
+        <p class="pit-note">"跑分脚本也会被跑分"在这里出了续集：显存列造假是测量失效，贪心失效是<b>变量没冻住</b>——对照实验的冻结清单（上表）写了"贪心解码"，但工具没兑现。冻结项要验，不能只信注释。</p>
+      </div>
       <p>
+        当时对 47.3% 的解读（存档原样保留——前提已被上方坑卡动摇，方法论本身仍值得学）：
         47.3% 是"双实现不一致"吗？<b>不是</b>——这里是本课最值得学的一手：换精度做<b>决定性检验</b>。
         fp16 下官方 prefill（对 prompt 的首次前向，M03 的术语）走 SDPA 融合（M07 的路径三）、
         我们走 manual fp32 打分，两条浮点路径的
@@ -614,6 +624,6 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=9"></script>
+<script src="assets/course.js?v=10"></script>
 </body>
 </html>

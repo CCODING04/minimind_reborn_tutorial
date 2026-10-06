@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M19 · RL 一览：rollout 的世界 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=9">
+<link rel="stylesheet" href="assets/course.css?v=10">
 </head>
 <body data-module="m19">
 
@@ -376,7 +376,7 @@ else:                                         # 分支 B：grpo 双面 clip（PP
       <p>
         一句话讲清共同点与差别：两个分支都在做"高优势回答的 logp 推高、低优势压低，
         同时按 β=0.1 扣一笔离参考模型太远的罚金"（KL 锚——回收 M17：参考模型是 SFT 权重的冻结副本，
-        给 RL 的漂移上保险；k3 估计 exp(Δ)−Δ−1 是 KL 的低方差无偏下界形式，恒非负）。
+        给 RL 的漂移上保险；k3 估计 exp(Δ)−Δ−1 是 KL 的低方差、逐点非负的无偏估计）。
         差别在<b>怎么防单步冒进</b>：cispo 把比率系数钳到上界后 detach（系数不回传梯度，梯度直接走 logp，
         正优势的长回答不被截断地鼓励）；grpo 分支用双面 clip（把比率按 1±ε 截断后与未截断取小——
         离采样分布太远的更新会被"剪掉"）。配置一个键 <code>loss_type</code> 切换，默认 cispo。
@@ -784,6 +784,6 @@ response_old_logps.extend([0.0] * len(obs_delta))</code></pre></div>
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=9"></script>
+<script src="assets/course.js?v=10"></script>
 </body>
 </html>

@@ -8,14 +8,15 @@
 
 ## 1. 定位与受众
 
-- **实现目标**：[`Reproduce/minimind_reborn`](../../../Reproduce/minimind_reborn)——64M 中文小模型的工程化全流程训练项目（pretrain→SFT→DPO→蒸馏/LoRA→RL→推理服务，85 个测试（写作时实测），8 个冒烟配方）。
+- **实现目标**：[`Reproduce/minimind_reborn`](../../../Reproduce/minimind_reborn)——64M 中文小模型的工程化全流程训练项目（pretrain→SFT→DPO→蒸馏/LoRA→RL→推理服务，93 个测试（2026-10-06 实测；写作时 85，修复周期 +8），8 个冒烟配方）。
 - **受众**：会 Python 与基本 PyTorch（张量/autograd/nn.Module），LLM 零经验或初学；对真实工程项目的配置/测试/分布式经验不限。
-- **教学主线（混合式）**：主线**跟读 reborn 真实代码** + **动手跑冒烟与实验** + **复用其 85 个测试做绿灯验收**；每模块配"变式练习"（先预测再观察）；关键模块（attention、loss_mask）增加页内填空环节。reborn 本身就是"对照答案"，不另造教学专用代码。
+- **教学主线（混合式）**：主线**跟读 reborn 真实代码** + **动手跑冒烟与实验** + **复用其 93 个测试做绿灯验收**；每模块配"变式练习"（先预测再观察）；关键模块（attention、loss_mask）增加页内填空环节。reborn 本身就是"对照答案"，不另造教学专用代码。
 - **硬件分层**：主线全部 CPU/tiny 配方可完成；64M 真训与双卡 DDP 标注 🎮 选做；无 GPU 时走 `[存档]` 读档分析路线（读真实日志是正式学习路径，不是降级）。
 
-## 2. 课程结构（6 篇 22 模块）
+## 2. 课程结构（7 篇 23 模块 + 2 附录）
 
 ```
+P0 准备        M00（Week-0：三档自测 + 工具箱 + 版本绿灯）
 P1 开箱·用     M01 ─ M02 ─ M03                      现象与地图
 P2 模型·造     M04 ─ M05 ─ M06 ─ M07 ─ M08 ─ M09 🏁A   自底向上建模型
 P3 数据        M10 ─ M11 ─ M12                       语料到样本
@@ -26,6 +27,7 @@ P6 毕业        M22 🏁C                                全链路与毕业实�
 
 | # | 文件 | 标题 | 核心内容 | 关键 reborn 资产 | 里程碑/填空 |
 |---|---|---|---|---|---|
+| M00 | `m00_week0.html` | Week-0 准备：环境与前置自测 | 三档受众自测、最小工具箱、三盏版本绿灯 | `tools/verify_env.py` | 零基础先修路线入口 |
 | M01 | `m01_get_started.html` | 课程导览与第一个绿灯 | 学习方法、uv 环境、verify_env、make smoke | `Makefile`、`tools/verify_env.py`、`configs/smoke/` | |
 | M02 | `m02_chat.html` | 与 64M 模型对话 | 权重加载、引擎门面、温度/top_p 旋钮、真实 bug 猎场 | `tools/chat.py`、`inference/engine.py`、`out/*.pth` | 🔍 chat 入口签名 bug（实测发现） |
 | M03 | `m03_pipeline.html` | 全链路地图：一次请求的一生 | 七站巡游 tokenizer→engine→generator→model→kv→sampling→detok、架构总览 | `inference/` 全目录、`models/` 总览 | 概念地图（后续每课解剖一站） |
@@ -52,9 +54,12 @@ P6 毕业        M22 🏁C                                全链路与毕业实�
 **里程碑定义**：
 - 🏁A（M09）：模型建成——`test_model.py` 主体绿 + 官方 `pretrain_768.pth` 以 strict=True 载入（模型与官方逐键等价的最硬证据）。
 - 🏁B（M16）：自己的基座——tiny pretrain 收敛权重可被自己的推理链路加载生成；读档分析 reborn 64M run。
-- 🏁C（M22）：毕业——85 测全绿 + 八范式 smoke 全通过 + 一份有数据支撑的毕业小实验。
+- 🏁C（M22）：毕业——93 测全绿 + 八范式 smoke 全通过 + 一份有数据支撑的毕业小实验。
+- 🏁D（附录 btrack.html）：B 轨终点——按八站自写挑战逐张量对拍 reborn，用自己的实现让自己的模型说话。
 
-**写作顺序与状态**：22 模块已全部成文（2026-10-01 发布，COURSE 数组全部 status=done）。
+**附录页**（不在 23 模块进度口径内）：`btrack.html`（B 轨·自写挑战总纲，10 个模块页内链引用）、`pytorch_guide.html`（PyTorch 特殊用法指南，5 个模块页引用）；入口在主页模块地图与侧栏的附录区。
+
+**写作顺序与状态**：23 模块（含 M00）+ 2 附录页已全部成文（2026-10-01 发布主线 22 模块、2026-10-06 补 M00/B 轨/PyTorch 指南并完成修复周期同步，COURSE 数组全部 status=done）。
 
 ## 3. 教学约定
 

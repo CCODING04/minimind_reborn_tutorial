@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M02 · 与 64M 模型对话 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=9">
+<link rel="stylesheet" href="assets/course.css?v=10">
 </head>
 <body data-module="m02">
 
@@ -32,7 +32,7 @@
         <h1>与 64M 模型对话</h1>
         <p class="lede">
           M01 的冒烟给了你 3 个 tiny 权重；完整训练出的官方 64M 正主则按
-          <a href="m01_get_started.html#weights">M01 §官方权重下载</a> 下载到 <code>out/official/</code>。这一课先不管模型内部长什么样——把模型叫醒，问它"你是谁"，转 temperature 旋钮看它换三种性格；然后猎一个真实 bug：官方对话入口 <code>tools/chat.py</code> 此刻根本跑不起来，而 49 个测试全绿（49 为 M01 时代口径，随仓库长上下文工作扩容为 85，演进说明见 M01）。为什么？
+          <a href="m01_get_started.html#weights">M01 §官方权重下载</a> 下载到 <code>out/official/</code>。这一课先不管模型内部长什么样——把模型叫醒，问它"你是谁"，转 temperature 旋钮看它换三种性格；然后猎一个真实 bug：课程写作时（2026-09-29），官方对话入口 <code>tools/chat.py</code> 第一句话就崩，而当时 49 个测试全绿（49 为 M01 时代口径，随仓库演进现为 93——2026-10-06 修复周期又新增一批回归测试，演进说明见 M01）。为什么？现在它已被修复，但猎场完整保留——你将学会亲手复现那次崩溃。
         </p>
         <div class="meta">
           <span class="chip">前置：<b>M01 课程导览与第一个绿灯</b></span>
@@ -260,18 +260,29 @@ print("[finish=%s tokens=%d latency=%sms]" % (out["finish_reason"], out["generat
 <span class="err">    out = self.generate_fn(inputs["input_ids"], inputs["attention_mask"], self.gen)</span>
 <span class="err">TypeError: MiniMindLLM.generate_tokens() takes 3 positional arguments but 4 were given</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 路径以 <code>...</code> 缩略，其余逐字——注意：不是"输出质量差"，是<b>第一句话就崩</b>，而 <code>make test</code> 此刻全绿。</p>
+      <div class="callout note">
+        <div class="co-title">📌 状态更新（2026-10-06）：已修复——猎场改为"复现式"教学</div>
+        <p>
+          这个 bug 在课程写作 8 天后被修复（commit <code>8ab893d</code>）：现在 <code>echo "你好" | uv run python tools/chat.py --weight full_sft</code> 正常对话，
+          不会出现上面的 Traceback。想亲手复现那次崩溃（强烈推荐，比读报错强十倍），把 <code>chat.py</code> 临时退回修复前版本：
+        </p>
+        <div class="codeblock"><div class="code-head"><span>复现历史崩溃（在 Reproduce/minimind_reborn 目录下）</span><span class="lang">bash</span></div><pre class="code"><code>git checkout 8ab893d^ -- src/minimind_reborn/inference/chat.py   # 退回修复前
+echo "你好" | uv run python tools/chat.py --weight full_sft      # ← 逐字复现 TypeError
+git checkout HEAD -- src/minimind_reborn/inference/chat.py       # 恢复修复版</code></pre></div>
+        <p class="prov"><b>[作者实测 · 2026-10-06 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 退回版第一句即抛 <code>TypeError ... 3 positional arguments but 4 were given</code>，恢复版正常生成——修复与否的对照，一跑便知。</p>
+      </div>
 
       <div class="callout warn">
         <div class="co-title">⚠️ 坑卡：keyword-only 参数遇上位置传参</div>
         <ul class="pit-stages">
           <li class="sym"><code>TypeError: generate_tokens() takes 3 positional arguments but 4 were given</code>——对话入口输入第一句即崩，回溯直指 <code>chat.py:73</code>。</li>
           <li class="cause">
-            两个签名对不上。真实入口（engine.py:119 起）把 <code>attention_mask</code> 设为 <b>keyword-only</b>（星号之后）：<code>generate_tokens(self, input_ids, gen, *, attention_mask=None, ...)</code>——位置参数只有 2 个（含 self 共 3）。而 <code>ChatSession.respond()</code>（chat.py:73）用三个位置参数调用，第 2 个本想传 mask、实际落进 <code>gen</code> 槽位，第 3 个无处安放，于是报"4 were given"（self + 3）。
+            两个签名对不上。真实入口（engine.py:125 起）把 <code>attention_mask</code> 设为 <b>keyword-only</b>（星号之后）：<code>generate_tokens(self, input_ids, gen, *, attention_mask=None, ...)</code>——位置参数只有 2 个（含 self 共 3）。而 <code>ChatSession.respond()</code>（chat.py:73）用三个位置参数调用，第 2 个本想传 mask、实际落进 <code>gen</code> 槽位，第 3 个无处安放，于是报"4 were given"（self + 3）。
           </li>
           <li class="fix">
             一行修复（chat.py:73，改为按引擎真实签名传参）：
             <code>self.generate_fn(inputs["input_ids"], self.gen, attention_mask=inputs["attention_mask"])</code>。
-            但注意：只改这一行还不够——测试桩的签名也得同步（见下）。这正是本猎场的通用教训所在。
+            <b>已于 2026-10-06 落地（commit 8ab893d）</b>，且不止这一行——测试桩的签名同步对齐，另加一条真实引擎 + ChatSession 的接线测试 <code>test_session_respond_via_real_engine</code>（下方红线卡建议 ② 的原样实现），签名再漂移会先在测试里炸。
           </li>
         </ul>
       </div>
@@ -281,14 +292,14 @@ print("[finish=%s tokens=%d latency=%sms]" % (out["finish_reason"], out["generat
 def generate_tokens(self, input_ids, gen, *, attention_mask=None, max_new_tokens=None, ...):
 <span class="c">#                          ↑位置1    ↑位置2   ↑ 不能按位置填</span>
 
-<span class="c"># 调用方（chat.py:73）：三个位置参数硬塞</span>
+<span class="c"># 调用方（chat.py:73，修复前）：三个位置参数硬塞</span>
 out = self.generate_fn(inputs["input_ids"], inputs["attention_mask"], self.gen)
 <span class="c">#                  ↑ 填进 input_ids  ↑ 本想传 mask，实际落进 gen 槽位  ↑ 第 4 个位置参数：无处安放</span></code></pre></div>
       <p>
         顺带回答"为什么当初要设 keyword-only"：引擎方法后续还会长出 <code>streamer</code>、<code>cancel</code> 等可选参数，星号挡住的就是"按位置盲填、悄悄错位"——把这次的<b>静默语义错误</b>升级成<b>响亮的类型错误</b>。
       </p>
 
-      <h3 id="why-tests-miss">为什么 49 个测试（当时口径，现为 85）没拦住它</h3>
+      <h3 id="why-tests-miss">为什么 49 个测试（当时口径，现为 93）没拦住它</h3>
       <p>
         打开 <a href="codeview/tests/test_inference/test_chat_budget.py.html"><code>tests/test_inference/test_chat_budget.py</code></a>，
         ChatSession 的测试全部用<b>桩函数</b>（stub）注入生成能力：
@@ -299,13 +310,13 @@ out = self.generate_fn(inputs["input_ids"], inputs["attention_mask"], self.gen)
         ...
     return generate_fn</code></pre></div>
       <p>
-        桩的签名是 <code>(input_ids, attention_mask, gen)</code>——<b>恰好匹配 chat.py:73 的错误调用方式</b>，而不匹配真实引擎。于是测试验证的命题是"ChatSession 能和一个长得像调用方假设的桩合作"，而非"能与真实 <code>generate_tokens</code> 合作"。49 个测试（当时口径，现为 85）没有任何一条把两者<b>接在一起</b>跑过——引擎有测试、ChatSession 有测试，缝隙恰好长在两者之间。这就是<b>测试桩与真实入口之间的缝隙</b>。修复必须两边同步：调用方改成关键字传参后，桩签名也要改成 <code>(input_ids, gen, attention_mask=None)</code>，否则绿灯瞬间变红灯——裂缝只是换了个方向。
+        桩的签名是 <code>(input_ids, attention_mask, gen)</code>——<b>恰好匹配 chat.py:73 的错误调用方式</b>，而不匹配真实引擎。于是测试验证的命题是"ChatSession 能和一个长得像调用方假设的桩合作"，而非"能与真实 <code>generate_tokens</code> 合作"。49 个测试（当时口径，现为 93）没有任何一条把两者<b>接在一起</b>跑过——引擎有测试、ChatSession 有测试，缝隙恰好长在两者之间。这就是<b>测试桩与真实入口之间的缝隙</b>。修复必须两边同步：调用方改成关键字传参后，桩签名也要改成与引擎同形——2026-10-06 的修复 commit 8ab893d 正是这么做的：调用行、两处桩签名、接线测试三件一起动。
       </p>
 
       <div class="callout danger">
         <div class="co-title">🛑 红线：注入的依赖，接口契约必须锁定</div>
         <p>
-          依赖注入（把 generate_fn 传给 ChatSession）换来可测性，也给了"桩可以为所欲为"的自由。契约不锁定，桩会漂离真实接口——测试照绿，线上照崩。两种低成本锁定：① <b>契约测试</b>——断言 <code>inspect.signature(MiniMindLLM.generate_tokens)</code> 与 ChatSession 的调用形式匹配；② <b>加一条真实（tiny）引擎 + ChatSession 的接线测试</b>，让缝隙每次都被踩到。M01 的 make smoke 给训练链做了接线冒烟，推理链没有对应物——此 bug 在 M02 呈现、M20 回收修复。
+          依赖注入（把 generate_fn 传给 ChatSession）换来可测性，也给了"桩可以为所欲为"的自由。契约不锁定，桩会漂离真实接口——测试照绿，线上照崩。两种低成本锁定：① <b>契约测试</b>——断言 <code>inspect.signature(MiniMindLLM.generate_tokens)</code> 与 ChatSession 的调用形式匹配；② <b>加一条真实（tiny）引擎 + ChatSession 的接线测试</b>，让缝隙每次都被踩到。M01 的 make smoke 给训练链做了接线冒烟，推理链没有对应物——此 bug 在 M02 呈现；2026-10-06 修复周期采纳建议 ②，<code>test_session_respond_via_real_engine</code> 已入 <code>test_chat_budget.py</code>。
         </p>
       </div>
 </section>
@@ -340,7 +351,7 @@ out = self.generate_fn(inputs["input_ids"], inputs["attention_mask"], self.gen)
         <div class="quiz-body">
           <div class="quiz-ans">
             <p><b>答案：</b>测试桩与真实入口之间的缝隙——桩验证不了它没模拟的签名契约。只改调用方一行，测试桩 <code>(input_ids, attention_mask, gen)</code> 立刻与新的关键字传参方式错位，绿灯变红灯；修复必须连同桩签名（以及任何其他调用方）一起同步。根治靠锁定契约：签名断言，或一条真实引擎 + ChatSession 的接线测试。</p>
-            <p class="back">答错回看：<a href="#why-tests-miss">为什么 49 个测试（当时口径，现为 85）没拦住它</a> 与 <a href="#bug">红线卡</a>。</p>
+            <p class="back">答错回看：<a href="#why-tests-miss">为什么 49 个测试（当时口径，现为 93）没拦住它</a> 与 <a href="#bug">红线卡</a>。</p>
           </div>
         </div>
       </details>
@@ -408,17 +419,17 @@ print('[finish=%s tokens=%d latency=%sms]' % (out['finish_reason'], out['generat
             <li>打印出一段以「你好」或「我」开头的<b>通顺中文自我介绍</b>（字句随机，应提到 jingyaogong 或"AI"，无 reader 式堆叠）；</li>
             <li>末行形如 <code>[finish=length tokens=128 latency=…ms]</code>——finish 与 tokens 必须是 <code>length</code> 与 <code>128</code>（latency 只看量级）；</li>
             <li>全程无 <code>Traceback</code>；</li>
-            <li>附加项：<code>echo 你好 | uv run python tools/chat.py --weight full_sft</code> 打出与页面一致的 <code>TypeError</code>——你也复现了猎场。</li>
+            <li>附加项：按 <a href="#bug">状态更新卡</a>把 chat.py 退回修复前版本，<code>echo 你好 | uv run python tools/chat.py --weight full_sft</code> 打出与页面一致的 <code>TypeError</code>，再恢复修复版正常对话——你也复现并验收了猎场。</li>
           </ul>
           <details>
             <summary>失败了怎么办？（按报错第一行分流）</summary>
             <p>
               <b>FileNotFoundError（权重文件不存在）</b> → <code>ls out/*.pth</code> 看清单；768 正主按
               <a href="m01_get_started.html#weights">M01 权重获取</a> 下载（命令照抄后加 <code>out_root='out/official'</code>），
-              或完整训练（M16）；或退而用 <code>MiniMindLLM.build('full_sft', hidden_size=64, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2)</code> 验收 tiny 权重——后两个头参数不可省（省了会撞上文路线 B 的 size mismatch，build() 默认 8 头/4 KV 头，而 tiny 是 4 头/2 KV 头）；finish/tokens 标准不变，通顺度会下降——tiny 模型没训够；
+              或完整训练（M16）；或退而按<b>上文路线 B</b> 的裸构造器组装 tiny 引擎（6 行，见 <a href="#weights-where">开跑之前</a>）验收 tiny 权重——<b>别试图给 build() 传头数参数</b>：它的签名只有 hidden_size/num_hidden_layers 等少数形状参数（engine.py:43 起），头数写不进去，这也是路线 B 那趟"弯路"的由来；finish/tokens 标准不变，通顺度会下降——tiny 模型没训够；
               <b>ModuleNotFoundError</b> → 确认在仓库根目录且 <code>uv sync --extra dev</code> 跑完；
               <b>无 GPU</b> → build() 自动回退 CPU + fp32，命令照跑，延迟升到秒级，绿灯标准不变；
-              <b>chat.py 的 TypeError</b> → 不是环境问题，那就是猎场本体，去<a href="#bug">对照</a>。
+              <b>chat.py 的 TypeError</b> → 不是环境问题——检查你是否还停在猎场复现的"修复前 checkout"：先 <code>git checkout HEAD -- src/minimind_reborn/inference/chat.py</code> 恢复，再去<a href="#bug">对照</a>；当前修复版（2026-10-06 起）正常对话。
             </p>
           </details>
         </div>
@@ -464,6 +475,6 @@ print('[finish=%s tokens=%d latency=%sms]' % (out['finish_reason'], out['generat
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=9"></script>
+<script src="assets/course.js?v=10"></script>
 </body>
 </html>

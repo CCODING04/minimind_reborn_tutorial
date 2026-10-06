@@ -5,341 +5,357 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>test_sft_pipeline.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../assets/course.css?v=9">
+<link rel="stylesheet" href="../../../assets/course.css?v=10">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
   <a class="cv-back" href="../../../index.html">← 课程地图</a>
   <span class="cv-crumb">Reproduce/minimind_reborn/tests/test_data/test_sft_pipeline.py</span>
-  <span class="cv-meta">326 行 · 14KB · minimind_reborn</span>
+  <span class="cv-meta">342 行 · 14KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>tests/test_data/test_sft_pipeline.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;数据管线修复测试（重训计划阶段 1：C1 轮次截断 / C3 零损失过滤 / C4 去重 / C5 分桶）。&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import json
-from pathlib import Path
-
-import numpy as np
-
-from minimind_reborn.data.datasets import SFTDataset, encode_sft_sample
-from minimind_reborn.data.loss_mask import pattern_ids
-from minimind_reborn.data.manifest import (
-    load_or_build,
-    manifest_path,
-    normalize_text,
-    split_balance_report,
-    stable_hash,
-)
-
-
-def _write_sft(path: Path, convs_list: list[list[dict]]) -&gt; None:
-    path.write_text(
-        &quot;\n&quot;.join(json.dumps({&quot;conversations&quot;: c}, ensure_ascii=False) for c in convs_list),
-        encoding=&quot;utf-8&quot;,
-    )
-
-
-def _conv(user: str, assistant: str) -&gt; list[dict]:
-    return [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: user}, {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: assistant}]
-
-
-def _long_convs(n_turns: int, filler: str = &quot;这一轮的问答内容足够长以撑大渲染后的 token 数。&quot;) -&gt; list[dict]:
-    convs: list[dict] = []
-    for i in range(n_turns):
-        convs += [
-            {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: f&quot;第{i}轮提问，{filler}&quot;},
-            {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: f&quot;第{i}轮回答，{filler}&quot;},
-        ]
-    return convs
-
-
-# ---------- C1：轮次边界截断 ----------
-
-def test_fit_turns_drops_oldest_complete_turns(tokenizer):
-    &quot;&quot;&quot;超预算多轮：丢最旧整轮，输出的每轮问答都完整（无残段）。&quot;&quot;&quot;
-    prefix_ids, suffix_ids = pattern_ids(tokenizer)
-    convs = _long_convs(8)
-    budget = 200  # 足够小，必然要丢轮
-    out = encode_sft_sample(tokenizer, prefix_ids, suffix_ids, convs, budget, remove_empty_think=False)
-    stats = out[&quot;stats&quot;]
-    assert stats[&quot;fitted&quot;] is True
-    assert stats[&quot;dangling&quot;] == 0, &quot;轮次截断不允许产生残段&quot;
-    assert stats[&quot;complete_after&quot;] &gt;= 1
-    # 丢的是最旧轮：渲染文本里早轮次的提问不再出现，最末轮保留
-    text = tokenizer.decode([t for t in out[&quot;input_ids&quot;] if t != tokenizer.pad_token_id])
-    assert &quot;第0轮提问&quot; not in text
-    assert &quot;第7轮&quot; in text
-
-
-def test_fit_keeps_system_and_last_turn(tokenizer):
-    convs = [{&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: &quot;你是测试助手。&quot;}] + _long_convs(6)
-    prefix_ids, suffix_ids = pattern_ids(tokenizer)
-    out = encode_sft_sample(tokenizer, prefix_ids, suffix_ids, convs, 200, remove_empty_think=False)
-    text = tokenizer.decode([t for t in out[&quot;input_ids&quot;] if t != tokenizer.pad_token_id])
-    assert &quot;测试助手&quot; in text, &quot;system 必须恒保留&quot;
-    assert &quot;第5轮回答&quot; in text, &quot;最后一轮必须完整保留&quot;
-    assert out[&quot;stats&quot;][&quot;dangling&quot;] == 0
-
-
-def test_fit_truncates_user_content_keeps_assistant(tokenizer):
-    &quot;&quot;&quot;只剩最后一轮仍超预算：左截 user 内容保尾部（可截至空），assistant 回复完整。
-
-    回归（阶段 1 验收发现）：旧实现给 user 内容留 32 字符下限，遇到「回复 ≈660 token、
-    预算 768」的样本被挤过预算线落到硬截，白丢整条监督目标。
-    &quot;&quot;&quot;
-    prefix_ids, suffix_ids = pattern_ids(tokenizer)
-    huge_question = &quot;很长的问题开头。&quot; * 200 + &quot;问题结尾标记&quot;
-    convs = _conv(huge_question, &quot;简短但完整的回答。&quot;)
-    out = encode_sft_sample(tokenizer, prefix_ids, suffix_ids, convs, 160, remove_empty_think=False)
-    stats = out[&quot;stats&quot;]
-    assert stats[&quot;hard_truncated&quot;] is False, &quot;assistant 不应被硬截&quot;
-    assert stats[&quot;complete_after&quot;] == 1 and stats[&quot;dangling&quot;] == 0
-    text = tokenizer.decode([t for t in out[&quot;input_ids&quot;] if t != tokenizer.pad_token_id])
-    assert &quot;问题结尾标记&quot; in text, &quot;user 左截必须保尾部&quot;
-    assert &quot;简短但完整的回答&quot; in text
-
-
-def test_fit_prefers_completing_big_reply_over_user_floor(tokenizer):
-    &quot;&quot;&quot;回复 ≈600 token + 提问 @768：必须保住完整回复（不得因保底字符数落硬截）。
-
-    回归（阶段 1 验收发现）：真实样本「回复 607 字符 + 短提问」full≈780 只超 12 token，
-    旧实现的 32 字符保底让它落到硬截、白丢整条监督目标；修复后 user 截到空、回复完整。
-    &quot;&quot;&quot;
-    prefix_ids, suffix_ids = pattern_ids(tokenizer)
-    reply = &quot;這是一道經典菜餚的做法，&quot; * 49  # ≈590 字：回复自身 &lt; 768 但渲染全长超窗
-    convs = _conv(&quot;除了這幾道菜，你還有沒有其他的推薦？&quot;, reply)
-    out = encode_sft_sample(tokenizer, prefix_ids, suffix_ids, convs, 768, remove_empty_think=False)
-    stats = out[&quot;stats&quot;]
-    assert 768 &lt; stats[&quot;full_len&quot;] &lt;= 800  # 前提：超窗但回复自身装得下
-    assert stats[&quot;hard_truncated&quot;] is False, f&quot;不应硬截：{stats}&quot;
-    assert stats[&quot;complete_after&quot;] == 1 and stats[&quot;dangling&quot;] == 0
-
-
-def test_single_oversized_reply_hard_truncates_to_zero_loss(tokenizer):
-    &quot;&quot;&quot;极端：单条 assistant 自身超预算 → 硬截 → 无完整回复 → zero_loss（交 C3 过滤）。&quot;&quot;&quot;
-    prefix_ids, suffix_ids = pattern_ids(tokenizer)
-    convs = _conv(&quot;问&quot;, &quot;超长回答。&quot; * 400)
-    out = encode_sft_sample(tokenizer, prefix_ids, suffix_ids, convs, 128, remove_empty_think=False)
-    stats = out[&quot;stats&quot;]
-    assert stats[&quot;hard_truncated&quot;] is True
-    assert stats[&quot;zero_loss&quot;] is True
-    assert all(lab == -100 for lab in out[&quot;labels&quot;])
-
-
-def test_short_sample_untouched(tokenizer):
-    &quot;&quot;&quot;不超预算的样本：无适配、无硬截、区间照常。&quot;&quot;&quot;
-    prefix_ids, suffix_ids = pattern_ids(tokenizer)
-    convs = _conv(&quot;你好&quot;, &quot;你好呀！&quot;)
-    out = encode_sft_sample(tokenizer, prefix_ids, suffix_ids, convs, 512, remove_empty_think=False)
-    stats = out[&quot;stats&quot;]
-    assert stats == {
-        &quot;full_len&quot;: stats[&quot;full_len&quot;],
-        &quot;fitted&quot;: False,
-        &quot;hard_truncated&quot;: False,
-        &quot;complete_before&quot;: 1,
-        &quot;complete_after&quot;: 1,
-        &quot;dangling&quot;: 0,
-        &quot;n_messages&quot;: 2,
-        &quot;zero_loss&quot;: False,
-    }
-
-
-def test_multi_turn_survival_is_full_under_budget(tokenizer):
-    &quot;&quot;&quot;结构保证（§4.1）：任意预算下多轮样本无残段、完整回复只增不减地保留到最后一轮。&quot;&quot;&quot;
-    prefix_ids, suffix_ids = pattern_ids(tokenizer)
-    for budget in (128, 192, 256, 384):
-        convs = _long_convs(6)
-        out = encode_sft_sample(tokenizer, prefix_ids, suffix_ids, convs, budget, remove_empty_think=False)
-        s = out[&quot;stats&quot;]
-        if not s[&quot;hard_truncated&quot;]:
-            assert s[&quot;dangling&quot;] == 0
-            assert s[&quot;complete_after&quot;] &gt;= 1  # 至少最后一轮完整存活
-
-
-# ---------- manifest（C4/C5 基础） ----------
-
-def test_manifest_dedup_keeps_first_and_buckets(tmp_path):
-    p = tmp_path / &quot;s.jsonl&quot;
-    a = _conv(&quot;问题A&quot;, &quot;回答A&quot;)
-    a_dup = _conv(&quot;换个问法&quot;, &quot;回答A&quot;)  # 回复相同 → 去重剔除
-    b = _conv(&quot;问题B&quot;, &quot;回答B&quot;)
-    _write_sft(p, [a, a_dup, b])
-    m = load_or_build(p, eval_ratio=0.0)
-    assert m.keep.tolist() == [True, False, True]
-    assert manifest_path(p).exists()
-    # 指纹失效：改文件后重建
-    mtime = p.stat().st_mtime_ns
-    extra = json.dumps({&quot;conversations&quot;: _conv(&quot;C&quot;, &quot;回答C&quot;)}, ensure_ascii=False)
-    p.write_text(p.read_text(encoding=&quot;utf-8&quot;) + &quot;\n&quot; + extra, encoding=&quot;utf-8&quot;)
-    import os
-
-    os.utime(p, ns=(mtime + 1, mtime + 1))
-    m2 = load_or_build(p, eval_ratio=0.0)
-    assert len(m2) == 4 and m2.keep.tolist() == [True, False, True, True]
-
-
-def test_stable_hash_is_process_independent():
-    assert stable_hash(normalize_text(&quot;Hello, 世界！&quot;)) == stable_hash(normalize_text(&quot;hello 世界&quot;))
-
-
-def test_split_balance_report_and_assertion_inputs(tmp_path):
-    &quot;&quot;&quot;多轮占比差 ≤2pp 断言的输入：均衡数据 gap 小，构造性检查通过。&quot;&quot;&quot;
-    p = tmp_path / &quot;s.jsonl&quot;
-    convs_list = [_conv(f&quot;q{i}&quot;, f&quot;a{i}&quot;) for i in range(50)] + [_long_convs(3, f&quot;多轮{i}&quot;) for i in range(50)]
-    _write_sft(p, convs_list)
-    m = load_or_build(p, eval_ratio=0.3)
-    rep = split_balance_report(m)
-    assert rep[&quot;kept_total&quot;] == 100 and rep[&quot;dedup_removed&quot;] == 0
-    assert rep[&quot;multi_turn_gap_pp&quot;] &lt;= 5.0  # n=100 时随机分桶的抽样噪声（正式断言只对全量清单生效）
-
-
-# ---------- SFTDataset 集成（C3/C4/C5 端到端） ----------
-
-def test_sft_dataset_filters_zero_loss_with_remap(tmp_path, tokenizer):
-    &quot;&quot;&quot;C3：训练视图跳过零损失样本并计数；直接索引（__getitem__）不做过滤。&quot;&quot;&quot;
-    p = tmp_path / &quot;s.jsonl&quot;
-    good = _conv(&quot;正常问题&quot;, &quot;正常回答。&quot;)
-    oversized = _conv(&quot;问&quot;, &quot;超长回答。&quot; * 400)  # 硬截 → 零损失
-    _write_sft(p, [oversized, good])
-    ds = SFTDataset(p, tokenizer, max_length=128, eval_ratio=0.0, add_system_ratio=0.0)
-    tv = ds.train_view()
-    assert len(tv) == 2  # 视图长度不变（重映射不改位置数）
-    item = tv[0]  # 位置 0 原是 oversized → 重映射到 good
-    assert bool((item[&quot;labels&quot;] != -100).any())
-    assert tv.remap_events &gt;= 1
-    # 直接索引不做过滤：位置 0 原样返回零损失样本（口径：过滤只发生在训练视图取数路径）
-    direct = ds[0]
-    assert not bool((direct[&quot;labels&quot;] != -100).any())
-
-
-def test_sft_dataset_dedups_and_splits_by_hash(tmp_path, tokenizer):
-    &quot;&quot;&quot;C4+C5 端到端：重复回复只进一次训练；val 与 train 都来自哈希分桶。&quot;&quot;&quot;
-    p = tmp_path / &quot;s.jsonl&quot;
-    convs_list = [_conv(f&quot;问题{i}&quot;, f&quot;回答{i}&quot;) for i in range(40)]
-    convs_list += [_conv(&quot;重复问法&quot;, &quot;回答0&quot;), _conv(&quot;再换问法&quot;, &quot;回答0&quot;)]  # 两条重复
-    _write_sft(p, convs_list)
-    ds = SFTDataset(p, tokenizer, max_length=128, eval_ratio=0.25, add_system_ratio=0.0)
-    card = ds.data_card()
-    assert card[&quot;dedup_removed&quot;] == 2
-    assert card[&quot;multi_turn_gap_pp&quot;] &lt;= SFTDataset.MULTI_TURN_GAP_TOLERANCE_PP + 1e-9
-    tv, ev = ds.train_view(), ds.eval_view()
-    assert len(tv) + len(ev) == 40  # 42 行去重 2 → 40
-    # 训练视图内回复唯一
-    seen: set[int] = set()
-    from minimind_reborn.data.manifest import reply_text as rt
-
-    for i in [*tv._indices, *ev._indices]:
-        h = stable_hash(normalize_text(rt(json.loads(p.read_text(encoding=&quot;utf-8&quot;).splitlines()[i])[&quot;conversations&quot;])))
-        assert h not in seen
-        seen.add(h)
-
-
-def test_sft_ordered_file_eval_not_tail_biased(tmp_path, tokenizer):
-    &quot;&quot;&quot;C5 核心回归：前 80 条单轮 + 后 20 条多轮的有序文件，eval 桶必须两类都有。&quot;&quot;&quot;
-    p = tmp_path / &quot;ordered.jsonl&quot;
-    convs_list = [_conv(f&quot;单轮问题{i}&quot;, f&quot;单轮回答{i}&quot;) for i in range(80)]
-    convs_list += [_long_convs(3, f&quot;多轮{i}&quot;) for i in range(20)]
-    _write_sft(p, convs_list)
-    ds = SFTDataset(p, tokenizer, max_length=256, eval_ratio=0.2, add_system_ratio=0.0)
-    ev = ds.eval_view()
-    multi_in_eval = sum(1 for i in ev._indices if i &gt;= 80)
-    assert 0 &lt; multi_in_eval &lt; len(ev), &quot;哈希分桶下 eval 不应被尾部多轮整段霸占&quot;
-
-
-def test_manifest_rebuilds_when_file_changes(tmp_path, tokenizer):
-    &quot;&quot;&quot;指纹（mtime+size）失效后自动重建，行数与内容对齐。&quot;&quot;&quot;
-    import os
-
-    p = tmp_path / &quot;s.jsonl&quot;
-    _write_sft(p, [_conv(&quot;q&quot;, &quot;a&quot;)])
-    SFTDataset(p, tokenizer, max_length=64, eval_ratio=0.0, add_system_ratio=0.0)
-    mpath = manifest_path(p)
-    assert mpath.exists()
-    with np.load(mpath, allow_pickle=False) as z:
-        old_fp = str(z[&quot;fingerprint&quot;])
-    # 追加一行（mtime 与 size 均变）→ 重建
-    p.write_text(
-        p.read_text(encoding=&quot;utf-8&quot;)
-        + &quot;\n&quot;
-        + json.dumps({&quot;conversations&quot;: _conv(&quot;q2&quot;, &quot;a2&quot;)}, ensure_ascii=False),
-        encoding=&quot;utf-8&quot;,
-    )
-    st = p.stat()
-    os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 1))
-    ds2 = SFTDataset(p, tokenizer, max_length=64, eval_ratio=0.0, add_system_ratio=0.0)
-    assert len(ds2) == 2
-    with np.load(mpath, allow_pickle=False) as z:
-        assert str(z[&quot;fingerprint&quot;]) != old_fp
-
-
-# ---------- 档二 D1：多轮上采样 ----------
-
-def test_oversample_repeat_counts():
-    &quot;&quot;&quot;单轮 ×1、多轮 ×2、深多轮 ×3（重训计划档二：治多轮占比过低的确定性展开）。&quot;&quot;&quot;
-    import numpy as np
-
-    from minimind_reborn.data.datasets import (
-        DEEP_TURN_REPEAT,
-        MULTI_TURN_REPEAT,
-        oversample_repeat_counts,
-    )
-    counts = oversample_repeat_counts(np.array([2, 3, 4, 5, 9]))
-    assert counts.tolist() == [1, MULTI_TURN_REPEAT, MULTI_TURN_REPEAT, DEEP_TURN_REPEAT, DEEP_TURN_REPEAT]
-
-
-def test_sft_dataset_train_view_expands_multi_turn(tmp_path, tokenizer):
-    &quot;&quot;&quot;训练视图按倍数展开、验证视图不展开、data_card 记录有效占比。&quot;&quot;&quot;
-    p = tmp_path / &quot;s.jsonl&quot;
-    single = _conv(&quot;单轮问题&quot;, &quot;单轮回答&quot;)
-    multi = [
-        {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;第一问&quot;},
-        {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: &quot;第一答&quot;},
-        {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;第二问&quot;},
-        {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: &quot;第二答&quot;},
-    ]  # 4 消息：多轮 ×2
-    deep = multi + [
-        {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;第三问&quot;},
-        {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: &quot;第三答&quot;},
-    ]  # 6 消息：深多轮 ×3
-    _write_sft(p, [single, multi, deep])
-    ds = SFTDataset(p, tokenizer, max_length=256, eval_ratio=0.0, add_system_ratio=0.0)
-    tv = ds.train_view()
-    # raw 3 行；有效 = 1 + 2 + 3 = 6
-    card = ds.data_card()
-    assert card[&quot;train_rows_raw&quot;] == 3
-    assert card[&quot;train_rows_effective&quot;] == 6
-    assert card[&quot;multi_turn_effective_share&quot;] == round(5 / 6, 4)
-    # 展开视图里多轮行索引出现 2 次、深多轮 3 次、单轮 1 次
-    from collections import Counter
-
-    c = Counter(tv._indices)
-    assert c[0] == 1 and c[1] == 2 and c[2] == 3
-    # 直接索引（__getitem__）不受展开影响：仍是原始行
-    assert len(ds) == 3
-
-
-def test_sft_dataset_eval_view_never_expanded(tmp_path, tokenizer):
-    p = tmp_path / &quot;s.jsonl&quot;
-    convs_list = [
-        [
-            {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: f&quot;问{i}&quot;},
-            {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: f&quot;答{i}&quot;},
-            {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: f&quot;追问{i}&quot;},
-            {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: f&quot;补充{i}&quot;},
-        ]
-        for i in range(40)
-    ]
-    _write_sft(p, convs_list)
-    ds = SFTDataset(p, tokenizer, max_length=256, eval_ratio=0.25, add_system_ratio=0.0)
-    ev = ds.eval_view()
-    from collections import Counter
-
-    assert ev is not None
-    c = Counter(ev._indices)
-    assert max(c.values()) == 1, &quot;验证视图不允许重复样本&quot;</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>tests/test_data/test_sft_pipeline.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;数据管线修复测试（重训计划阶段 1：C1 轮次截断 / C3 零损失过滤 / C4 去重 / C5 分桶）。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+
+from minimind_reborn.data.datasets import SFTDataset, encode_sft_sample
+from minimind_reborn.data.loss_mask import pattern_ids
+from minimind_reborn.data.manifest import (
+    load_or_build,
+    manifest_path,
+    normalize_text,
+    split_balance_report,
+    stable_hash,
+)
+
+
+def _write_sft(path: Path, convs_list: list[list[dict]]) -&gt; None:
+    path.write_text(
+        &quot;\n&quot;.join(json.dumps({&quot;conversations&quot;: c}, ensure_ascii=False) for c in convs_list),
+        encoding=&quot;utf-8&quot;,
+    )
+
+
+def _conv(user: str, assistant: str) -&gt; list[dict]:
+    return [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: user}, {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: assistant}]
+
+
+def _long_convs(n_turns: int, filler: str = &quot;这一轮的问答内容足够长以撑大渲染后的 token 数。&quot;) -&gt; list[dict]:
+    convs: list[dict] = []
+    for i in range(n_turns):
+        convs += [
+            {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: f&quot;第{i}轮提问，{filler}&quot;},
+            {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: f&quot;第{i}轮回答，{filler}&quot;},
+        ]
+    return convs
+
+
+# ---------- C1：轮次边界截断 ----------
+
+def test_fit_turns_drops_oldest_complete_turns(tokenizer):
+    &quot;&quot;&quot;超预算多轮：丢最旧整轮，输出的每轮问答都完整（无残段）。&quot;&quot;&quot;
+    prefix_ids, suffix_ids = pattern_ids(tokenizer)
+    convs = _long_convs(8)
+    budget = 200  # 足够小，必然要丢轮
+    out = encode_sft_sample(tokenizer, prefix_ids, suffix_ids, convs, budget, remove_empty_think=False)
+    stats = out[&quot;stats&quot;]
+    assert stats[&quot;fitted&quot;] is True
+    assert stats[&quot;dangling&quot;] == 0, &quot;轮次截断不允许产生残段&quot;
+    assert stats[&quot;complete_after&quot;] &gt;= 1
+    # 丢的是最旧轮：渲染文本里早轮次的提问不再出现，最末轮保留
+    text = tokenizer.decode([t for t in out[&quot;input_ids&quot;] if t != tokenizer.pad_token_id])
+    assert &quot;第0轮提问&quot; not in text
+    assert &quot;第7轮&quot; in text
+
+
+def test_fit_keeps_system_and_last_turn(tokenizer):
+    convs = [{&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: &quot;你是测试助手。&quot;}] + _long_convs(6)
+    prefix_ids, suffix_ids = pattern_ids(tokenizer)
+    out = encode_sft_sample(tokenizer, prefix_ids, suffix_ids, convs, 200, remove_empty_think=False)
+    text = tokenizer.decode([t for t in out[&quot;input_ids&quot;] if t != tokenizer.pad_token_id])
+    assert &quot;测试助手&quot; in text, &quot;system 必须恒保留&quot;
+    assert &quot;第5轮回答&quot; in text, &quot;最后一轮必须完整保留&quot;
+    assert out[&quot;stats&quot;][&quot;dangling&quot;] == 0
+
+
+def test_fit_truncates_user_content_keeps_assistant(tokenizer):
+    &quot;&quot;&quot;只剩最后一轮仍超预算：左截 user 内容保尾部（可截至空），assistant 回复完整。
+
+    回归（阶段 1 验收发现）：旧实现给 user 内容留 32 字符下限，遇到「回复 ≈660 token、
+    预算 768」的样本被挤过预算线落到硬截，白丢整条监督目标。
+    &quot;&quot;&quot;
+    prefix_ids, suffix_ids = pattern_ids(tokenizer)
+    huge_question = &quot;很长的问题开头。&quot; * 200 + &quot;问题结尾标记&quot;
+    convs = _conv(huge_question, &quot;简短但完整的回答。&quot;)
+    out = encode_sft_sample(tokenizer, prefix_ids, suffix_ids, convs, 160, remove_empty_think=False)
+    stats = out[&quot;stats&quot;]
+    assert stats[&quot;hard_truncated&quot;] is False, &quot;assistant 不应被硬截&quot;
+    assert stats[&quot;complete_after&quot;] == 1 and stats[&quot;dangling&quot;] == 0
+    text = tokenizer.decode([t for t in out[&quot;input_ids&quot;] if t != tokenizer.pad_token_id])
+    assert &quot;问题结尾标记&quot; in text, &quot;user 左截必须保尾部&quot;
+    assert &quot;简短但完整的回答&quot; in text
+
+
+def test_fit_prefers_completing_big_reply_over_user_floor(tokenizer):
+    &quot;&quot;&quot;回复 ≈600 token + 提问 @768：必须保住完整回复（不得因保底字符数落硬截）。
+
+    回归（阶段 1 验收发现）：真实样本「回复 607 字符 + 短提问」full≈780 只超 12 token，
+    旧实现的 32 字符保底让它落到硬截、白丢整条监督目标；修复后 user 截到空、回复完整。
+    &quot;&quot;&quot;
+    prefix_ids, suffix_ids = pattern_ids(tokenizer)
+    reply = &quot;這是一道經典菜餚的做法，&quot; * 49  # ≈590 字：回复自身 &lt; 768 但渲染全长超窗
+    convs = _conv(&quot;除了這幾道菜，你還有沒有其他的推薦？&quot;, reply)
+    out = encode_sft_sample(tokenizer, prefix_ids, suffix_ids, convs, 768, remove_empty_think=False)
+    stats = out[&quot;stats&quot;]
+    assert 768 &lt; stats[&quot;full_len&quot;] &lt;= 800  # 前提：超窗但回复自身装得下
+    assert stats[&quot;hard_truncated&quot;] is False, f&quot;不应硬截：{stats}&quot;
+    assert stats[&quot;complete_after&quot;] == 1 and stats[&quot;dangling&quot;] == 0
+
+
+def test_single_oversized_reply_hard_truncates_to_zero_loss(tokenizer):
+    &quot;&quot;&quot;极端：单条 assistant 自身超预算 → 硬截 → 无完整回复 → zero_loss（交 C3 过滤）。&quot;&quot;&quot;
+    prefix_ids, suffix_ids = pattern_ids(tokenizer)
+    convs = _conv(&quot;问&quot;, &quot;超长回答。&quot; * 400)
+    out = encode_sft_sample(tokenizer, prefix_ids, suffix_ids, convs, 128, remove_empty_think=False)
+    stats = out[&quot;stats&quot;]
+    assert stats[&quot;hard_truncated&quot;] is True
+    assert stats[&quot;zero_loss&quot;] is True
+    assert all(lab == -100 for lab in out[&quot;labels&quot;])
+
+
+def test_short_sample_untouched(tokenizer):
+    &quot;&quot;&quot;不超预算的样本：无适配、无硬截、区间照常。&quot;&quot;&quot;
+    prefix_ids, suffix_ids = pattern_ids(tokenizer)
+    convs = _conv(&quot;你好&quot;, &quot;你好呀！&quot;)
+    out = encode_sft_sample(tokenizer, prefix_ids, suffix_ids, convs, 512, remove_empty_think=False)
+    stats = out[&quot;stats&quot;]
+    assert stats == {
+        &quot;full_len&quot;: stats[&quot;full_len&quot;],
+        &quot;fitted&quot;: False,
+        &quot;hard_truncated&quot;: False,
+        &quot;complete_before&quot;: 1,
+        &quot;complete_after&quot;: 1,
+        &quot;dangling&quot;: 0,
+        &quot;n_messages&quot;: 2,
+        &quot;zero_loss&quot;: False,
+    }
+
+
+def test_multi_turn_survival_is_full_under_budget(tokenizer):
+    &quot;&quot;&quot;结构保证（§4.1）：任意预算下多轮样本无残段、完整回复只增不减地保留到最后一轮。&quot;&quot;&quot;
+    prefix_ids, suffix_ids = pattern_ids(tokenizer)
+    for budget in (128, 192, 256, 384):
+        convs = _long_convs(6)
+        out = encode_sft_sample(tokenizer, prefix_ids, suffix_ids, convs, budget, remove_empty_think=False)
+        s = out[&quot;stats&quot;]
+        if not s[&quot;hard_truncated&quot;]:
+            assert s[&quot;dangling&quot;] == 0
+            assert s[&quot;complete_after&quot;] &gt;= 1  # 至少最后一轮完整存活
+
+
+# ---------- manifest（C4/C5 基础） ----------
+
+def test_manifest_dedup_keeps_first_and_buckets(tmp_path):
+    p = tmp_path / &quot;s.jsonl&quot;
+    a = _conv(&quot;问题A&quot;, &quot;回答A&quot;)
+    a_dup = _conv(&quot;换个问法&quot;, &quot;回答A&quot;)  # 回复相同 → 去重剔除
+    b = _conv(&quot;问题B&quot;, &quot;回答B&quot;)
+    _write_sft(p, [a, a_dup, b])
+    m = load_or_build(p, eval_ratio=0.0)
+    assert m.keep.tolist() == [True, False, True]
+    assert manifest_path(p).exists()
+    # 指纹失效：改文件后重建
+    mtime = p.stat().st_mtime_ns
+    extra = json.dumps({&quot;conversations&quot;: _conv(&quot;C&quot;, &quot;回答C&quot;)}, ensure_ascii=False)
+    p.write_text(p.read_text(encoding=&quot;utf-8&quot;) + &quot;\n&quot; + extra, encoding=&quot;utf-8&quot;)
+    import os
+
+    os.utime(p, ns=(mtime + 1, mtime + 1))
+    m2 = load_or_build(p, eval_ratio=0.0)
+    assert len(m2) == 4 and m2.keep.tolist() == [True, False, True, True]
+
+
+def test_stable_hash_is_process_independent():
+    assert stable_hash(normalize_text(&quot;Hello, 世界！&quot;)) == stable_hash(normalize_text(&quot;hello 世界&quot;))
+
+
+def test_manifest_cache_key_includes_eval_ratio(tmp_path):
+    &quot;&quot;&quot;同文件换 eval_ratio 必须重分桶（回归：2026-10-06 前指纹仅 mtime:size，
+    先跑者的分桶被静默复用——sft_full(0.003) 与 eval 工具(0.005) 共用 jsonl 时
+    后跑者的验证集比例不等于其配置声称值）。&quot;&quot;&quot;
+    p = tmp_path / &quot;s.jsonl&quot;
+    _write_sft(p, [_conv(f&quot;问题{i}&quot;, f&quot;回答{i}&quot;) for i in range(200)])
+    m_small = load_or_build(p, eval_ratio=0.05)
+    m_large = load_or_build(p, eval_ratio=0.5)  # 文件未变，仅 ratio 不同
+    assert m_large.fingerprint != m_small.fingerprint
+    assert int(m_large.is_eval.sum()) &gt; int(m_small.is_eval.sum()) * 4  # 5% vs 50%
+    m_zero = load_or_build(p, eval_ratio=0.0)  # 0 = 关闭评估
+    assert int(m_zero.is_eval.sum()) == 0
+    m_again = load_or_build(p, eval_ratio=0.5)  # 相同 ratio 命中缓存
+    assert m_again.is_eval.tolist() == m_large.is_eval.tolist()
+
+
+def test_split_balance_report_and_assertion_inputs(tmp_path):
+    &quot;&quot;&quot;多轮占比差 ≤2pp 断言的输入：均衡数据 gap 小，构造性检查通过。&quot;&quot;&quot;
+    p = tmp_path / &quot;s.jsonl&quot;
+    convs_list = [_conv(f&quot;q{i}&quot;, f&quot;a{i}&quot;) for i in range(50)] + [_long_convs(3, f&quot;多轮{i}&quot;) for i in range(50)]
+    _write_sft(p, convs_list)
+    m = load_or_build(p, eval_ratio=0.3)
+    rep = split_balance_report(m)
+    assert rep[&quot;kept_total&quot;] == 100 and rep[&quot;dedup_removed&quot;] == 0
+    assert rep[&quot;multi_turn_gap_pp&quot;] &lt;= 5.0  # n=100 时随机分桶的抽样噪声（正式断言只对全量清单生效）
+
+
+# ---------- SFTDataset 集成（C3/C4/C5 端到端） ----------
+
+def test_sft_dataset_filters_zero_loss_with_remap(tmp_path, tokenizer):
+    &quot;&quot;&quot;C3：训练视图跳过零损失样本并计数；直接索引（__getitem__）不做过滤。&quot;&quot;&quot;
+    p = tmp_path / &quot;s.jsonl&quot;
+    good = _conv(&quot;正常问题&quot;, &quot;正常回答。&quot;)
+    oversized = _conv(&quot;问&quot;, &quot;超长回答。&quot; * 400)  # 硬截 → 零损失
+    _write_sft(p, [oversized, good])
+    ds = SFTDataset(p, tokenizer, max_length=128, eval_ratio=0.0, add_system_ratio=0.0)
+    tv = ds.train_view()
+    assert len(tv) == 2  # 视图长度不变（重映射不改位置数）
+    item = tv[0]  # 位置 0 原是 oversized → 重映射到 good
+    assert bool((item[&quot;labels&quot;] != -100).any())
+    assert tv.remap_events &gt;= 1
+    # 直接索引不做过滤：位置 0 原样返回零损失样本（口径：过滤只发生在训练视图取数路径）
+    direct = ds[0]
+    assert not bool((direct[&quot;labels&quot;] != -100).any())
+
+
+def test_sft_dataset_dedups_and_splits_by_hash(tmp_path, tokenizer):
+    &quot;&quot;&quot;C4+C5 端到端：重复回复只进一次训练；val 与 train 都来自哈希分桶。&quot;&quot;&quot;
+    p = tmp_path / &quot;s.jsonl&quot;
+    convs_list = [_conv(f&quot;问题{i}&quot;, f&quot;回答{i}&quot;) for i in range(40)]
+    convs_list += [_conv(&quot;重复问法&quot;, &quot;回答0&quot;), _conv(&quot;再换问法&quot;, &quot;回答0&quot;)]  # 两条重复
+    _write_sft(p, convs_list)
+    ds = SFTDataset(p, tokenizer, max_length=128, eval_ratio=0.25, add_system_ratio=0.0)
+    card = ds.data_card()
+    assert card[&quot;dedup_removed&quot;] == 2
+    assert card[&quot;multi_turn_gap_pp&quot;] &lt;= SFTDataset.MULTI_TURN_GAP_TOLERANCE_PP + 1e-9
+    tv, ev = ds.train_view(), ds.eval_view()
+    assert len(tv) + len(ev) == 40  # 42 行去重 2 → 40
+    # 训练视图内回复唯一
+    seen: set[int] = set()
+    from minimind_reborn.data.manifest import reply_text as rt
+
+    for i in [*tv._indices, *ev._indices]:
+        h = stable_hash(normalize_text(rt(json.loads(p.read_text(encoding=&quot;utf-8&quot;).splitlines()[i])[&quot;conversations&quot;])))
+        assert h not in seen
+        seen.add(h)
+
+
+def test_sft_ordered_file_eval_not_tail_biased(tmp_path, tokenizer):
+    &quot;&quot;&quot;C5 核心回归：前 80 条单轮 + 后 20 条多轮的有序文件，eval 桶必须两类都有。&quot;&quot;&quot;
+    p = tmp_path / &quot;ordered.jsonl&quot;
+    convs_list = [_conv(f&quot;单轮问题{i}&quot;, f&quot;单轮回答{i}&quot;) for i in range(80)]
+    convs_list += [_long_convs(3, f&quot;多轮{i}&quot;) for i in range(20)]
+    _write_sft(p, convs_list)
+    ds = SFTDataset(p, tokenizer, max_length=256, eval_ratio=0.2, add_system_ratio=0.0)
+    ev = ds.eval_view()
+    multi_in_eval = sum(1 for i in ev._indices if i &gt;= 80)
+    assert 0 &lt; multi_in_eval &lt; len(ev), &quot;哈希分桶下 eval 不应被尾部多轮整段霸占&quot;
+
+
+def test_manifest_rebuilds_when_file_changes(tmp_path, tokenizer):
+    &quot;&quot;&quot;指纹（mtime+size）失效后自动重建，行数与内容对齐。&quot;&quot;&quot;
+    import os
+
+    p = tmp_path / &quot;s.jsonl&quot;
+    _write_sft(p, [_conv(&quot;q&quot;, &quot;a&quot;)])
+    SFTDataset(p, tokenizer, max_length=64, eval_ratio=0.0, add_system_ratio=0.0)
+    mpath = manifest_path(p)
+    assert mpath.exists()
+    with np.load(mpath, allow_pickle=False) as z:
+        old_fp = str(z[&quot;fingerprint&quot;])
+    # 追加一行（mtime 与 size 均变）→ 重建
+    p.write_text(
+        p.read_text(encoding=&quot;utf-8&quot;)
+        + &quot;\n&quot;
+        + json.dumps({&quot;conversations&quot;: _conv(&quot;q2&quot;, &quot;a2&quot;)}, ensure_ascii=False),
+        encoding=&quot;utf-8&quot;,
+    )
+    st = p.stat()
+    os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 1))
+    ds2 = SFTDataset(p, tokenizer, max_length=64, eval_ratio=0.0, add_system_ratio=0.0)
+    assert len(ds2) == 2
+    with np.load(mpath, allow_pickle=False) as z:
+        assert str(z[&quot;fingerprint&quot;]) != old_fp
+
+
+# ---------- 档二 D1：多轮上采样 ----------
+
+def test_oversample_repeat_counts():
+    &quot;&quot;&quot;单轮 ×1、多轮 ×2、深多轮 ×3（重训计划档二：治多轮占比过低的确定性展开）。&quot;&quot;&quot;
+    import numpy as np
+
+    from minimind_reborn.data.datasets import (
+        DEEP_TURN_REPEAT,
+        MULTI_TURN_REPEAT,
+        oversample_repeat_counts,
+    )
+    counts = oversample_repeat_counts(np.array([2, 3, 4, 5, 9]))
+    assert counts.tolist() == [1, MULTI_TURN_REPEAT, MULTI_TURN_REPEAT, DEEP_TURN_REPEAT, DEEP_TURN_REPEAT]
+
+
+def test_sft_dataset_train_view_expands_multi_turn(tmp_path, tokenizer):
+    &quot;&quot;&quot;训练视图按倍数展开、验证视图不展开、data_card 记录有效占比。&quot;&quot;&quot;
+    p = tmp_path / &quot;s.jsonl&quot;
+    single = _conv(&quot;单轮问题&quot;, &quot;单轮回答&quot;)
+    multi = [
+        {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;第一问&quot;},
+        {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: &quot;第一答&quot;},
+        {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;第二问&quot;},
+        {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: &quot;第二答&quot;},
+    ]  # 4 消息：多轮 ×2
+    deep = multi + [
+        {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;第三问&quot;},
+        {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: &quot;第三答&quot;},
+    ]  # 6 消息：深多轮 ×3
+    _write_sft(p, [single, multi, deep])
+    ds = SFTDataset(p, tokenizer, max_length=256, eval_ratio=0.0, add_system_ratio=0.0)
+    tv = ds.train_view()
+    # raw 3 行；有效 = 1 + 2 + 3 = 6
+    card = ds.data_card()
+    assert card[&quot;train_rows_raw&quot;] == 3
+    assert card[&quot;train_rows_effective&quot;] == 6
+    assert card[&quot;multi_turn_effective_share&quot;] == round(5 / 6, 4)
+    # 展开视图里多轮行索引出现 2 次、深多轮 3 次、单轮 1 次
+    from collections import Counter
+
+    c = Counter(tv._indices)
+    assert c[0] == 1 and c[1] == 2 and c[2] == 3
+    # 直接索引（__getitem__）不受展开影响：仍是原始行
+    assert len(ds) == 3
+
+
+def test_sft_dataset_eval_view_never_expanded(tmp_path, tokenizer):
+    p = tmp_path / &quot;s.jsonl&quot;
+    convs_list = [
+        [
+            {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: f&quot;问{i}&quot;},
+            {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: f&quot;答{i}&quot;},
+            {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: f&quot;追问{i}&quot;},
+            {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: f&quot;补充{i}&quot;},
+        ]
+        for i in range(40)
+    ]
+    _write_sft(p, convs_list)
+    ds = SFTDataset(p, tokenizer, max_length=256, eval_ratio=0.25, add_system_ratio=0.0)
+    ev = ds.eval_view()
+    from collections import Counter
+
+    assert ev is not None
+    c = Counter(ev._indices)
+    assert max(c.values()) == 1, &quot;验证视图不允许重复样本&quot;</code></pre></div>
 </main>
-<script src="../../../assets/course.js?v=9"></script>
+<script src="../../../assets/course.js?v=10"></script>
 </body>
 </html>

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M17 · DPO：偏好对齐 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=9">
+<link rel="stylesheet" href="assets/course.css?v=10">
 </head>
 <body data-module="m17">
 
@@ -122,7 +122,7 @@
             <b>第 2 步：RLHF 的目标。</b>有了奖励，RLHF 用强化学习最大化它，但加一条缰绳——
             别离出发时的模型 π_ref 太远（否则语言能力被冲掉，M16 的灾难性遗忘在极端情况下的样子）：
           </p>
-          <p>$$ \max_\pi \; \mathbb{E}_{y \sim \pi}\left[ r(x,y) \right] - \lambda\, \mathrm{KL}\!\left(\pi \,\|\, \pi_{\mathrm{ref}}\right) $$</p>
+          <p>$$ \max_\pi \; \mathbb{E}_{y \sim \pi}\left[ r(x,y) \right] - \beta\, \mathrm{KL}\!\left(\pi \,\|\, \pi_{\mathrm{ref}}\right) $$</p>
           <p>
             KL 散度（Kullback-Leibler divergence）衡量两个概率分布差多远，在这里是"新模型偏离参考模型的总量"，
             M19 讲 RL 时它会反复出现。这一步的问题：r 是另一个模型，目标里既有 RL 又有两个模型——重。
@@ -164,12 +164,12 @@
 </section>
 
 <section class="panel">
-<h2 id="loss">精读 loss.py：31 行纯函数</h2>
+<h2 id="loss">精读 loss.py：35 行纯函数</h2>
       <p>
         DPO 的全部数学落在 <code>training/dpo/loss.py</code>——两个纯函数（输入输出只有张量，
-        不碰模型不碰配置，天然可单测）。全文 31 行：
+        不碰模型不碰配置，天然可单测）。全文 35 行：
       </p>
-      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/dpo/loss.py.html">src/minimind_reborn/training/dpo/loss.py</a> · 全文 31 行</span><span class="lang">python</span></div><pre class="code"><code>"""DPO 损失（与官方 train_dpo.py 的实现语义一致，纯函数可单测）。"""
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/training/dpo/loss.py.html">src/minimind_reborn/training/dpo/loss.py</a> · 全文 35 行</span><span class="lang">python</span></div><pre class="code"><code>"""DPO 损失（与官方 train_dpo.py 的实现语义一致，纯函数可单测）。"""
 
 from __future__ import annotations
 
@@ -191,8 +191,13 @@ def dpo_loss(
 ) -> torch.Tensor:
     """sigmoid-DPO：-log σ(β·[(π_c-π_r) - (ref_c-ref_r)])，mask 限定回答区间求和。
 
-    输入 (b, seq)，batch 前半 chosen 后半 rejected。
+    输入 (b, seq)，batch 前半 chosen 后半 rejected（要求偶数——奇数批经
+    `half = b // 2` 切分后形状不匹配，此前以难懂的张量广播错误抛出）。
     """
+    if ref_log_probs.shape[0] % 2 != 0:
+        raise ValueError(
+            f"DPO 拼批要求偶数 batch（前半 chosen、后半 rejected 各半），得到 {ref_log_probs.shape[0]}"
+        )
     ref_log_probs = (ref_log_probs * mask).sum(dim=1)
     policy_log_probs = (policy_log_probs * mask).sum(dim=1)
     half = ref_log_probs.shape[0] // 2
@@ -200,16 +205,19 @@ def dpo_loss(
     ref_logratios = ref_log_probs[:half] - ref_log_probs[half:]
     return -F.logsigmoid(beta * (pi_logratios - ref_logratios)).mean()</code></pre></div>
       <p>
-        <code>dpo_loss</code> 从上到下四件事。<b>① mask 加权求和</b>（25–26 行）：M12 造的 0/1 mask
+        入口的偶数断言（26–29 行）是 2026-10-06 加的：拼批前半 chosen、后半 rejected 各半，
+        奇数 batch 经 <code>half = b // 2</code> 切分后形状不匹配——此前以一句难懂的张量广播错误抛出，
+        现在说人话（业务校验用 raise 不用 assert，M04 讲过 python -O 下 assert 会消失）。
+        <code>dpo_loss</code> 从上到下四件事。<b>① mask 加权求和</b>（30–31 行）：M12 造的 0/1 mask
         在这里被消费——只把<b>回答区间</b>的每 token 对数概率加起来，prompt 与填充位不记账
         （这就是 M12 说的"加权求和"消费格式，与 SFT 的 -100 哨兵同源不同形）。
-        <b>② 对半切</b>（27–29 行）：batch 的前一半是 chosen、后一半是 rejected（下一节讲怎么拼的），
+        <b>② 对半切</b>（32–34 行）：batch 的前一半是 chosen、后一半是 rejected（下一节讲怎么拼的），
         两行减法得到 $\pi_c - \pi_r$ 与 $\mathrm{ref}_c - \mathrm{ref}_r$，再相减——
-        公式里的三重差分一行不差。<b>③ logsigmoid</b>（30 行）：$-\log\sigma(\cdot)$ 的数值稳定实现，
+        公式里的三重差分一行不差。<b>③ logsigmoid</b>（35 行）：$-\log\sigma(\cdot)$ 的数值稳定实现，
         大负数输入时不会溢出。<b>④ mean</b>：对 batch 内所有对取平均。
       </p>
       <p>
-        一个值得驻留的细节：<b>求和，不是平均</b>。25–26 行把整个回答的 token 概率<b>加总</b>——
+        一个值得驻留的细节：<b>求和，不是平均</b>。30–31 行把整个回答的 token 概率<b>加总</b>——
         这正是折叠深读里 $\log \pi(y|x)$ 的定义（整个回答序列的对数似然）。于是
         $\pi_c - \pi_r$ 的量级随回答长度增长，几百 token 的回答轻松差出几十 nat——
         这也是 β 只有 0.15 的原因之一：把巨大的"长度 × 概率"刻度压回 sigmoid 的工作区间。
@@ -246,8 +254,9 @@ return picked.squeeze(-1)                  # (B, T)：每 token 的 log P(y_t | 
       <p>
         写稿时顺手踩了一个真实的小坑，值得替你踩一遍：直接拿 <b>B=1</b>（只有一条序列、无配对）调
         <code>dpo_loss</code>，返回 <code>nan</code>——27 行 <code>half = 1 // 2 = 0</code>，
-        切片 <code>[:0]</code> 是空的，空张量取均值即 nan。上游 workflow 的拼批保证 batch 恒为偶数
-        （下一节），纯函数自己不设防；给它写单测时，batch 必须按"对"喂。
+        切片 <code>[:0]</code> 是空的，空张量取均值即 nan。上游 workflow 的拼批保证 batch 恒为偶数（DPO 数据集按 chosen/rejected 成对产出）；
+        loss.py 入口自 2026-10-06 起还有一道偶数断言兜底（上一节的 26–29 行）——双保险。
+        断言拦的是"错误输入立刻报错"，不是替你构造正确输入：给它写单测时，batch 仍必须按"对"喂。
       </p>
 </section>
 
@@ -315,7 +324,7 @@ return picked.squeeze(-1)                  # (B, T)：每 token 的 log P(y_t | 
       <p>
         两个工程选择。<b>① 拼批</b>：chosen 与 rejected 序列等长（M12 按 max_length 填充），
         沿 batch 维 cat 成 (2B, T) 一次前向——两次小 kernel（GPU 上的函数调用）启动合并成一次，
-        GPU 利用率更高，更重要的是<b>保证两半走过完全相同的计算路径</b>（对半切的前提，loss.py 27 行）。
+        GPU 利用率更高，更重要的是<b>保证两半走过完全相同的计算路径</b>（对半切的前提，loss.py 32 行）。
         <b>② 参考模型只算一次</b>且全程 no_grad：它对 batch 的每个 epoch 都给出同样的 ref_logp
         （权重不动），训练中反复计算的只有它——这是"冻结"在性能上的代价与边界。
         aux_loss 那行与 M16 相同（MoE 辅助损失，dense 恒 0）。
@@ -635,15 +644,17 @@ pol[1, -1] -= 0.5; loss2 = dpo_loss(ref, pol, mask, beta=0.15)</code></pre></div
 <span class="out">…Epoch[1/2](16/8583) loss=0.6067 lr=1.16e-04 grad_norm=0.00 …</span>
 <span class="out">…Epoch[1/2](20/8583) loss=0.9869 lr=5.28e-05 grad_norm=1.26 …</span>
 <span class="ok">…训练结束：best_val_loss=None optimizer_steps=20</span></code></pre>
-          <p>第二条，偏好数据链路相关测试（registry 的 dpo_mini 注册 + loss mask 的 0/1 语义）：</p>
-          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_data/test_registry.py tests/test_data/test_loss_mask.py -q</span>
-<span class="ok">.........                                                              [100%]</span>
-<span class="ok">9 passed in 0.03s</span></code></pre>
+          <p>第二条，偏好数据链路相关测试（registry 的 dpo_mini 注册 + loss mask 的 0/1 语义 + loss.py 纯函数）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_data/test_registry.py tests/test_data/test_loss_mask.py tests/test_training/test_dpo_loss.py -q</span>
+<span class="ok">.............                                                            [100%]</span>
+<span class="ok">13 passed in 0.03s</span></code></pre>
           <ul class="pass-criteria">
             <li>第一条命令输出含 <code>DPO 起点：pretrain_64.pth | beta=0.150</code>（范式自己的日志）与
               <code>严格加载起点权重：out/pretrain_64.pth</code>（Trainer 的交接日志）双行——两份模型同一起点被两个视角各记一笔；</li>
             <li>loss 在 ln 2 = 0.6931 附近大幅震荡（本例 0.61～1.16）是<b>预期行为</b>：smoke 配方继承默认 lr 5e-4（实验二），这里验的是链路通，不是学习效果；</li>
-            <li>pytest 输出 <code>9 passed</code>。诚实备注：DPO 没有专属单测（<code>--co</code> 探明的全部相关面就是这两组）——loss.py 的纯函数设计天然可单测，这是它留给你的第一个练习。</li>
+            <li>pytest 输出 <code>13 passed</code>（2026-10-06 实测；课程写作时是 9 个——DPO 当时没有专属单测，
+              2026-10-06 修复周期补上 <code>test_dpo_loss.py</code> 四条：公式语义、方向、奇数批守卫、gather 对齐，
+              "纯函数天然可单测"从口头禅变成了测试文件）。</li>
           </ul>
           <details>
             <summary>失败了怎么办？（按症状分流）</summary>
@@ -700,6 +711,6 @@ pol[1, -1] -= 0.5; loss2 = dpo_loss(ref, pol, mask, beta=0.15)</code></pre></div
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=9"></script>
+<script src="assets/course.js?v=10"></script>
 </body>
 </html>

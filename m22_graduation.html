@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M22 · 全链路与毕业实验：从一条命令到一个结论 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=9">
+<link rel="stylesheet" href="assets/course.css?v=10">
 </head>
 <body data-module="m22">
 
@@ -49,7 +49,7 @@
       <ul>
         <li>逐段精读 run_full.sh，画出"数据下载→pretrain→SFT→DPO"四段的产物衔接图，说出每段递给下一棒的接力棒是什么；</li>
         <li>按依赖顺序真跑 8 个 smoke 配方，为每个范式写一句"验证了什么"，并区分"管道通"与"学到东西"两种绿灯；</li>
-        <li>跑全量测试套件拿到 85 个绿灯，并解释 <code>make test</code> 的 5 个失败为什么是"测试环境改写了被测系统"；</li>
+        <li>跑全量测试套件拿到 93 个绿灯，并解释 <code>make test</code> 的 5 个失败为什么是"测试环境改写了被测系统"；</li>
         <li>用四步模板（假设→设计→数据→结论）完成一个单变量对照实验，让结论有数据支撑、有边界声明；</li>
         <li>完成 🏁 里程碑 C 四项清单，回答复盘三问，带走下一步地图。</li>
       </ul>
@@ -57,7 +57,7 @@
       <pre class="ascii"><code>M22 毕业课 = 三道门 + 一个循环（每道门对应 🏁C 清单的一项）
 
   门 1  全链路    run_full.sh 精读（读）→ 八范式冒烟（真跑，GPU 约 4 分钟）
-  门 2  测试      全量 pytest（真跑，85 个绿灯 + 一个新坑）
+  门 2  测试      全量 pytest（真跑，93 个绿灯 + 一个新坑）
   门 3  实验      M21 弱项清单 → 假设 → 单变量对照 → 结论（示范真做 + 你做）
 
   ┌───────────── 研究迭代闭环（本课唯一新概念）─────────────┐
@@ -206,22 +206,25 @@ done</span>
 </section>
 
 <section class="panel">
-<h2 id="tests">全量测试：85 个绿灯，和一个新坑</h2>
+<h2 id="tests">全量测试：93 个绿灯，和一个新坑</h2>
       <p>
         M01 的第一条绿灯是 <code>make smoke</code> 三段全绿；当时课程按 DESIGN 口径说仓库有 49 个单元测试。
         课程写作期间仓库在继续生长（M14 的 checkpoint 回归、M17–M21 期间工程化的每一课都往 tests/ 里加锚点），
-        到本课写作时点，快层测试已经 85 个。全量真跑：
+        写作收官时 85 个；2026-10-06 的修复周期（chat 签名、双重温度、manifest 缓存键、上下文守卫、DPO 偶数批
+        等修复各配回归）再添 8 个，现为 <b>93</b>。全量真跑：
       </p>
       <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -m pytest tests/ -m "not slow" -q</span>
-<span class="out">……（85 项测试的点阵与 warnings 摘要）</span>
-<span class="ok">85 passed, 1 warning in 13.98s</span>
+<span class="out">……（93 项测试的点阵与 warnings 摘要）</span>
+<span class="ok">93 passed, 1 warning in 1.26s</span>
 <span class="dim">（warning 来自 test_moe_aux_loss_positive：带梯度张量转 float，M08/M09 见过，无害）</span></code></pre>
-      <p class="prov"><b>[作者实测 · 2026-10-01 · 2×RTX 4090 · torch 2.14.0+cu130 · pytest 快层]</b>
-      85 = configuration 10 + data 26 + inference 14 + metrics 2 + models 19 + training 14（分目录真跑统计）。
+      <p class="prov"><b>[作者实测 · 2026-10-06 · 2×RTX 4090 · torch 2.14.0+cu130 · pytest 快层]</b>
+      93 = configuration 10 + data 27 + inference 17 + metrics 2 + models 19 + training 18（分目录真跑统计）。
       其中一大半是你在课程里逐个见过面的：test_models 的十九个（M09 验收 19 passed）、
       kv_cache 系列（M06）、loss_mask 系列（M12 填空的正是它）、
       test_rope_buffer_rebuild_after_meta_init（M09 猎场的回归锁）、
-      test_full_chain_train_save_resume_generate——M01 那条三段冒烟链的测试化身。</p>
+      test_full_chain_train_save_resume_generate——M01 那条三段冒烟链的测试化身；
+      新添的 8 个里，5 个你刚在 M02/M03/M11/M17/M20 见过立案现场（签名接线、温度恰好一次、
+      缓存键含口径、偶数批、输入+生成上限），3 个是 DPO 损失的第一批专属单测。</p>
       <p>
         但"全量测试"这件事本身，本课挖到一个新坑——毕业课的最后一次现场排雷：
       </p>
@@ -229,11 +232,11 @@ done</span>
         <div class="co-title">⚠️ 坑卡：make test 五个失败——测试环境改写了被测系统</div>
         <ul class="pit-stages">
           <li class="sym">
-            <b>症状</b>：按 README 跑 <code>make test</code>，输出 <code>5 failed, 80 passed</code>；
+            <b>症状</b>：按 README 跑 <code>make test</code>，输出 <code>5 failed, 88 passed</code>；
             失败的五个全是 metrics/observability 一族（test_unknown_metric_backend_raises、
             test_dual_backend_jsonl_and_tensorboard、test_tensorboard_events_in_subdir_only、
             test_metrics_steps_monotonic_and_unified、test_full_chain_train_save_resume_generate）。
-            而上一条终端里<b>同参数</b>的裸 pytest 是 85 全绿。
+            而上一条终端里<b>同参数</b>的裸 pytest 是 93 全绿。
           </li>
           <li class="cause">
             <b>原因</b>：<a href="codeview/Makefile.html">Makefile</a> 的 test 目标给命令前置了
@@ -394,7 +397,7 @@ for t in (0.7, 0.85):                        # 自变量：唯一的旋钮
           <p>三道绿灯 + 复盘三问，全部可判定。逐项打勾：</p>
           <ul class="checklist">
             <li><b>① 全量测试全绿</b>：<code>uv run python -m pytest tests/ -m "not slow" -q</code> 输出
-              <code>85 passed</code>（M01 时代口径 49——测试清单与仓库一起生长，绿灯纪律不变）；
+              <code>93 passed</code>（M01 时代口径 49、写作收官时 85——测试清单与仓库一起生长，绿灯纪律不变）；
               并能说清 make test 五个失败的原因（<a href="#tests">坑卡</a>：测试环境改写被测系统）；</li>
             <li><b>② 八范式冒烟全通过</b>：按依赖顺序跑完 8 个 smoke 配方，每段日志出现
               <code>已保存：…</code>；能对每个范式说出"验证了什么"与"没验证什么"（<a href="#smoke8">八范式表</a>，
@@ -410,7 +413,7 @@ for t in (0.7, 0.85):                        # 自变量：唯一的旋钮
           <h3 id="grad-word">毕业辞</h3>
           <p>
             你现在拥有两样东西。<b>一个能跑通全链路的 64M 模型工程</b>：从 tokenizer 到 serve，
-            每个数字（63.91M 参数、ln(6400)=8.7641 的初始 loss、三段 18.5 小时的存档、85 个绿灯）
+            每个数字（63.91M 参数、ln(6400)=8.7641 的初始 loss、三段 18.5 小时的存档、93 个绿灯）
             都是你亲手跑出来或逐行读出来的，不是听来的。<b>一套读真实代码的方法</b>：绿灯验收（可判定的
             完成标准）、测试当锚点（改坏了知道哪断）、存档当教材（读真实日志是正式路径）、
             弱项当路标（每个缺点都是一个可实验的假设）。模型会过时，这套方法跟着你走下一个项目。
@@ -464,7 +467,7 @@ for t in (0.7, 0.85):                        # 自变量：唯一的旋钮
       </details>
 
       <details class="quiz">
-        <summary>测验 3 · 开放题：85 个测试里，你印象最深的一个是哪个？为什么是它？</summary>
+        <summary>测验 3 · 开放题：93 个测试里，你印象最深的一个是哪个？为什么是它？</summary>
         <div class="quiz-body">
           <div class="quiz-ans">
             <p><b>参考答案</b>（任选其一，说得出"它锁住什么行为"即可）：
@@ -481,7 +484,7 @@ for t in (0.7, 0.85):                        # 自变量：唯一的旋钮
         <summary>测验 4 · make test 的五个失败是怎么来的？这个坑和毕业实验的方法论有什么关系？</summary>
         <div class="quiz-body">
           <div class="quiz-ans">
-            <p><b>答案：</b>Makefile 给 pytest 前置了 MINIMIND_REBORN_METRICS_DISABLED=1（离线纪律、禁云端上报），该开关把 build_backends 的所有指标后端替换成 null；五个失败测试测的恰是后端本身——被测对象被测试环境改写了，裸跑同参数 pytest 则 85 全绿。与方法论的关系：当被测系统会读取环境开关时，环境就是自变量/控制变量清单的一部分——"冻结其他一切"必须包括环境，否则你的对照实验在另一台机器上不可复现。</p>
+            <p><b>答案：</b>Makefile 给 pytest 前置了 MINIMIND_REBORN_METRICS_DISABLED=1（离线纪律、禁云端上报），该开关把 build_backends 的所有指标后端替换成 null；五个失败测试测的恰是后端本身——被测对象被测试环境改写了，裸跑同参数 pytest 则 93 全绿。与方法论的关系：当被测系统会读取环境开关时，环境就是自变量/控制变量清单的一部分——"冻结其他一切"必须包括环境，否则你的对照实验在另一台机器上不可复现。</p>
             <p class="back">答错回看：<a href="#tests">坑卡：测试环境改写了被测系统</a>。</p>
           </div>
         </div>
@@ -526,10 +529,10 @@ for t in (0.7, 0.85):                        # 自变量：唯一的旋钮
       <div class="accept" id="accept">
         <div class="acc-head">✅ M22 验收（= 里程碑 C 三条命令）</div>
         <div class="acc-body">
-          <p><b>本课需要：</b>第一条 85 测试无外部权重依赖；第二条八范式冒烟需各阶段 mini 数据（RL 数据先 <code>make download-rl</code>，含 ppo/agent 段的 rlaif_mini 与 agent_rl_mini），全链路链脚本的 pretrain_t2t / sft_t2t 由脚本自下载（GB 级）。</p>
-          <p>在 <code>Reproduce/minimind_reborn/</code> 下依次执行。第一条，全量测试（约 14 秒）：</p>
+          <p><b>本课需要：</b>第一条 93 测试无外部权重依赖；第二条八范式冒烟需各阶段 mini 数据（RL 数据先 <code>make download-rl</code>，含 ppo/agent 段的 rlaif_mini 与 agent_rl_mini），全链路链脚本的 pretrain_t2t / sft_t2t 由脚本自下载（GB 级）。</p>
+          <p>在 <code>Reproduce/minimind_reborn/</code> 下依次执行。第一条，全量测试（1~14 秒，随机器与导入缓存冷热）：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -m pytest tests/ -m "not slow" -q</span>
-<span class="ok">85 passed, 1 warning in 13.98s</span></code></pre>
+<span class="ok">93 passed, 1 warning in 1.26s</span></code></pre>
           <p>第二条，八范式冒烟（GPU 约 4 分钟；缺 RL 数据先 <code>make download-rl</code>；CPU 可跑但更久）：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">for s in pretrain sft dpo lora distill grpo ppo agent; do
     uv run python tools/train.py configs/smoke/smoke_$s.yaml --set train.resume=false || break
@@ -543,7 +546,7 @@ done</span>
 <span class="dim">（共 6 行：2 温度 × 3 seed，全表见正文第三步 · 数据）</span>
 <span class="out">0.85    44  0.5883     334.0   4/8    164.6</span></code></pre>
           <ul class="pass-criteria">
-            <li>第一条输出 <code>85 passed</code>（若你跑 <code>make test</code> 看到 5 个 metrics 失败——回
+            <li>第一条输出 <code>93 passed</code>（若你跑 <code>make test</code> 看到 5 个 metrics 失败——回
               <a href="#tests">坑卡</a>，那是环境变量在改写被测系统，不是你的代码坏了）；</li>
             <li>第二条八个 <code>已保存：…_64.pth</code> 全部出现且循环未被 <code>|| break</code> 掐断——八盏灯全亮；</li>
             <li>第三条你的报告四步齐全、至少一个结论带原始数据与边界声明——里程碑 C ③ 亮灯，复盘三问写完即毕业。</li>
@@ -596,6 +599,6 @@ done</span>
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=9"></script>
+<script src="assets/course.js?v=10"></script>
 </body>
 </html>

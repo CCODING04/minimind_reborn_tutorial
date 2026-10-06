@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M07 · Attention：GQA、QK-Norm 与三条路径 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=9">
+<link rel="stylesheet" href="assets/course.css?v=10">
 </head>
 <body data-module="m07">
 
@@ -338,7 +338,7 @@ output = self.attn_dropout(F.softmax(scores, dim=-1).type_as(xq)) @ xv_full  # s
         <div class="co-title">⚠️ 坑卡：mask 忘了 pad 列——泄漏不在 prefill，在下一步</div>
         <ul class="pit-stages">
           <li class="sym">右 padding 批次（M06 的 rollout / 批量对话）里喂了带 pad 的 <code>input_ids</code> 却没传 <code>attention_mask</code>：prefill 期"看起来没事"，若干步后输出渐渐跑偏，无任何报错。</li>
-          <li class="cause">prefill 期因果 mask 恰好挡住 pad 列（pad 在未来），<b>有效位置毫发无损</b>——这正是它阴险之处；但 pad 位置的 K/V 已写进 cache。decode 步一来，pad 列变成"过去"，因果墙不再挡——垃圾 K/V 从此混进每次加权求和。实测（tiny 模型）：丢 mask 后 pad 位 logits 漂移 max|Δ|=0.0425、首个 decode 步偏差 7e-4——随机权重下数字不大，但"逐位一致"的契约已破。</li>
+          <li class="cause">prefill 期因果 mask 恰好挡住 pad 列（pad 在未来），<b>有效位置毫发无损</b>——这正是它阴险之处；但 pad 位置的 K/V 已写进 cache。decode 步一来，pad 列变成"过去"，因果墙不再挡——垃圾 K/V 从此混进每次加权求和。实测（tiny 模型，随机权重 seed=42）：丢 mask 后 prefill 期<b>有效位 logits 逐位不变</b>（max|Δ|=0），但 pad 位漂移 max|Δ|=0.2641；首个 decode 步偏差 max|Δ|=3.8e-2——数字不算大，但"逐位一致"的契约已破。<span class="prov">[作者实测 · 2026-10-06 · 纯 CPU · torch 2.14.0+cu130 · 64×2层×4头 tiny · 带掩码与丢掩码两次前向对照]</span></li>
           <li class="fix">mask 跟着 input_ids 走：<code>model(x, attention_mask=mask, past_key_values=cache)</code>，pad 列在②被 <code>masked_fill</code> 封死、在③被 $-10^9$ 压平。回归锁定是 <code>test_sdpa_prefill_path_matches_manual</code> 的第三个断言（padding mask 下双路径 allclose）——mask 语义错了，等价性测试立刻红。</li>
         </ul>
       </div>
@@ -568,7 +568,7 @@ for kv in (4, 8):   # 4 = GQA（n_rep=2），8 = MHA（n_rep=1）
             <summary>观察结果与解释（先动手再看）</summary>
             <p>
               <b>观察（作者实测）：</b>带 mask 时 ②vs③ allclose=True；两边同时丢 mask，②vs③ <b>仍然 allclose=True</b>——
-              但相对正确语义，pad 位置的 logits 已漂移 max|Δ|=0.0425。
+              但相对正确语义，pad 位置的 logits 已漂移（本课坑卡实测 max|Δ|=0.2641，有效位仍为 0）。
             </p>
             <p>
               <b>机制：</b>等价性断言比较的是<b>两台发动机</b>（②与③），不是发动机与<b>正确语义</b>——两边一起改错，它们依然"错得一致"，测试照绿。
@@ -682,6 +682,6 @@ for kv in (4, 8):   # 4 = GQA（n_rep=2），8 = MHA（n_rep=1）
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=9"></script>
+<script src="assets/course.js?v=10"></script>
 </body>
 </html>
