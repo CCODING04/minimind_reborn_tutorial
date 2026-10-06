@@ -146,7 +146,7 @@ def build_mask(input_ids, spans) -&gt; list[int]:
         撞见前缀锚点就进入"找下文"状态，找到完整后缀锚点就收一个区间；扫到头也没等到后缀的是<b>残段</b>（C2，稍后详讲），只计数不监督。
         下面是它的独立复刻版，<b>三处空</b>正是三条命脉：区间从哪起算、扫描何时停、区间收到哪。把空填上，与 reborn 参照答案对账：
       </p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m12_fill.py · 区间扫描三空版（把 ____ 换成你的答案）</span><span class="lang">python</span></div><pre class="code"><code>"""M12 填空：把 scan_response_spans 的三个关键位补全（对照 reborn 参照答案）。"""
+      <div class="codeblock"><div class="code-head"><span>/tmp/m12_fill.py · 区间扫描三空版 · 上半：扫描主循环（把 ____ 换成你的答案）</span><span class="lang">python</span></div><pre class="code"><code>"""M12 填空：把 scan_response_spans 的三个关键位补全（对照 reborn 参照答案）。"""
 from transformers import AutoTokenizer
 
 from minimind_reborn.data.loss_mask import find_response_spans, pattern_ids
@@ -176,10 +176,8 @@ def my_scan(ids):
                 i = n
         else:
             i += 1
-    return spans, dangling
-
-
-msgs = [
+    return spans, dangling</code></pre></div>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m12_fill.py · 区间扫描三空版 · 下半：构造对话并验收对账</span><span class="lang">python</span></div><pre class="code"><code>msgs = [
     {"role": "user", "content": "Q1"}, {"role": "assistant", "content": "A1"},
     {"role": "user", "content": "Q2"}, {"role": "assistant", "content": "A2"},
 ]
@@ -260,7 +258,7 @@ if len(full_ids) &gt; max_length:                             # ⑤ 超窗才触
     fitted = _fit_turns(tokenizer, conversations, max_length, ...)
 
 # 未触发轮次适配的样本（约 81%）直接复用 full_ids——此前无条件重新渲染+tokenize，
-# 常态样本编码成本白白 ×2（2026-09-29 perf_analysis 案 A 主因之一）
+# 常态样本编码成本白白 ×2（2026-09-29 perf_analysis 案 A（项目性能插曲报告的案例 A）主因之一）
 ids = full_ids if fitted is conversations else tokenizer(render(fitted)).input_ids
 hard_truncated = False
 if len(ids) &gt; max_length:                                   # 仅当单条 assistant 回复自身超预算
@@ -493,7 +491,7 @@ print('labels 全 -100：', all(l == -100 for l in out['labels']))"</span>
         但<b>不做分词</b>，把每行的派生信息存成 <code>.manifest.npz</code> 伴生缓存；md5 稳定哈希防跨进程漂移、mtime+size
         指纹防旁车脏读——机制 M11 详讲过，本课直接回收）。清单四列各管一事：
       </p>
-      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/manifest.py.html">src/minimind_reborn/data/manifest.py</a> · 构建期扫描核心（节选）</span><span class="lang">python</span></div><pre class="code"><code># 去重键：最后一条 assistant 回复（C4 对齐 dataeng 的「回复精确重复」口径——
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/manifest.py.html">src/minimind_reborn/data/manifest.py</a> · 构建期扫描核心（节选）</span><span class="lang">python</span></div><pre class="code"><code># 去重键：最后一条 assistant 回复（C4 对齐 dataeng（项目 docs/ 数据工程报告）的「回复精确重复」口径——
 # 复读的训练侧源头是不同问题共享同一回答 8.6%，对话级哈希会漏掉这种模式）
 reply_hashes.append(stable_hash(normalize_text(reply_text(convs))))          # keep 列依据
 n_messages.append(len(convs))                                                # 多轮占比断言用
@@ -602,7 +600,7 @@ print("正文区 label==id：", labs[:n_real] == ids[:n_real], "；pad 区全 -1
 <span class="out">labels 转折点前后： [49, 2, -100, -100, -100]</span>
 <span class="out">首 token： 1 （bos）；最后一个真实 token： 2 （eos）；pad id： 0</span>
 <span class="out">正文区 label==id： True ；pad 区全 -100： True</span></code></pre>
-      <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径]</b> 转折点一刀两断：eos（id 2）是最后一个亮的 token——模型要学"文档到此结束"；其后 20 个 pad（id 0）全灰。顺带注意 pretrain 的验证集切分仍是尾部固定切片——因为语料文件已打散（聚簇率 0.07%，datasets.py 模块头引用 dataeng §3.7），尾切无偏，无需 C5 的哈希分桶；SFT 文件按构造有序，才必须分桶。</p>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径]</b> 转折点一刀两断：eos（id 2）是最后一个亮的 token——模型要学"文档到此结束"；其后 20 个 pad（id 0）全灰。顺带注意 pretrain 的验证集切分仍是尾部固定切片——因为语料文件已打散（聚簇率即同类样本占比，0.07%，datasets.py 模块头引用 dataeng §3.7），尾切无偏，无需 C5 的哈希分桶；SFT 文件按构造有序，才必须分桶。</p>
 
       <h3 id="dpo">DPODataset：一对样本，共享一次抽签</h3>
       <p>

@@ -112,7 +112,7 @@ m16 正文引用 `solutions/m16_generate_exercises.py`，实际文件在 `worksp
 
 index 承诺"每个阶段的 pytest 都得自己跑绿"、ROADMAP §5 承诺每模块验收测试——实际只有 `workspace/tests/test_m08_model.py` 一个测试文件（3 用例）。
 
-**对策**：新课程不虚构测试承诺，直接复用 reborn **实际存在的** 49 个测试与 8 个 smoke 配方作为验收锚点（模块↔测试映射表见 DESIGN.md §7）。
+**对策**：新课程不虚构测试承诺，直接复用 reborn **实际存在的** 49 个测试与 8 个 smoke 配方作为验收锚点（模块↔资产映射见 DESIGN.md §2 模块表）。
 
 ### D7. 卫生问题：杂散文件与依赖
 

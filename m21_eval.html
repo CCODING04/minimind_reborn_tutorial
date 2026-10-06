@@ -338,7 +338,7 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
       显存列两行都记成 0 MB——测量代码失效的产物，<b>跑分脚本本身也会被跑分</b>，报告要带着怀疑读。</p>
       <p>
         47.3% 是"双实现不一致"吗？<b>不是</b>——这里是本课最值得学的一手：换精度做<b>决定性检验</b>。
-        fp16 下官方 prefill（对 prompt 的首次前向，M20 的术语）走 SDPA 融合（M07 的路径三）、
+        fp16 下官方 prefill（对 prompt 的首次前向，M03 的术语）走 SDPA 融合（M07 的路径三）、
         我们走 manual fp32 打分，两条浮点路径的
         舍入差被 8 层放大；把一致率最低的两例换到 <b>fp32 重跑，逐位一致率 100%</b>
         （<b>[存档 重构报告 §9.2 · 2026-09]</b>）。逻辑差异是刚性的（换精度也不消失），浮点差异是
@@ -435,7 +435,7 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
             <tr><td>事实幻觉</td><td>光合作用题后半段"6碳logged"式术语崩坏；era2 仍把"李小明"说成"李明"</td><td>数据侧事实密度不足（1.2GB vs 官方 10GB）——重复率与 CE 差距同源</td></tr>
             <tr><td>贪心复读循环</td><td>T=0.1 下 8/8 题跑满上限、重复率 0.257 全场最高（变式练习实测）</td><td>对比采样温度作为"复读抑制剂"的边界——不可复现性与质量的权衡</td></tr>
             <tr><td>长上下文塌缩</td><td>YaRN 下 1536 tok 重复率 0.842、2048 tok 0.980 [存档]</td><td>底座续训长序列（eval_cont_train 的双指标验收门防遗忘）</td></tr>
-            <tr><td>评测自身的债</td><td>eval_llm 不设种子（漂移 25%）；越界输入裸 RuntimeError</td><td>给评测脚本补种子与贪心模式；engine 入口加长度守卫</td></tr>
+            <tr><td>评测自身的债</td><td>eval_llm 不设种子（漂移 25%）；越界输入裸 RuntimeError</td><td>给评测脚本补种子与贪心模式；engine 入口加长度守卫（✅ 已还债：M20 已实现 engine 长度守卫并有 3 个测试锁定）</td></tr>
           </tbody>
         </table>
       </div>

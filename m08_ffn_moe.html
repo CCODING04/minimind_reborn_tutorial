@@ -69,7 +69,7 @@ x₁ ──┬──────────────────────
                         ├─ use_moe=False：SwiGLU           5.6M 参数/层
                         └─ use_moe=True ：4 专家按 token 路由 22.4M/层（每 token 只激活 5.6M）</code></pre>
       <p>
-        attention 每层 1,769,664 参数（q/k/v/o 四个投影 + QK-Norm），FFN 每层 5,603,328——<b>FFN 占 76.0%</b>；
+        attention 每层 1,769,664 参数（q/k/v/o 四个投影 + QK-Norm，含 QK-Norm 缩放参数 192；M09 账本的四矩阵口径 1,769,472 不含），FFN 每层 5,603,328——<b>FFN 占 76.0%</b>；
         开 MoE 后 FFN 部分 22,416,384，占每层 92.7%。谁是大户一目了然，所以"扩模型"主要在扩这里，
         "省计算"的 MoE 也动这里。全部家当在 <a href="codeview/src/minimind_reborn/models/feedforward.py.html"><code>models/feedforward.py</code></a>，73 行两个类。
       </p>

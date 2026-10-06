@@ -1,6 +1,6 @@
 # 跟着 minimind_reborn 造一个大模型 · 交互式课程
 
-以工程化重构的 [minimind_reborn](https://github.com/jingyaogong/minimind)（64M 中文小模型：pretrain → SFT → DPO → 蒸馏/LoRA → RL → 推理服务）为唯一实现目标的 LLM 全栈实训课——**跟读真实工程代码、跑通训练全链路、用 49+ 个单元测试做绿灯验收**。
+以工程化重构的 [minimind_reborn](https://github.com/CCODING04/minimind-reborn)（64M 中文小模型：pretrain → SFT → DPO → 蒸馏/LoRA → RL → 推理服务）为唯一实现目标的 LLM 全栈实训课——**跟读真实工程代码、跑通训练全链路、用 85 个单元测试做绿灯验收**。
 
 - **22 个模块 / 6 篇**（开箱 → 模型 → 数据 → 训练 → 推理评测 → 毕业），三座里程碑（🏁A 官方权重 strict 互通 / 🏁B 训出自己的基座 / 🏁C 八范式冒烟+毕业实验）
 - **98 个站内代码查看页**：正文提到的每个源文件都能点开在线阅读（行号、语法高亮、逐行锚点、一键复制）

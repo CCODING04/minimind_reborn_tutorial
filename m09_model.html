@@ -60,7 +60,7 @@
       <pre class="ascii"><code>MiniMindForCausalLM（model.py:127）—— 本课组装的整机
 │
 ├─ model: MiniMindModel（骨干，model.py:52）
-│   ├─ embed_tokens   词 → 向量（M03 ②站的查找表）
+│   ├─ embed_tokens   词 → 向量（M05 见过的那张查找表）
 │   ├─ layers × 8     MiniMindBlock（本课）
 │   │   ├─ input_layernorm         【M05】RMSNorm
 │   │   ├─ self_attn               【M07】GQA + QK-Norm + RoPE + KV cache【M06】
@@ -276,7 +276,7 @@ print("ln(6400) = %.4f" % math.log(6400))</code></pre></div>
       </div>
       <p>
         账本里三处"为什么"：<b>k/v_proj 是 384 行</b>——GQA 让 4 个 KV 头（M07）各出 96 维，768 的一半，
-        注意力四矩阵合计每层 1,769,472；<b>FFN 三矩阵各 768×2432</b>——SwiGLU 比经典两层 FFN 多一个门控矩阵
+        注意力四矩阵合计每层 1,769,472（不含 QK-Norm，见 M08 另一账本口径 1,769,664）；<b>FFN 三矩阵各 768×2432</b>——SwiGLU 比经典两层 FFN 多一个门控矩阵
         （M08），中间维 2432 是 M04 手算过的 <code>ceil(768·π/64)·64</code>；每层小计
         1,769,472 + 192 + 1,536 + 5,603,328 = <b>7,374,528</b>，× 8 层 = 58,996,224，加 embed 与出口 norm
         得 63,912,192。结构上大头是 FFN：44,826,624（70.1%），注意力只占 22.2%——

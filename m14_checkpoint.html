@@ -104,7 +104,7 @@ return atomic_save(payload, path)          # 原子写（下节）</code></pre><
             <tr><td><b>④ 进度 epoch+step</b></td><td>走到哪个 epoch 的第几 micro step</td><td>从 epoch 0 step 0 重跑：lr 调度重走 warmup、数据顺序重头、已练步数重复计费</td></tr>
             <tr><td><b>⑤ config 快照</b></td><td>当时的全量配置（M04 snapshot）</td><td>事故后无法回答"存档时是什么配方"——猎场二的事故本可用它拦下</td></tr>
             <tr><td><b>⑥ best_val_loss</b></td><td>历史最优验证损失</td><td>best 归 None：下一个 val 无论多差都刷新"最优"，<code>_best</code> 权重被烂权重覆盖</td></tr>
-            <tr><td><b>附加 rng</b></td><td>torch/cuda/python/numpy 四路随机数状态</td><td>一切吃全局随机流的操作跳到另一条轨迹：SFT 的随机系统提示注入（python）、dropout&gt;0 的掩码、RL 采样（torch）；batch 打乱顺序本身不吃全局流——M13 见过它由显式 Generator 按 seed+epoch 重放</td></tr>
+            <tr><td><b>附加 rng</b></td><td>torch/cuda/python/numpy 四路随机数状态</td><td>一切吃全局随机流的操作跳到另一条轨迹：SFT 的随机系统提示注入（python）、dropout&gt;0 的掩码、RL 采样（torch）；batch 打乱顺序本身不吃全局流——M15 见过它由显式 Generator 按 seed+epoch 重放</td></tr>
           </tbody>
         </table>
       </div>

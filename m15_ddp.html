@@ -179,7 +179,7 @@ else:
         多卡代码最怕的不是写不出来，而是<b>散</b>：业务逻辑里到处 <code>if rank == 0:</code>、
         <code>if dist.is_initialized():</code>，读代码的人永远不知道还有哪个分支没看到。
         <a href="codeview/src/minimind_reborn/utils/dist.py.html">utils/dist.py</a>
-        全文 86 行，模块 docstring 第一句就立了不变量：<i>"业务代码不写 <code>if distributed:</code> 分支——
+        全文 85 行，模块 docstring 第一句就立了不变量：<i>"业务代码不写 <code>if distributed:</code> 分支——
         get_rank()/get_world_size() 在 dist 不可用/未初始化时返回 0/1，单机与多机代码同构；
         一切 IO 由 is_main_process() 门控。"</i>先看入口：
       </p>
