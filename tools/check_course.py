@@ -11,19 +11,43 @@
      全部页面无 style= 内联属性；title/charset/lang/css/js 齐备
   5. quiz 回看链接：details.quiz 内 <a href="#..."> 锚点存在
 
-用法：python3 tools/check_course.py   （在 course/minimind_reborn_tutorial 下运行）
-退出码：0 全绿；1 存在错误。
+用法：python3 tools/check_course.py [--reborn <minimind-reborn 仓库路径>]
+REBORN 定位优先级：--reborn 参数 > REBORN_REPO 环境变量 > 旧 monorepo 布局
+（COURSE_DIR.parent.parent/Reproduce/minimind_reborn）。
+退出码：0 全绿；1 存在错误；2 REBORN 路径无效。
 """
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
 
 COURSE_DIR = Path(__file__).resolve().parent.parent
-REPO_ROOT = COURSE_DIR.parent.parent  # PythonFormat/
-REBORN = REPO_ROOT / "Reproduce" / "minimind_reborn"
+
+# codeview 下这些目录是「存档快照」：源为运行时产物（out/、runs/ 不随仓库分发），
+# 已有页保留展示但无法与源核对——QA 对其降级为警告而非错误。
+ARCHIVE_TOP_DIRS = ("out", "runs")
+
+
+def resolve_reborn() -> Path:
+    raw = ""
+    if "--reborn" in sys.argv:
+        i = sys.argv.index("--reborn")
+        if i + 1 < len(sys.argv) and not sys.argv[i + 1].startswith("-"):
+            raw = sys.argv[i + 1]
+    raw = raw or os.environ.get("REBORN_REPO", "")
+    if raw:
+        p = Path(raw).expanduser().resolve()
+        if p.is_dir():
+            return p
+        print(f"ERROR: --reborn / REBORN_REPO 指定的仓库不存在：{p}")
+        sys.exit(2)
+    return COURSE_DIR.parent.parent / "Reproduce" / "minimind_reborn"
+
+
+REBORN = resolve_reborn()
 CODEVIEW = COURSE_DIR / "codeview"
 
 errors: list[str] = []
@@ -205,9 +229,12 @@ def main() -> int:
         v = re.search(r"course\.css\?v=(\d+)", body)
         if idx_ver and v and v.group(1) != idx_ver:
             err(f"{rel}: 资源版本 {v.group(1)} 与首页 {idx_ver} 不一致（重跑 build_codeview.py）")
-        src_rel = str(page.relative_to(CODEVIEW))[: -len(".html")]
+        src_rel = page.relative_to(CODEVIEW).as_posix()[: -len(".html")]
         if not (REBORN / src_rel).exists():
-            err(f"{rel}: 对应源文件已不存在")
+            if src_rel.split("/")[0] in ARCHIVE_TOP_DIRS:
+                warn(f"{rel}: 存档快照（源为 {src_rel.split('/')[0]}/ 运行时产物，不随仓库分发，无法与源核对）")
+            else:
+                err(f"{rel}: 对应源文件已不存在")
         # 断链：本地 href 必须存在（返回链接、assets、无外链）
         ids = set(re.findall(r'id="([^"]+)"', body))
         for m in re.finditer(r'(?:href|src)="([^"]+)"', re.sub(r"<script[\s\S]*?</script>", "", body)):
@@ -227,6 +254,7 @@ def main() -> int:
         print(f"ERROR {e}")
     print(f"\n检查完成：{len(pages)} 个页面，{len(course)} 个模块登记，"
           f"{len(errors)} 错误，{len(warns)} 警告")
+    print(f"REBORN = {REBORN}")
     return 1 if errors else 0
 
 

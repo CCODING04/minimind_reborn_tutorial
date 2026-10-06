@@ -11,343 +11,343 @@
 <header class="cv-topbar">
   <a class="cv-back" href="../../../index.html">← 课程地图</a>
   <span class="cv-crumb">Reproduce/minimind_reborn/assets/tokenizer/tokenizer_config.json</span>
-  <span class="cv-meta">335 行 · 12KB · minimind_reborn</span>
+  <span class="cv-meta">335 行 · 13KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>assets/tokenizer/tokenizer_config.json</span><span class="lang">json</span></div><pre class="code"><code data-lines="1">{
-    &quot;add_bos_token&quot;: false,
-    &quot;add_eos_token&quot;: false,
-    &quot;add_prefix_space&quot;: false,
-    &quot;added_tokens_decoder&quot;: {
-        &quot;0&quot;: {
-            &quot;content&quot;: &quot;&lt;|endoftext|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;1&quot;: {
-            &quot;content&quot;: &quot;&lt;|im_start|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;2&quot;: {
-            &quot;content&quot;: &quot;&lt;|im_end|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;3&quot;: {
-            &quot;content&quot;: &quot;&lt;|object_ref_start|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;4&quot;: {
-            &quot;content&quot;: &quot;&lt;|object_ref_end|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;5&quot;: {
-            &quot;content&quot;: &quot;&lt;|box_start|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;6&quot;: {
-            &quot;content&quot;: &quot;&lt;|box_end|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;7&quot;: {
-            &quot;content&quot;: &quot;&lt;|quad_start|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;8&quot;: {
-            &quot;content&quot;: &quot;&lt;|quad_end|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;9&quot;: {
-            &quot;content&quot;: &quot;&lt;|vision_start|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;10&quot;: {
-            &quot;content&quot;: &quot;&lt;|vision_end|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;11&quot;: {
-            &quot;content&quot;: &quot;&lt;|vision_pad|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;12&quot;: {
-            &quot;content&quot;: &quot;&lt;|image_pad|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;13&quot;: {
-            &quot;content&quot;: &quot;&lt;|video_pad|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;14&quot;: {
-            &quot;content&quot;: &quot;&lt;|audio_start|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;15&quot;: {
-            &quot;content&quot;: &quot;&lt;|audio_end|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;16&quot;: {
-            &quot;content&quot;: &quot;&lt;|audio_pad|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;17&quot;: {
-            &quot;content&quot;: &quot;&lt;tts_pad&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;18&quot;: {
-            &quot;content&quot;: &quot;&lt;tts_text_bos&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;19&quot;: {
-            &quot;content&quot;: &quot;&lt;tts_text_eod&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;20&quot;: {
-            &quot;content&quot;: &quot;&lt;tts_text_bos_single&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: true
-        },
-        &quot;21&quot;: {
-            &quot;content&quot;: &quot;&lt;tool_call&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: false
-        },
-        &quot;22&quot;: {
-            &quot;content&quot;: &quot;&lt;/tool_call&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: false
-        },
-        &quot;23&quot;: {
-            &quot;content&quot;: &quot;&lt;tool_response&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: false
-        },
-        &quot;24&quot;: {
-            &quot;content&quot;: &quot;&lt;/tool_response&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: false
-        },
-        &quot;25&quot;: {
-            &quot;content&quot;: &quot;&lt;think&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: false
-        },
-        &quot;26&quot;: {
-            &quot;content&quot;: &quot;&lt;/think&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: false
-        },
-        &quot;27&quot;: {
-            &quot;content&quot;: &quot;&lt;|buffer1|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: false
-        },
-        &quot;28&quot;: {
-            &quot;content&quot;: &quot;&lt;|buffer2|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: false
-        },
-        &quot;29&quot;: {
-            &quot;content&quot;: &quot;&lt;|buffer3|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: false
-        },
-        &quot;30&quot;: {
-            &quot;content&quot;: &quot;&lt;|buffer4|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: false
-        },
-        &quot;31&quot;: {
-            &quot;content&quot;: &quot;&lt;|buffer5|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: false
-        },
-        &quot;32&quot;: {
-            &quot;content&quot;: &quot;&lt;|buffer6|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: false
-        },
-        &quot;33&quot;: {
-            &quot;content&quot;: &quot;&lt;|buffer7|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: false
-        },
-        &quot;34&quot;: {
-            &quot;content&quot;: &quot;&lt;|buffer8|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: false
-        },
-        &quot;35&quot;: {
-            &quot;content&quot;: &quot;&lt;|buffer9|&gt;&quot;,
-            &quot;lstrip&quot;: false,
-            &quot;normalized&quot;: false,
-            &quot;rstrip&quot;: false,
-            &quot;single_word&quot;: false,
-            &quot;special&quot;: false
-        }
-    },
-    &quot;additional_special_tokens&quot;: [
-        &quot;&lt;|im_start|&gt;&quot;,
-        &quot;&lt;|im_end|&gt;&quot;,
-        &quot;&lt;|object_ref_start|&gt;&quot;,
-        &quot;&lt;|object_ref_end|&gt;&quot;,
-        &quot;&lt;|box_start|&gt;&quot;,
-        &quot;&lt;|box_end|&gt;&quot;,
-        &quot;&lt;|quad_start|&gt;&quot;,
-        &quot;&lt;|quad_end|&gt;&quot;,
-        &quot;&lt;|vision_start|&gt;&quot;,
-        &quot;&lt;|vision_end|&gt;&quot;,
-        &quot;&lt;|vision_pad|&gt;&quot;,
-        &quot;&lt;|image_pad|&gt;&quot;,
-        &quot;&lt;|video_pad|&gt;&quot;,
-        &quot;&lt;|audio_start|&gt;&quot;,
-        &quot;&lt;|audio_end|&gt;&quot;,
-        &quot;&lt;|audio_pad|&gt;&quot;,
-        &quot;&lt;tts_pad&gt;&quot;,
-        &quot;&lt;tts_text_bos&gt;&quot;,
-        &quot;&lt;tts_text_eod&gt;&quot;,
-        &quot;&lt;tts_text_bos_single&gt;&quot;
-    ],
-    &quot;bos_token&quot;: &quot;&lt;|im_start|&gt;&quot;,
-    &quot;clean_up_tokenization_spaces&quot;: false,
-    &quot;eos_token&quot;: &quot;&lt;|im_end|&gt;&quot;,
-    &quot;legacy&quot;: true,
-    &quot;model_max_length&quot;: 131072,
-    &quot;pad_token&quot;: &quot;&lt;|endoftext|&gt;&quot;,
-    &quot;sp_model_kwargs&quot;: {},
-    &quot;spaces_between_special_tokens&quot;: false,
-    &quot;unk_token&quot;: &quot;&lt;|endoftext|&gt;&quot;,
-    &quot;image_token&quot;: &quot;&lt;|image_pad|&gt;&quot;,
-    &quot;audio_token&quot;: &quot;&lt;|audio_pad|&gt;&quot;,
-    &quot;video_token&quot;: &quot;&lt;|video_pad|&gt;&quot;,
-    &quot;vision_bos_token&quot;: &quot;&lt;|vision_start|&gt;&quot;,
-    &quot;vision_eos_token&quot;: &quot;&lt;|vision_end|&gt;&quot;,
-    &quot;audio_bos_token&quot;: &quot;&lt;|audio_start|&gt;&quot;,
-    &quot;audio_eos_token&quot;: &quot;&lt;|audio_end|&gt;&quot;,
-    &quot;chat_template&quot;: &quot;{%- if tools %}\n    {{- &#x27;&lt;|im_start|&gt;system\\n&#x27; }}\n    {%- if messages[0].role == &#x27;system&#x27; %}\n        {{- messages[0].content + &#x27;\\n\\n&#x27; }}\n    {%- endif %}\n    {{- \&quot;# Tools\\n\\nYou may call one or more functions to assist with the user query.\\n\\nYou are provided with function signatures within &lt;tools&gt;&lt;/tools&gt; XML tags:\\n&lt;tools&gt;\&quot; }}\n    {%- for tool in tools %}\n        {{- \&quot;\\n\&quot; }}\n        {{- tool | tojson }}\n    {%- endfor %}\n    {{- \&quot;\\n&lt;/tools&gt;\\n\\nFor each function call, return a json object with function name and arguments within &lt;tool_call&gt;&lt;/tool_call&gt; XML tags:\\n&lt;tool_call&gt;\\n{\\\&quot;name\\\&quot;: &lt;function-name&gt;, \\\&quot;arguments\\\&quot;: &lt;args-json-object&gt;}\\n&lt;/tool_call&gt;&lt;|im_end|&gt;\\n\&quot; }}\n{%- else %}\n    {%- if messages[0].role == &#x27;system&#x27; %}\n        {{- &#x27;&lt;|im_start|&gt;system\\n&#x27; + messages[0].content + &#x27;&lt;|im_end|&gt;\\n&#x27; }}\n    {%- endif %}\n{%- endif %}\n{%- set ns = namespace(multi_step_tool=true, last_query_index=messages|length - 1) %}\n{%- for message in messages[::-1] %}\n    {%- set index = (messages|length - 1) - loop.index0 %}\n    {%- if ns.multi_step_tool and message.role == \&quot;user\&quot; and message.content is string and not(message.content.startswith(&#x27;&lt;tool_response&gt;&#x27;) and message.content.endswith(&#x27;&lt;/tool_response&gt;&#x27;)) %}\n        {%- set ns.multi_step_tool = false %}\n        {%- set ns.last_query_index = index %}\n    {%- endif %}\n{%- endfor %}\n{%- for message in messages %}\n    {%- if message.content is string %}\n        {%- set content = message.content %}\n    {%- else %}\n        {%- set content = &#x27;&#x27; %}\n    {%- endif %}\n    {%- if (message.role == \&quot;user\&quot;) or (message.role == \&quot;system\&quot; and not loop.first) %}\n        {{- &#x27;&lt;|im_start|&gt;&#x27; + message.role + &#x27;\\n&#x27; + content + &#x27;&lt;|im_end|&gt;&#x27; + &#x27;\\n&#x27; }}\n    {%- elif message.role == \&quot;assistant\&quot; %}\n        {%- set reasoning_content = &#x27;&#x27; %}\n        {%- if message.reasoning_content is string %}\n            {%- set reasoning_content = message.reasoning_content %}\n        {%- else %}\n            {%- if &#x27;&lt;/think&gt;&#x27; in content %}\n                {%- set reasoning_content = content.split(&#x27;&lt;/think&gt;&#x27;)[0].rstrip(&#x27;\\n&#x27;).split(&#x27;&lt;think&gt;&#x27;)[-1].lstrip(&#x27;\\n&#x27;) %}\n                {%- set content = content.split(&#x27;&lt;/think&gt;&#x27;)[-1].lstrip(&#x27;\\n&#x27;) %}\n            {%- endif %}\n        {%- endif %}\n        {%- if true %}\n            {{- &#x27;&lt;|im_start|&gt;&#x27; + message.role + &#x27;\\n&lt;think&gt;\\n&#x27; + reasoning_content.strip(&#x27;\\n&#x27;) + &#x27;\\n&lt;/think&gt;\\n\\n&#x27; + content.lstrip(&#x27;\\n&#x27;) }}\n        {%- endif %}\n        {%- if message.tool_calls %}\n            {%- for tool_call in message.tool_calls %}\n                {%- if (loop.first and content) or (not loop.first) %}\n                    {{- &#x27;\\n&#x27; }}\n                {%- endif %}\n                {%- if tool_call.function %}\n                    {%- set tool_call = tool_call.function %}\n                {%- endif %}\n                {{- &#x27;&lt;tool_call&gt;\\n{\&quot;name\&quot;: \&quot;&#x27; }}\n                {{- tool_call.name }}\n                {{- &#x27;\&quot;, \&quot;arguments\&quot;: &#x27; }}\n                {%- if tool_call.arguments is string %}\n                    {{- tool_call.arguments }}\n                {%- else %}\n                    {{- tool_call.arguments | tojson }}\n                {%- endif %}\n                {{- &#x27;}\\n&lt;/tool_call&gt;&#x27; }}\n            {%- endfor %}\n        {%- endif %}\n        {{- &#x27;&lt;|im_end|&gt;\\n&#x27; }}\n    {%- elif message.role == \&quot;tool\&quot; %}\n        {%- if loop.first or (messages[loop.index0 - 1].role != \&quot;tool\&quot;) %}\n            {{- &#x27;&lt;|im_start|&gt;user&#x27; }}\n        {%- endif %}\n        {{- &#x27;\\n&lt;tool_response&gt;\\n&#x27; }}\n        {{- content }}\n        {{- &#x27;\\n&lt;/tool_response&gt;&#x27; }}\n        {%- if loop.last or (messages[loop.index0 + 1].role != \&quot;tool\&quot;) %}\n            {{- &#x27;&lt;|im_end|&gt;\\n&#x27; }}\n        {%- endif %}\n    {%- endif %}\n{%- endfor %}\n{%- if add_generation_prompt %}\n    {{- &#x27;&lt;|im_start|&gt;assistant\\n&#x27; }}\n    {%- if open_thinking is defined and open_thinking is true %}\n        {{- &#x27;&lt;think&gt;\\n&#x27; }}\n    {%- else %}\n        {{- &#x27;&lt;think&gt;\\n\\n&lt;/think&gt;\\n\\n&#x27; }}\n    {%- endif %}\n{%- endif %}&quot;,
-    &quot;tokenizer_class&quot;: &quot;PreTrainedTokenizerFast&quot;
+  <div class="codeblock"><div class="code-head"><span>assets/tokenizer/tokenizer_config.json</span><span class="lang">json</span></div><pre class="code"><code data-lines="1">{
+    &quot;add_bos_token&quot;: false,
+    &quot;add_eos_token&quot;: false,
+    &quot;add_prefix_space&quot;: false,
+    &quot;added_tokens_decoder&quot;: {
+        &quot;0&quot;: {
+            &quot;content&quot;: &quot;&lt;|endoftext|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;1&quot;: {
+            &quot;content&quot;: &quot;&lt;|im_start|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;2&quot;: {
+            &quot;content&quot;: &quot;&lt;|im_end|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;3&quot;: {
+            &quot;content&quot;: &quot;&lt;|object_ref_start|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;4&quot;: {
+            &quot;content&quot;: &quot;&lt;|object_ref_end|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;5&quot;: {
+            &quot;content&quot;: &quot;&lt;|box_start|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;6&quot;: {
+            &quot;content&quot;: &quot;&lt;|box_end|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;7&quot;: {
+            &quot;content&quot;: &quot;&lt;|quad_start|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;8&quot;: {
+            &quot;content&quot;: &quot;&lt;|quad_end|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;9&quot;: {
+            &quot;content&quot;: &quot;&lt;|vision_start|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;10&quot;: {
+            &quot;content&quot;: &quot;&lt;|vision_end|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;11&quot;: {
+            &quot;content&quot;: &quot;&lt;|vision_pad|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;12&quot;: {
+            &quot;content&quot;: &quot;&lt;|image_pad|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;13&quot;: {
+            &quot;content&quot;: &quot;&lt;|video_pad|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;14&quot;: {
+            &quot;content&quot;: &quot;&lt;|audio_start|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;15&quot;: {
+            &quot;content&quot;: &quot;&lt;|audio_end|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;16&quot;: {
+            &quot;content&quot;: &quot;&lt;|audio_pad|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;17&quot;: {
+            &quot;content&quot;: &quot;&lt;tts_pad&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;18&quot;: {
+            &quot;content&quot;: &quot;&lt;tts_text_bos&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;19&quot;: {
+            &quot;content&quot;: &quot;&lt;tts_text_eod&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;20&quot;: {
+            &quot;content&quot;: &quot;&lt;tts_text_bos_single&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: true
+        },
+        &quot;21&quot;: {
+            &quot;content&quot;: &quot;&lt;tool_call&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: false
+        },
+        &quot;22&quot;: {
+            &quot;content&quot;: &quot;&lt;/tool_call&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: false
+        },
+        &quot;23&quot;: {
+            &quot;content&quot;: &quot;&lt;tool_response&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: false
+        },
+        &quot;24&quot;: {
+            &quot;content&quot;: &quot;&lt;/tool_response&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: false
+        },
+        &quot;25&quot;: {
+            &quot;content&quot;: &quot;&lt;think&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: false
+        },
+        &quot;26&quot;: {
+            &quot;content&quot;: &quot;&lt;/think&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: false
+        },
+        &quot;27&quot;: {
+            &quot;content&quot;: &quot;&lt;|buffer1|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: false
+        },
+        &quot;28&quot;: {
+            &quot;content&quot;: &quot;&lt;|buffer2|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: false
+        },
+        &quot;29&quot;: {
+            &quot;content&quot;: &quot;&lt;|buffer3|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: false
+        },
+        &quot;30&quot;: {
+            &quot;content&quot;: &quot;&lt;|buffer4|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: false
+        },
+        &quot;31&quot;: {
+            &quot;content&quot;: &quot;&lt;|buffer5|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: false
+        },
+        &quot;32&quot;: {
+            &quot;content&quot;: &quot;&lt;|buffer6|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: false
+        },
+        &quot;33&quot;: {
+            &quot;content&quot;: &quot;&lt;|buffer7|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: false
+        },
+        &quot;34&quot;: {
+            &quot;content&quot;: &quot;&lt;|buffer8|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: false
+        },
+        &quot;35&quot;: {
+            &quot;content&quot;: &quot;&lt;|buffer9|&gt;&quot;,
+            &quot;lstrip&quot;: false,
+            &quot;normalized&quot;: false,
+            &quot;rstrip&quot;: false,
+            &quot;single_word&quot;: false,
+            &quot;special&quot;: false
+        }
+    },
+    &quot;additional_special_tokens&quot;: [
+        &quot;&lt;|im_start|&gt;&quot;,
+        &quot;&lt;|im_end|&gt;&quot;,
+        &quot;&lt;|object_ref_start|&gt;&quot;,
+        &quot;&lt;|object_ref_end|&gt;&quot;,
+        &quot;&lt;|box_start|&gt;&quot;,
+        &quot;&lt;|box_end|&gt;&quot;,
+        &quot;&lt;|quad_start|&gt;&quot;,
+        &quot;&lt;|quad_end|&gt;&quot;,
+        &quot;&lt;|vision_start|&gt;&quot;,
+        &quot;&lt;|vision_end|&gt;&quot;,
+        &quot;&lt;|vision_pad|&gt;&quot;,
+        &quot;&lt;|image_pad|&gt;&quot;,
+        &quot;&lt;|video_pad|&gt;&quot;,
+        &quot;&lt;|audio_start|&gt;&quot;,
+        &quot;&lt;|audio_end|&gt;&quot;,
+        &quot;&lt;|audio_pad|&gt;&quot;,
+        &quot;&lt;tts_pad&gt;&quot;,
+        &quot;&lt;tts_text_bos&gt;&quot;,
+        &quot;&lt;tts_text_eod&gt;&quot;,
+        &quot;&lt;tts_text_bos_single&gt;&quot;
+    ],
+    &quot;bos_token&quot;: &quot;&lt;|im_start|&gt;&quot;,
+    &quot;clean_up_tokenization_spaces&quot;: false,
+    &quot;eos_token&quot;: &quot;&lt;|im_end|&gt;&quot;,
+    &quot;legacy&quot;: true,
+    &quot;model_max_length&quot;: 131072,
+    &quot;pad_token&quot;: &quot;&lt;|endoftext|&gt;&quot;,
+    &quot;sp_model_kwargs&quot;: {},
+    &quot;spaces_between_special_tokens&quot;: false,
+    &quot;unk_token&quot;: &quot;&lt;|endoftext|&gt;&quot;,
+    &quot;image_token&quot;: &quot;&lt;|image_pad|&gt;&quot;,
+    &quot;audio_token&quot;: &quot;&lt;|audio_pad|&gt;&quot;,
+    &quot;video_token&quot;: &quot;&lt;|video_pad|&gt;&quot;,
+    &quot;vision_bos_token&quot;: &quot;&lt;|vision_start|&gt;&quot;,
+    &quot;vision_eos_token&quot;: &quot;&lt;|vision_end|&gt;&quot;,
+    &quot;audio_bos_token&quot;: &quot;&lt;|audio_start|&gt;&quot;,
+    &quot;audio_eos_token&quot;: &quot;&lt;|audio_end|&gt;&quot;,
+    &quot;chat_template&quot;: &quot;{%- if tools %}\n    {{- &#x27;&lt;|im_start|&gt;system\\n&#x27; }}\n    {%- if messages[0].role == &#x27;system&#x27; %}\n        {{- messages[0].content + &#x27;\\n\\n&#x27; }}\n    {%- endif %}\n    {{- \&quot;# Tools\\n\\nYou may call one or more functions to assist with the user query.\\n\\nYou are provided with function signatures within &lt;tools&gt;&lt;/tools&gt; XML tags:\\n&lt;tools&gt;\&quot; }}\n    {%- for tool in tools %}\n        {{- \&quot;\\n\&quot; }}\n        {{- tool | tojson }}\n    {%- endfor %}\n    {{- \&quot;\\n&lt;/tools&gt;\\n\\nFor each function call, return a json object with function name and arguments within &lt;tool_call&gt;&lt;/tool_call&gt; XML tags:\\n&lt;tool_call&gt;\\n{\\\&quot;name\\\&quot;: &lt;function-name&gt;, \\\&quot;arguments\\\&quot;: &lt;args-json-object&gt;}\\n&lt;/tool_call&gt;&lt;|im_end|&gt;\\n\&quot; }}\n{%- else %}\n    {%- if messages[0].role == &#x27;system&#x27; %}\n        {{- &#x27;&lt;|im_start|&gt;system\\n&#x27; + messages[0].content + &#x27;&lt;|im_end|&gt;\\n&#x27; }}\n    {%- endif %}\n{%- endif %}\n{%- set ns = namespace(multi_step_tool=true, last_query_index=messages|length - 1) %}\n{%- for message in messages[::-1] %}\n    {%- set index = (messages|length - 1) - loop.index0 %}\n    {%- if ns.multi_step_tool and message.role == \&quot;user\&quot; and message.content is string and not(message.content.startswith(&#x27;&lt;tool_response&gt;&#x27;) and message.content.endswith(&#x27;&lt;/tool_response&gt;&#x27;)) %}\n        {%- set ns.multi_step_tool = false %}\n        {%- set ns.last_query_index = index %}\n    {%- endif %}\n{%- endfor %}\n{%- for message in messages %}\n    {%- if message.content is string %}\n        {%- set content = message.content %}\n    {%- else %}\n        {%- set content = &#x27;&#x27; %}\n    {%- endif %}\n    {%- if (message.role == \&quot;user\&quot;) or (message.role == \&quot;system\&quot; and not loop.first) %}\n        {{- &#x27;&lt;|im_start|&gt;&#x27; + message.role + &#x27;\\n&#x27; + content + &#x27;&lt;|im_end|&gt;&#x27; + &#x27;\\n&#x27; }}\n    {%- elif message.role == \&quot;assistant\&quot; %}\n        {%- set reasoning_content = &#x27;&#x27; %}\n        {%- if message.reasoning_content is string %}\n            {%- set reasoning_content = message.reasoning_content %}\n        {%- else %}\n            {%- if &#x27;&lt;/think&gt;&#x27; in content %}\n                {%- set reasoning_content = content.split(&#x27;&lt;/think&gt;&#x27;)[0].rstrip(&#x27;\\n&#x27;).split(&#x27;&lt;think&gt;&#x27;)[-1].lstrip(&#x27;\\n&#x27;) %}\n                {%- set content = content.split(&#x27;&lt;/think&gt;&#x27;)[-1].lstrip(&#x27;\\n&#x27;) %}\n            {%- endif %}\n        {%- endif %}\n        {%- if true %}\n            {{- &#x27;&lt;|im_start|&gt;&#x27; + message.role + &#x27;\\n&lt;think&gt;\\n&#x27; + reasoning_content.strip(&#x27;\\n&#x27;) + &#x27;\\n&lt;/think&gt;\\n\\n&#x27; + content.lstrip(&#x27;\\n&#x27;) }}\n        {%- endif %}\n        {%- if message.tool_calls %}\n            {%- for tool_call in message.tool_calls %}\n                {%- if (loop.first and content) or (not loop.first) %}\n                    {{- &#x27;\\n&#x27; }}\n                {%- endif %}\n                {%- if tool_call.function %}\n                    {%- set tool_call = tool_call.function %}\n                {%- endif %}\n                {{- &#x27;&lt;tool_call&gt;\\n{\&quot;name\&quot;: \&quot;&#x27; }}\n                {{- tool_call.name }}\n                {{- &#x27;\&quot;, \&quot;arguments\&quot;: &#x27; }}\n                {%- if tool_call.arguments is string %}\n                    {{- tool_call.arguments }}\n                {%- else %}\n                    {{- tool_call.arguments | tojson }}\n                {%- endif %}\n                {{- &#x27;}\\n&lt;/tool_call&gt;&#x27; }}\n            {%- endfor %}\n        {%- endif %}\n        {{- &#x27;&lt;|im_end|&gt;\\n&#x27; }}\n    {%- elif message.role == \&quot;tool\&quot; %}\n        {%- if loop.first or (messages[loop.index0 - 1].role != \&quot;tool\&quot;) %}\n            {{- &#x27;&lt;|im_start|&gt;user&#x27; }}\n        {%- endif %}\n        {{- &#x27;\\n&lt;tool_response&gt;\\n&#x27; }}\n        {{- content }}\n        {{- &#x27;\\n&lt;/tool_response&gt;&#x27; }}\n        {%- if loop.last or (messages[loop.index0 + 1].role != \&quot;tool\&quot;) %}\n            {{- &#x27;&lt;|im_end|&gt;\\n&#x27; }}\n        {%- endif %}\n    {%- endif %}\n{%- endfor %}\n{%- if add_generation_prompt %}\n    {{- &#x27;&lt;|im_start|&gt;assistant\\n&#x27; }}\n    {%- if open_thinking is defined and open_thinking is true %}\n        {{- &#x27;&lt;think&gt;\\n&#x27; }}\n    {%- else %}\n        {{- &#x27;&lt;think&gt;\\n\\n&lt;/think&gt;\\n\\n&#x27; }}\n    {%- endif %}\n{%- endif %}&quot;,
+    &quot;tokenizer_class&quot;: &quot;PreTrainedTokenizerFast&quot;
 }</code></pre></div>
 </main>
 <script src="../../../assets/course.js?v=3"></script>

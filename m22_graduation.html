@@ -187,8 +187,8 @@ done</span>
             <tr><td><code>smoke_lora</code></td><td>lora（M18）</td><td>冻结基座只训 0.76% 适配器参数（日志 <code>0.004M/0.537M</code>）；产物只存适配器不存 0.53M 基座</td></tr>
             <tr><td><code>smoke_distill</code></td><td>distill（M18）</td><td>教师模型按 teacher_weight 独立构造再加载；loss=4.39 而非 8.77——KL 软目标口径不同，不是学得快</td></tr>
             <tr><td><code>smoke_grpo</code></td><td>grpo（M19）</td><td>rollout 组生成（M19：一次采样一组再组内比）+ 组相对优势通道畅通；<code>adv_std=0.0000</code>：随机 tiny 下同组奖励全同，优势全零——诚实信号</td></tr>
-            <tr><td><code>smoke_ppo</code></td><td>ppo（M19）</td><td>actor/critic 双前向；critic_loss、approx_kl、clipfrac 监控指标在流（M19 讲过的 mypy 揪出的 all_reduce 也在其中）</td></tr>
-            <tr><td><code>smoke_agent</code></td><td>agent（M19）</td><td>多轮轨迹生成（max_turns=2）+ 工具奖励通道；三段 RL 冒烟的 <code>reward=0.5000</code> 是规则奖励的底噪，非学习信号</td></tr>
+            <tr><td><code>smoke_ppo</code><br>configs/smoke/smoke_ppo.yaml</td><td>ppo（M19）</td><td>actor/critic 双前向；critic_loss、approx_kl、clipfrac 监控指标在流（M19 讲过的 mypy 揪出的 all_reduce 也在其中）</td></tr>
+            <tr><td><code>smoke_agent</code><br>configs/smoke/smoke_agent.yaml</td><td>agent（M19）</td><td>多轮轨迹生成（max_turns=2）+ 工具奖励通道；三段 RL 冒烟的 <code>reward=0.5000</code> 是规则奖励的底噪，非学习信号</td></tr>
           </tbody>
         </table>
       </div>

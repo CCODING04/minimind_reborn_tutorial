@@ -14,111 +14,111 @@
   <span class="cv-meta">106 行 · 4KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>tests/test_training/test_smoke_chain.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;tiny 模型全链路冒烟（testing-quality §3：数据→训练→保存→续训→生成）。
-
-CPU 快层；GPU 路径由 configs/smoke/*.yaml 在 make smoke 中覆盖。
-&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import os
-
-from minimind_reborn.configuration import load_config
-from minimind_reborn.inference.engine import MiniMindLLM
-from minimind_reborn.models.weights import load_inference_weights
-from minimind_reborn.training.common.setup import build_model, load_tokenizer
-from minimind_reborn.training.common.trainer import Trainer
-
-
-def _make_cfg(tmp_path, stage):
-    overrides = [
-        f&quot;stage={stage}&quot;,
-        &quot;train.max_steps=2&quot;,
-        &quot;train.batch_size=2&quot;,
-        &quot;train.gradient_accumulation_steps=1&quot;,
-        &quot;train.log_interval=1&quot;,
-        &quot;train.save_interval_steps=100&quot;,
-        &quot;train.epochs=1&quot;,
-        &quot;data.max_seq_len=64&quot;,
-        &quot;data.eval_ratio=0.125&quot;,
-        &quot;data.eval_iters=1&quot;,
-        &quot;data.num_workers=0&quot;,
-        &quot;model.hidden_size=32&quot;,
-        &quot;model.num_hidden_layers=2&quot;,
-        &quot;model.num_attention_heads=2&quot;,
-        &quot;model.num_key_value_heads=1&quot;,
-    ]
-    cfg = load_config(None, overrides)
-    cfg.output_dir = str(tmp_path / &quot;out&quot;)
-    cfg.checkpoint_dir = str(tmp_path / &quot;ckpt&quot;)
-    cfg.run_dir = str(tmp_path / &quot;run&quot;)
-    return cfg
-
-
-def _build_trainer(cfg, tokenizer, data_path, stage):
-    from minimind_reborn.data.datasets import PretrainDataset, SFTDataset
-
-    cls = PretrainDataset if stage == &quot;pretrain&quot; else SFTDataset
-    ds = cls(data_path, tokenizer, max_length=cfg.data.max_seq_len, eval_ratio=cfg.data.eval_ratio)
-
-    def compute_loss(batch, m):
-        out = m(batch[&quot;input_ids&quot;], labels=batch[&quot;labels&quot;])
-        return out.loss + out.aux_loss, {&quot;train/loss&quot;: out.loss.item()}
-
-    return Trainer(
-        cfg,
-        build_model(cfg, tokenizer),
-        tokenizer,
-        ds.train_view(),
-        ds.eval_view(),
-        compute_loss=compute_loss,
-        save_weight=&quot;smoke&quot;,
-        device=&quot;cpu&quot;,
-    )
-
-
-def test_full_chain_train_save_resume_generate(tmp_path, tiny_jsonl):
-    pretrain_path, _ = tiny_jsonl
-    tokenizer = load_tokenizer()
-
-    # 1) 训练 2 步：max_steps 截断 + 保存 + 四件套落盘
-    cfg = _make_cfg(tmp_path, &quot;pretrain&quot;)
-    from minimind_reborn.loggers import setup_logging
-
-    setup_logging(cfg.run_dir)  # workflow 入口职责；直连 Trainer 的测试里手动触发
-    trainer = _build_trainer(cfg, tokenizer, pretrain_path, &quot;pretrain&quot;)
-    trainer.run()
-    weights = os.path.join(cfg.output_dir, f&quot;smoke_{cfg.model.hidden_size}.pth&quot;)
-    assert os.path.exists(weights), &quot;训练后推理权重未落盘&quot;
-    for f in (&quot;config.json&quot;, &quot;env.json&quot;, &quot;metrics.jsonl&quot;, &quot;train.log&quot;):
-        assert os.path.exists(os.path.join(cfg.run_dir, f)), f&quot;可追溯四件套缺 {f}&quot;
-
-    # 2) 续训：checkpoint 在场自动恢复（铁律 8）
-    cfg2 = _make_cfg(tmp_path, &quot;pretrain&quot;)
-    cfg2.checkpoint_dir, cfg2.output_dir = cfg.checkpoint_dir, cfg.output_dir
-    cfg2.run_dir = str(tmp_path / &quot;run2&quot;)
-    trainer2 = _build_trainer(cfg2, tokenizer, pretrain_path, &quot;pretrain&quot;)
-    assert trainer2.start_epoch == 0 and trainer2.start_step == 2, &quot;续训未恢复进度&quot;
-
-    # 3) 引擎（组件注入构造）→ 生成 + request 追溯字段
-    model = build_model(cfg2, tokenizer)
-    load_inference_weights(model, weights, strict=True)
-    llm = MiniMindLLM(model, tokenizer, device=&quot;cpu&quot;, dtype=model.lm_head.weight.dtype)
-    result = llm.generate_text([{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;测试&quot;}])
-    assert result[&quot;content&quot;] is not None and result[&quot;finish_reason&quot;] in (&quot;stop&quot;, &quot;length&quot;)
-    assert &quot;request_id&quot; in result and &quot;latency_ms&quot; in result
-
-
-def test_sft_labels_ignore_non_assistant(tmp_path, tiny_jsonl, tokenizer):
-    &quot;&quot;&quot;SFT 标签语义：非 assistant 区间必须为 -100，回答区间保留 token id。&quot;&quot;&quot;
-    from minimind_reborn.data.datasets import SFTDataset
-
-    _, sft_path = tiny_jsonl
-    ds = SFTDataset(sft_path, tokenizer, max_length=64)
-    labels = ds[0][&quot;labels&quot;]
-    assert (labels == -100).sum() &gt; 0
-    kept = labels[labels != -100]
-    assert len(kept) &gt; 0</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>tests/test_training/test_smoke_chain.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;tiny 模型全链路冒烟（testing-quality §3：数据→训练→保存→续训→生成）。
+
+CPU 快层；GPU 路径由 configs/smoke/*.yaml 在 make smoke 中覆盖。
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import os
+
+from minimind_reborn.configuration import load_config
+from minimind_reborn.inference.engine import MiniMindLLM
+from minimind_reborn.models.weights import load_inference_weights
+from minimind_reborn.training.common.setup import build_model, load_tokenizer
+from minimind_reborn.training.common.trainer import Trainer
+
+
+def _make_cfg(tmp_path, stage):
+    overrides = [
+        f&quot;stage={stage}&quot;,
+        &quot;train.max_steps=2&quot;,
+        &quot;train.batch_size=2&quot;,
+        &quot;train.gradient_accumulation_steps=1&quot;,
+        &quot;train.log_interval=1&quot;,
+        &quot;train.save_interval_steps=100&quot;,
+        &quot;train.epochs=1&quot;,
+        &quot;data.max_seq_len=64&quot;,
+        &quot;data.eval_ratio=0.125&quot;,
+        &quot;data.eval_iters=1&quot;,
+        &quot;data.num_workers=0&quot;,
+        &quot;model.hidden_size=32&quot;,
+        &quot;model.num_hidden_layers=2&quot;,
+        &quot;model.num_attention_heads=2&quot;,
+        &quot;model.num_key_value_heads=1&quot;,
+    ]
+    cfg = load_config(None, overrides)
+    cfg.output_dir = str(tmp_path / &quot;out&quot;)
+    cfg.checkpoint_dir = str(tmp_path / &quot;ckpt&quot;)
+    cfg.run_dir = str(tmp_path / &quot;run&quot;)
+    return cfg
+
+
+def _build_trainer(cfg, tokenizer, data_path, stage):
+    from minimind_reborn.data.datasets import PretrainDataset, SFTDataset
+
+    cls = PretrainDataset if stage == &quot;pretrain&quot; else SFTDataset
+    ds = cls(data_path, tokenizer, max_length=cfg.data.max_seq_len, eval_ratio=cfg.data.eval_ratio)
+
+    def compute_loss(batch, m):
+        out = m(batch[&quot;input_ids&quot;], labels=batch[&quot;labels&quot;])
+        return out.loss + out.aux_loss, {&quot;train/loss&quot;: out.loss.item()}
+
+    return Trainer(
+        cfg,
+        build_model(cfg, tokenizer),
+        tokenizer,
+        ds.train_view(),
+        ds.eval_view(),
+        compute_loss=compute_loss,
+        save_weight=&quot;smoke&quot;,
+        device=&quot;cpu&quot;,
+    )
+
+
+def test_full_chain_train_save_resume_generate(tmp_path, tiny_jsonl):
+    pretrain_path, _ = tiny_jsonl
+    tokenizer = load_tokenizer()
+
+    # 1) 训练 2 步：max_steps 截断 + 保存 + 四件套落盘
+    cfg = _make_cfg(tmp_path, &quot;pretrain&quot;)
+    from minimind_reborn.loggers import setup_logging
+
+    setup_logging(cfg.run_dir)  # workflow 入口职责；直连 Trainer 的测试里手动触发
+    trainer = _build_trainer(cfg, tokenizer, pretrain_path, &quot;pretrain&quot;)
+    trainer.run()
+    weights = os.path.join(cfg.output_dir, f&quot;smoke_{cfg.model.hidden_size}.pth&quot;)
+    assert os.path.exists(weights), &quot;训练后推理权重未落盘&quot;
+    for f in (&quot;config.json&quot;, &quot;env.json&quot;, &quot;metrics.jsonl&quot;, &quot;train.log&quot;):
+        assert os.path.exists(os.path.join(cfg.run_dir, f)), f&quot;可追溯四件套缺 {f}&quot;
+
+    # 2) 续训：checkpoint 在场自动恢复（铁律 8）
+    cfg2 = _make_cfg(tmp_path, &quot;pretrain&quot;)
+    cfg2.checkpoint_dir, cfg2.output_dir = cfg.checkpoint_dir, cfg.output_dir
+    cfg2.run_dir = str(tmp_path / &quot;run2&quot;)
+    trainer2 = _build_trainer(cfg2, tokenizer, pretrain_path, &quot;pretrain&quot;)
+    assert trainer2.start_epoch == 0 and trainer2.start_step == 2, &quot;续训未恢复进度&quot;
+
+    # 3) 引擎（组件注入构造）→ 生成 + request 追溯字段
+    model = build_model(cfg2, tokenizer)
+    load_inference_weights(model, weights, strict=True)
+    llm = MiniMindLLM(model, tokenizer, device=&quot;cpu&quot;, dtype=model.lm_head.weight.dtype)
+    result = llm.generate_text([{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;测试&quot;}])
+    assert result[&quot;content&quot;] is not None and result[&quot;finish_reason&quot;] in (&quot;stop&quot;, &quot;length&quot;)
+    assert &quot;request_id&quot; in result and &quot;latency_ms&quot; in result
+
+
+def test_sft_labels_ignore_non_assistant(tmp_path, tiny_jsonl, tokenizer):
+    &quot;&quot;&quot;SFT 标签语义：非 assistant 区间必须为 -100，回答区间保留 token id。&quot;&quot;&quot;
+    from minimind_reborn.data.datasets import SFTDataset
+
+    _, sft_path = tiny_jsonl
+    ds = SFTDataset(sft_path, tokenizer, max_length=64)
+    labels = ds[0][&quot;labels&quot;]
+    assert (labels == -100).sum() &gt; 0
+    kept = labels[labels != -100]
+    assert len(kept) &gt; 0</code></pre></div>
 </main>
 <script src="../../../assets/course.js?v=3"></script>
 </body>

@@ -11,58 +11,58 @@
 <header class="cv-topbar">
   <a class="cv-back" href="../../../../../index.html">← 课程地图</a>
   <span class="cv-crumb">Reproduce/minimind_reborn/src/minimind_reborn/training/sft/workflow.py</span>
-  <span class="cv-meta">50 行 · 1KB · minimind_reborn</span>
+  <span class="cv-meta">50 行 · 2KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/sft/workflow.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;SFT workflow：与 pretrain 的唯一差异是数据集（这就是抽基件的意义）。&quot;&quot;&quot;
-
-from __future__ import annotations
-
-from minimind_reborn.configuration.schemas import RunConfig
-from minimind_reborn.loggers import get_logger, setup_logging
-from minimind_reborn.training.common.setup import build_lm_dataset, build_model, load_tokenizer
-from minimind_reborn.training.common.trainer import Trainer
-
-logger = get_logger(&quot;sft&quot;)
-
-
-def run(cfg: RunConfig, *, device: str | None = None, local_rank: int = 0) -&gt; Trainer:
-    setup_logging(cfg.run_dir)
-    tokenizer = load_tokenizer()
-    model = build_model(cfg, tokenizer)
-    train_ds, eval_ds = build_lm_dataset(cfg, tokenizer, kind=&quot;sft&quot;)
-    # 数据卡从底层数据集取（train_ds 是 IndexListView 视图、无 data_card）——
-    # 上轮训练 data_card.json 未落盘的根因即此处检查错对象
-    sft_base = getattr(train_ds, &quot;_base&quot;, None) or train_ds
-
-    def compute_loss(batch, m):
-        out = m(batch[&quot;input_ids&quot;], labels=batch[&quot;labels&quot;])
-        loss = out.loss + out.aux_loss
-        return loss, {&quot;train/loss&quot;: out.loss.item(), &quot;train/aux_loss&quot;: float(out.aux_loss)}
-
-    trainer = Trainer(
-        cfg,
-        model,
-        tokenizer,
-        train_ds,
-        eval_ds,
-        compute_loss=compute_loss,
-        save_weight=&quot;full_sft&quot;,
-        device=device,
-        local_rank=local_rank,
-    )
-    trainer.run()
-    # D5 数据卡：去重/分桶/零损失重映射统计落盘（rank0 写，避免双 rank 竞争）
-    if local_rank == 0 and hasattr(sft_base, &quot;data_card&quot;):
-        import json
-        from pathlib import Path
-
-        card = sft_base.data_card()
-        out_path = Path(cfg.run_dir) / &quot;data_card.json&quot;
-        out_path.write_text(json.dumps(card, ensure_ascii=False, indent=2), encoding=&quot;utf-8&quot;)
-        logger.info(&quot;数据卡已写入 %s：去重 %s 条，C3 重映射 %s 次&quot;,
-                    out_path, card.get(&quot;dedup_removed&quot;), card.get(&quot;zero_loss_remap_events&quot;))
-    return trainer</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/sft/workflow.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;SFT workflow：与 pretrain 的唯一差异是数据集（这就是抽基件的意义）。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+from minimind_reborn.configuration.schemas import RunConfig
+from minimind_reborn.loggers import get_logger, setup_logging
+from minimind_reborn.training.common.setup import build_lm_dataset, build_model, load_tokenizer
+from minimind_reborn.training.common.trainer import Trainer
+
+logger = get_logger(&quot;sft&quot;)
+
+
+def run(cfg: RunConfig, *, device: str | None = None, local_rank: int = 0) -&gt; Trainer:
+    setup_logging(cfg.run_dir)
+    tokenizer = load_tokenizer()
+    model = build_model(cfg, tokenizer)
+    train_ds, eval_ds = build_lm_dataset(cfg, tokenizer, kind=&quot;sft&quot;)
+    # 数据卡从底层数据集取（train_ds 是 IndexListView 视图、无 data_card）——
+    # 上轮训练 data_card.json 未落盘的根因即此处检查错对象
+    sft_base = getattr(train_ds, &quot;_base&quot;, None) or train_ds
+
+    def compute_loss(batch, m):
+        out = m(batch[&quot;input_ids&quot;], labels=batch[&quot;labels&quot;])
+        loss = out.loss + out.aux_loss
+        return loss, {&quot;train/loss&quot;: out.loss.item(), &quot;train/aux_loss&quot;: float(out.aux_loss)}
+
+    trainer = Trainer(
+        cfg,
+        model,
+        tokenizer,
+        train_ds,
+        eval_ds,
+        compute_loss=compute_loss,
+        save_weight=&quot;full_sft&quot;,
+        device=device,
+        local_rank=local_rank,
+    )
+    trainer.run()
+    # D5 数据卡：去重/分桶/零损失重映射统计落盘（rank0 写，避免双 rank 竞争）
+    if local_rank == 0 and hasattr(sft_base, &quot;data_card&quot;):
+        import json
+        from pathlib import Path
+
+        card = sft_base.data_card()
+        out_path = Path(cfg.run_dir) / &quot;data_card.json&quot;
+        out_path.write_text(json.dumps(card, ensure_ascii=False, indent=2), encoding=&quot;utf-8&quot;)
+        logger.info(&quot;数据卡已写入 %s：去重 %s 条，C3 重映射 %s 次&quot;,
+                    out_path, card.get(&quot;dedup_removed&quot;), card.get(&quot;zero_loss_remap_events&quot;))
+    return trainer</code></pre></div>
 </main>
 <script src="../../../../../assets/course.js?v=3"></script>
 </body>

@@ -14,57 +14,57 @@
   <span class="cv-meta">52 行 · 2KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>tools/chat.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;交互对话入口：封装 MiniMindLLM（build 工厂），支持 thinking 开关与速度统计。&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import argparse
-import random
-import time
-
-from minimind_reborn.configuration.schemas import GenerateConfig
-from minimind_reborn.inference.engine import MiniMindLLM
-
-
-def main() -&gt; None:
-    parser = argparse.ArgumentParser(description=&quot;minimind_reborn 交互对话&quot;)
-    parser.add_argument(&quot;--weight&quot;, default=&quot;full_sft&quot;, help=&quot;权重名（pretrain/full_sft/dpo/...）&quot;)
-    parser.add_argument(&quot;--hidden-size&quot;, type=int, default=768)
-    parser.add_argument(&quot;--num-hidden-layers&quot;, type=int, default=8)
-    parser.add_argument(&quot;--use-moe&quot;, action=&quot;store_true&quot;)
-    parser.add_argument(&quot;--temperature&quot;, type=float, default=0.85)
-    parser.add_argument(&quot;--top-p&quot;, type=float, default=0.95)
-    parser.add_argument(&quot;--max-new-tokens&quot;, type=int, default=1024)
-    parser.add_argument(&quot;--open-thinking&quot;, action=&quot;store_true&quot;, help=&quot;开启 &lt;think&gt; 思考前缀&quot;)
-    parser.add_argument(&quot;--device&quot;, default=None)
-    args = parser.parse_args()
-
-    llm = MiniMindLLM.build(
-        args.weight,
-        hidden_size=args.hidden_size,
-        num_hidden_layers=args.num_hidden_layers,
-        use_moe=args.use_moe,
-        device=args.device,
-    )
-    gen = GenerateConfig(temperature=args.temperature, top_p=args.top_p, max_new_tokens=args.max_new_tokens)
-    pretrain_mode = &quot;pretrain&quot; in args.weight
-    session = llm.chat_session(gen, pretrain_mode=pretrain_mode)
-    print(&quot;输入问题开始对话（Ctrl-C 退出）&quot;)
-    while True:
-        try:
-            query = input(&quot;💬: &quot;)
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return
-        random.seed(random.randint(0, 2**31))  # 采样语义：默认非零温度下两次输出不同是正常行为
-        start = time.time()
-        text = session.respond(query, open_thinking=args.open_thinking)
-        tokens = len(session.tokenizer(text).input_ids)
-        print(f&quot;🧠: {text}\n[速度] {tokens / max(time.time() - start, 1e-6):.1f} tokens/s\n&quot;)
-
-
-if __name__ == &quot;__main__&quot;:
-    main()</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>tools/chat.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;交互对话入口：封装 MiniMindLLM（build 工厂），支持 thinking 开关与速度统计。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import argparse
+import random
+import time
+
+from minimind_reborn.configuration.schemas import GenerateConfig
+from minimind_reborn.inference.engine import MiniMindLLM
+
+
+def main() -&gt; None:
+    parser = argparse.ArgumentParser(description=&quot;minimind_reborn 交互对话&quot;)
+    parser.add_argument(&quot;--weight&quot;, default=&quot;full_sft&quot;, help=&quot;权重名（pretrain/full_sft/dpo/...）&quot;)
+    parser.add_argument(&quot;--hidden-size&quot;, type=int, default=768)
+    parser.add_argument(&quot;--num-hidden-layers&quot;, type=int, default=8)
+    parser.add_argument(&quot;--use-moe&quot;, action=&quot;store_true&quot;)
+    parser.add_argument(&quot;--temperature&quot;, type=float, default=0.85)
+    parser.add_argument(&quot;--top-p&quot;, type=float, default=0.95)
+    parser.add_argument(&quot;--max-new-tokens&quot;, type=int, default=1024)
+    parser.add_argument(&quot;--open-thinking&quot;, action=&quot;store_true&quot;, help=&quot;开启 &lt;think&gt; 思考前缀&quot;)
+    parser.add_argument(&quot;--device&quot;, default=None)
+    args = parser.parse_args()
+
+    llm = MiniMindLLM.build(
+        args.weight,
+        hidden_size=args.hidden_size,
+        num_hidden_layers=args.num_hidden_layers,
+        use_moe=args.use_moe,
+        device=args.device,
+    )
+    gen = GenerateConfig(temperature=args.temperature, top_p=args.top_p, max_new_tokens=args.max_new_tokens)
+    pretrain_mode = &quot;pretrain&quot; in args.weight
+    session = llm.chat_session(gen, pretrain_mode=pretrain_mode)
+    print(&quot;输入问题开始对话（Ctrl-C 退出）&quot;)
+    while True:
+        try:
+            query = input(&quot;💬: &quot;)
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        random.seed(random.randint(0, 2**31))  # 采样语义：默认非零温度下两次输出不同是正常行为
+        start = time.time()
+        text = session.respond(query, open_thinking=args.open_thinking)
+        tokens = len(session.tokenizer(text).input_ids)
+        print(f&quot;🧠: {text}\n[速度] {tokens / max(time.time() - start, 1e-6):.1f} tokens/s\n&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre></div>
 </main>
 <script src="../../assets/course.js?v=3"></script>
 </body>

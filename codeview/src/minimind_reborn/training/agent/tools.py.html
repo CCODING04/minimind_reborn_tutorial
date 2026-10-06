@@ -14,264 +14,264 @@
   <span class="cv-meta">259 行 · 8KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/agent/tools.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;Agent 工具环境（官方 train_agent.py 的工具/模拟器/安全求值重构）。&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import ast
-import json
-import math
-import operator
-import re
-from collections.abc import Callable
-
-# ===== 工具 schema =====
-TOOLS = [
-    {
-        &quot;type&quot;: &quot;function&quot;,
-        &quot;function&quot;: {
-            &quot;name&quot;: &quot;calculate_math&quot;,
-            &quot;description&quot;: &quot;计算数学表达式&quot;,
-            &quot;parameters&quot;: {
-                &quot;type&quot;: &quot;object&quot;,
-                &quot;properties&quot;: {&quot;expression&quot;: {&quot;type&quot;: &quot;string&quot;}},
-                &quot;required&quot;: [&quot;expression&quot;],
-            },
-        },
-    },
-    {
-        &quot;type&quot;: &quot;function&quot;,
-        &quot;function&quot;: {
-            &quot;name&quot;: &quot;unit_converter&quot;,
-            &quot;description&quot;: &quot;单位换算&quot;,
-            &quot;parameters&quot;: {
-                &quot;type&quot;: &quot;object&quot;,
-                &quot;properties&quot;: {
-                    &quot;value&quot;: {&quot;type&quot;: &quot;number&quot;},
-                    &quot;from_unit&quot;: {&quot;type&quot;: &quot;string&quot;},
-                    &quot;to_unit&quot;: {&quot;type&quot;: &quot;string&quot;},
-                },
-                &quot;required&quot;: [&quot;value&quot;, &quot;from_unit&quot;, &quot;to_unit&quot;],
-            },
-        },
-    },
-    {
-        &quot;type&quot;: &quot;function&quot;,
-        &quot;function&quot;: {
-            &quot;name&quot;: &quot;get_current_weather&quot;,
-            &quot;description&quot;: &quot;获取天气&quot;,
-            &quot;parameters&quot;: {&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {&quot;location&quot;: {&quot;type&quot;: &quot;string&quot;}}, &quot;required&quot;: [&quot;location&quot;]},
-        },
-    },
-    {
-        &quot;type&quot;: &quot;function&quot;,
-        &quot;function&quot;: {
-            &quot;name&quot;: &quot;get_current_time&quot;,
-            &quot;description&quot;: &quot;获取时间&quot;,
-            &quot;parameters&quot;: {
-                &quot;type&quot;: &quot;object&quot;,
-                &quot;properties&quot;: {&quot;timezone&quot;: {&quot;type&quot;: &quot;string&quot;, &quot;default&quot;: &quot;Asia/Shanghai&quot;}},
-                &quot;required&quot;: [],
-            },
-        },
-    },
-    {
-        &quot;type&quot;: &quot;function&quot;,
-        &quot;function&quot;: {
-            &quot;name&quot;: &quot;get_exchange_rate&quot;,
-            &quot;description&quot;: &quot;查询汇率&quot;,
-            &quot;parameters&quot;: {
-                &quot;type&quot;: &quot;object&quot;,
-                &quot;properties&quot;: {&quot;from_currency&quot;: {&quot;type&quot;: &quot;string&quot;}, &quot;to_currency&quot;: {&quot;type&quot;: &quot;string&quot;}},
-                &quot;required&quot;: [&quot;from_currency&quot;, &quot;to_currency&quot;],
-            },
-        },
-    },
-    {
-        &quot;type&quot;: &quot;function&quot;,
-        &quot;function&quot;: {
-            &quot;name&quot;: &quot;translate_text&quot;,
-            &quot;description&quot;: &quot;翻译文本&quot;,
-            &quot;parameters&quot;: {
-                &quot;type&quot;: &quot;object&quot;,
-                &quot;properties&quot;: {&quot;text&quot;: {&quot;type&quot;: &quot;string&quot;}, &quot;target_language&quot;: {&quot;type&quot;: &quot;string&quot;}},
-                &quot;required&quot;: [&quot;text&quot;, &quot;target_language&quot;],
-            },
-        },
-    },
-]
-
-WEATHER_DATA = {
-    &quot;北京&quot;: (&quot;28°C&quot;, &quot;晴&quot;),
-    &quot;上海&quot;: (&quot;15°C&quot;, &quot;多云&quot;),
-    &quot;广州&quot;: (&quot;32°C&quot;, &quot;闷热&quot;),
-    &quot;深圳&quot;: (&quot;30°C&quot;, &quot;晴&quot;),
-    &quot;杭州&quot;: (&quot;22°C&quot;, &quot;阴&quot;),
-    &quot;成都&quot;: (&quot;18°C&quot;, &quot;小雨&quot;),
-    &quot;武汉&quot;: (&quot;25°C&quot;, &quot;多云&quot;),
-    &quot;南京&quot;: (&quot;20°C&quot;, &quot;晴&quot;),
-    &quot;西安&quot;: (&quot;16°C&quot;, &quot;大风&quot;),
-    &quot;重庆&quot;: (&quot;26°C&quot;, &quot;阴&quot;),
-    &quot;Tokyo&quot;: (&quot;12°C&quot;, &quot;晴&quot;),
-    &quot;New York&quot;: (&quot;8°C&quot;, &quot;多云&quot;),
-    &quot;London&quot;: (&quot;5°C&quot;, &quot;小雨&quot;),
-    &quot;Paris&quot;: (&quot;10°C&quot;, &quot;阴&quot;),
-    &quot;Sydney&quot;: (&quot;25°C&quot;, &quot;晴朗&quot;),
-}
-TIME_DATA = {
-    &quot;Asia/Shanghai&quot;: &quot;2025-03-07 14:30:00&quot;,
-    &quot;America/New_York&quot;: &quot;2025-03-07 01:30:00&quot;,
-    &quot;Europe/London&quot;: &quot;2025-03-07 06:30:00&quot;,
-    &quot;Asia/Tokyo&quot;: &quot;2025-03-07 15:30:00&quot;,
-    &quot;Europe/Paris&quot;: &quot;2025-03-07 07:30:00&quot;,
-    &quot;Australia/Sydney&quot;: &quot;2025-03-07 17:30:00&quot;,
-}
-EXCHANGE_DATA = {
-    (&quot;USD&quot;, &quot;CNY&quot;): 7.21,
-    (&quot;EUR&quot;, &quot;CNY&quot;): 7.85,
-    (&quot;GBP&quot;, &quot;CNY&quot;): 9.12,
-    (&quot;JPY&quot;, &quot;CNY&quot;): 0.048,
-    (&quot;USD&quot;, &quot;EUR&quot;): 0.92,
-    (&quot;USD&quot;, &quot;GBP&quot;): 0.79,
-    (&quot;CNY&quot;, &quot;JPY&quot;): 20.83,
-    (&quot;AUD&quot;, &quot;CNY&quot;): 4.72,
-}
-TRANSLATE_DATA = {
-    (&quot;你好世界&quot;, &quot;english&quot;): &quot;Hello World&quot;,
-    (&quot;Good morning&quot;, &quot;chinese&quot;): &quot;早上好&quot;,
-    (&quot;今天天气真好&quot;, &quot;english&quot;): &quot;The weather is nice today&quot;,
-    (&quot;I love programming&quot;, &quot;chinese&quot;): &quot;我喜欢编程&quot;,
-    (&quot;机器学习很有趣&quot;, &quot;english&quot;): &quot;Machine learning is interesting&quot;,
-    (&quot;Happy birthday&quot;, &quot;chinese&quot;): &quot;生日快乐&quot;,
-}
-UNIT_DATA = {
-    &quot;km_miles&quot;: 0.621371,
-    &quot;miles_km&quot;: 1.60934,
-    &quot;kg_pounds&quot;: 2.20462,
-    &quot;pounds_kg&quot;: 0.453592,
-    &quot;meters_feet&quot;: 3.28084,
-    &quot;feet_meters&quot;: 0.3048,
-    &quot;celsius_fahrenheit&quot;: 1.8,
-    &quot;fahrenheit_celsius&quot;: 0.5556,
-}
-
-MOCK_RESULTS: dict[str, Callable[[dict], dict]] = {
-    &quot;calculate_math&quot;: lambda a: {&quot;result&quot;: str(safe_math_eval(a.get(&quot;expression&quot;, &quot;0&quot;)))},
-    &quot;unit_converter&quot;: lambda a: {
-        &quot;result&quot;: round(
-            float(a.get(&quot;value&quot;, 0))
-            * UNIT_DATA.get(f&quot;{a.get(&#x27;from_unit&#x27;, &#x27;&#x27;).lower()}_{a.get(&#x27;to_unit&#x27;, &#x27;&#x27;).lower()}&quot;, 1),
-            4,
-        )
-    },
-    &quot;get_current_weather&quot;: lambda a: (
-        lambda w: {&quot;city&quot;: a.get(&quot;location&quot;), &quot;temperature&quot;: w[0], &quot;humidity&quot;: &quot;65%&quot;, &quot;condition&quot;: w[1]}
-    )(WEATHER_DATA.get(a.get(&quot;location&quot;) or &quot;&quot;, (&quot;22°C&quot;, &quot;晴&quot;))),
-    &quot;get_current_time&quot;: lambda a: {
-        &quot;datetime&quot;: TIME_DATA.get(a.get(&quot;timezone&quot;, &quot;Asia/Shanghai&quot;), &quot;2025-03-07 14:30:00&quot;),
-        &quot;timezone&quot;: a.get(&quot;timezone&quot;, &quot;Asia/Shanghai&quot;),
-    },
-    &quot;get_exchange_rate&quot;: lambda a: {
-        &quot;from&quot;: a.get(&quot;from_currency&quot;),
-        &quot;to&quot;: a.get(&quot;to_currency&quot;),
-        &quot;rate&quot;: EXCHANGE_DATA.get((a.get(&quot;from_currency&quot;) or &quot;&quot;, a.get(&quot;to_currency&quot;) or &quot;&quot;), 1.0),
-    },
-    &quot;translate_text&quot;: lambda a: {
-        &quot;translated_text&quot;: TRANSLATE_DATA.get(
-            (a.get(&quot;text&quot;) or &quot;&quot;, a.get(&quot;target_language&quot;) or &quot;&quot;), {&quot;translated_text&quot;: a.get(&quot;text&quot;, &quot;&quot;)}
-        )
-    },
-}
-
-CHECK_ARGS = {
-    &quot;calculate_math&quot;: lambda a: bool(a.get(&quot;expression&quot;)),
-    &quot;unit_converter&quot;: lambda a: a.get(&quot;value&quot;) is not None and a.get(&quot;from_unit&quot;) and a.get(&quot;to_unit&quot;),
-    &quot;get_current_weather&quot;: lambda a: bool(a.get(&quot;location&quot;)),
-    &quot;get_current_time&quot;: lambda a: True,
-    &quot;get_exchange_rate&quot;: lambda a: bool(a.get(&quot;from_currency&quot;)) and bool(a.get(&quot;to_currency&quot;)),
-    &quot;translate_text&quot;: lambda a: bool(a.get(&quot;text&quot;)) and bool(a.get(&quot;target_language&quot;)),
-}
-
-
-def parse_tool_calls(text: str) -&gt; list[dict]:
-    &quot;&quot;&quot;从模型输出抽取 &lt;tool_call&gt;{json}&lt;/tool_call&gt;；坏 JSON 静默跳过。&quot;&quot;&quot;
-    calls = []
-    for m in re.findall(r&quot;&lt;tool_call&gt;(.*?)&lt;/tool_call&gt;&quot;, text, re.DOTALL):
-        try:
-            calls.append(json.loads(m.strip()))
-        except json.JSONDecodeError:
-            pass
-    return calls
-
-
-def execute_tool(name: str, args: dict) -&gt; dict | None:
-    fn = MOCK_RESULTS.get(name)
-    if not fn:
-        return None
-    try:
-        return fn(args)
-    except Exception:  # noqa: BLE001  工具失败返回 None 由奖励层扣分
-        return None
-
-
-def safe_math_eval(expression: str) -&gt; float:
-    &quot;&quot;&quot;AST 白名单求值（替代 eval）：算术 + math 白名单 + pi/e/tau；幂运算防爆炸。&quot;&quot;&quot;
-
-    def pow_guard(base, exp):
-        if abs(exp) &gt; 1e4 or (abs(base) &gt; 1 and abs(exp) * math.log10(abs(base)) &gt; 100):
-            raise ValueError(&quot;幂运算结果过大&quot;)
-        return base**exp
-
-    def resolve(node):
-        if isinstance(node, ast.Name):
-            return node.id
-        if isinstance(node, ast.Attribute) and getattr(node.value, &quot;id&quot;, &quot;&quot;) == &quot;math&quot;:
-            return node.attr
-        return None
-
-    def walk(node):
-        if isinstance(node, ast.Constant) and type(node.value) in (int, float):
-            return node.value
-        name = resolve(node)
-        if name in consts:
-            return consts[name]
-        if isinstance(node, ast.UnaryOp):
-            return unary_ops[type(node.op)](walk(node.operand))
-        if isinstance(node, ast.BinOp):
-            return bin_ops[type(node.op)](walk(node.left), walk(node.right))
-        if isinstance(node, ast.Call) and not node.keywords:
-            return funcs[resolve(node.func)](*map(walk, node.args))
-        raise ValueError(f&quot;不支持的表达式语法: {type(node).__name__}&quot;)
-
-    consts = {&quot;pi&quot;: math.pi, &quot;e&quot;: math.e, &quot;tau&quot;: math.tau}
-    funcs = {
-        &quot;pow&quot;: pow_guard,
-        **{
-            n: getattr(math, n)
-            for n in (
-                &quot;sqrt exp log log2 log10 sin cos tan asin acos atan atan2 &quot;
-                &quot;sinh cosh tanh floor ceil trunc fabs fmod hypot gcd degrees radians&quot;
-            ).split()
-        },
-    }
-    bin_ops: dict[type, Callable[[float, float], float]] = {
-        ast.Add: operator.add,
-        ast.Sub: operator.sub,
-        ast.Mult: operator.mul,
-        ast.Div: operator.truediv,
-        ast.FloorDiv: operator.floordiv,
-        ast.Mod: operator.mod,
-        ast.Pow: pow_guard,
-    }
-    unary_ops: dict[type, Callable[[float], float]] = {ast.UAdd: operator.pos, ast.USub: operator.neg}
-    chars = str.maketrans({&quot;^&quot;: &quot;**&quot;, &quot;×&quot;: &quot;*&quot;, &quot;÷&quot;: &quot;/&quot;, &quot;−&quot;: &quot;-&quot;, &quot;²&quot;: &quot;**2&quot;, &quot;³&quot;: &quot;**3&quot;, &quot;（&quot;: &quot;(&quot;, &quot;）&quot;: &quot;)&quot;})
-    expr = str(expression).translate(chars).strip()
-    if not expr or len(expr) &gt; 512:
-        raise ValueError(&quot;表达式为空或过长&quot;)
-    try:
-        return walk(ast.parse(expr, mode=&quot;eval&quot;).body)
-    except (KeyError, SyntaxError, TypeError):
-        raise ValueError(&quot;不支持的表达式语法&quot;) from None</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/agent/tools.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;Agent 工具环境（官方 train_agent.py 的工具/模拟器/安全求值重构）。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import ast
+import json
+import math
+import operator
+import re
+from collections.abc import Callable
+
+# ===== 工具 schema =====
+TOOLS = [
+    {
+        &quot;type&quot;: &quot;function&quot;,
+        &quot;function&quot;: {
+            &quot;name&quot;: &quot;calculate_math&quot;,
+            &quot;description&quot;: &quot;计算数学表达式&quot;,
+            &quot;parameters&quot;: {
+                &quot;type&quot;: &quot;object&quot;,
+                &quot;properties&quot;: {&quot;expression&quot;: {&quot;type&quot;: &quot;string&quot;}},
+                &quot;required&quot;: [&quot;expression&quot;],
+            },
+        },
+    },
+    {
+        &quot;type&quot;: &quot;function&quot;,
+        &quot;function&quot;: {
+            &quot;name&quot;: &quot;unit_converter&quot;,
+            &quot;description&quot;: &quot;单位换算&quot;,
+            &quot;parameters&quot;: {
+                &quot;type&quot;: &quot;object&quot;,
+                &quot;properties&quot;: {
+                    &quot;value&quot;: {&quot;type&quot;: &quot;number&quot;},
+                    &quot;from_unit&quot;: {&quot;type&quot;: &quot;string&quot;},
+                    &quot;to_unit&quot;: {&quot;type&quot;: &quot;string&quot;},
+                },
+                &quot;required&quot;: [&quot;value&quot;, &quot;from_unit&quot;, &quot;to_unit&quot;],
+            },
+        },
+    },
+    {
+        &quot;type&quot;: &quot;function&quot;,
+        &quot;function&quot;: {
+            &quot;name&quot;: &quot;get_current_weather&quot;,
+            &quot;description&quot;: &quot;获取天气&quot;,
+            &quot;parameters&quot;: {&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {&quot;location&quot;: {&quot;type&quot;: &quot;string&quot;}}, &quot;required&quot;: [&quot;location&quot;]},
+        },
+    },
+    {
+        &quot;type&quot;: &quot;function&quot;,
+        &quot;function&quot;: {
+            &quot;name&quot;: &quot;get_current_time&quot;,
+            &quot;description&quot;: &quot;获取时间&quot;,
+            &quot;parameters&quot;: {
+                &quot;type&quot;: &quot;object&quot;,
+                &quot;properties&quot;: {&quot;timezone&quot;: {&quot;type&quot;: &quot;string&quot;, &quot;default&quot;: &quot;Asia/Shanghai&quot;}},
+                &quot;required&quot;: [],
+            },
+        },
+    },
+    {
+        &quot;type&quot;: &quot;function&quot;,
+        &quot;function&quot;: {
+            &quot;name&quot;: &quot;get_exchange_rate&quot;,
+            &quot;description&quot;: &quot;查询汇率&quot;,
+            &quot;parameters&quot;: {
+                &quot;type&quot;: &quot;object&quot;,
+                &quot;properties&quot;: {&quot;from_currency&quot;: {&quot;type&quot;: &quot;string&quot;}, &quot;to_currency&quot;: {&quot;type&quot;: &quot;string&quot;}},
+                &quot;required&quot;: [&quot;from_currency&quot;, &quot;to_currency&quot;],
+            },
+        },
+    },
+    {
+        &quot;type&quot;: &quot;function&quot;,
+        &quot;function&quot;: {
+            &quot;name&quot;: &quot;translate_text&quot;,
+            &quot;description&quot;: &quot;翻译文本&quot;,
+            &quot;parameters&quot;: {
+                &quot;type&quot;: &quot;object&quot;,
+                &quot;properties&quot;: {&quot;text&quot;: {&quot;type&quot;: &quot;string&quot;}, &quot;target_language&quot;: {&quot;type&quot;: &quot;string&quot;}},
+                &quot;required&quot;: [&quot;text&quot;, &quot;target_language&quot;],
+            },
+        },
+    },
+]
+
+WEATHER_DATA = {
+    &quot;北京&quot;: (&quot;28°C&quot;, &quot;晴&quot;),
+    &quot;上海&quot;: (&quot;15°C&quot;, &quot;多云&quot;),
+    &quot;广州&quot;: (&quot;32°C&quot;, &quot;闷热&quot;),
+    &quot;深圳&quot;: (&quot;30°C&quot;, &quot;晴&quot;),
+    &quot;杭州&quot;: (&quot;22°C&quot;, &quot;阴&quot;),
+    &quot;成都&quot;: (&quot;18°C&quot;, &quot;小雨&quot;),
+    &quot;武汉&quot;: (&quot;25°C&quot;, &quot;多云&quot;),
+    &quot;南京&quot;: (&quot;20°C&quot;, &quot;晴&quot;),
+    &quot;西安&quot;: (&quot;16°C&quot;, &quot;大风&quot;),
+    &quot;重庆&quot;: (&quot;26°C&quot;, &quot;阴&quot;),
+    &quot;Tokyo&quot;: (&quot;12°C&quot;, &quot;晴&quot;),
+    &quot;New York&quot;: (&quot;8°C&quot;, &quot;多云&quot;),
+    &quot;London&quot;: (&quot;5°C&quot;, &quot;小雨&quot;),
+    &quot;Paris&quot;: (&quot;10°C&quot;, &quot;阴&quot;),
+    &quot;Sydney&quot;: (&quot;25°C&quot;, &quot;晴朗&quot;),
+}
+TIME_DATA = {
+    &quot;Asia/Shanghai&quot;: &quot;2025-03-07 14:30:00&quot;,
+    &quot;America/New_York&quot;: &quot;2025-03-07 01:30:00&quot;,
+    &quot;Europe/London&quot;: &quot;2025-03-07 06:30:00&quot;,
+    &quot;Asia/Tokyo&quot;: &quot;2025-03-07 15:30:00&quot;,
+    &quot;Europe/Paris&quot;: &quot;2025-03-07 07:30:00&quot;,
+    &quot;Australia/Sydney&quot;: &quot;2025-03-07 17:30:00&quot;,
+}
+EXCHANGE_DATA = {
+    (&quot;USD&quot;, &quot;CNY&quot;): 7.21,
+    (&quot;EUR&quot;, &quot;CNY&quot;): 7.85,
+    (&quot;GBP&quot;, &quot;CNY&quot;): 9.12,
+    (&quot;JPY&quot;, &quot;CNY&quot;): 0.048,
+    (&quot;USD&quot;, &quot;EUR&quot;): 0.92,
+    (&quot;USD&quot;, &quot;GBP&quot;): 0.79,
+    (&quot;CNY&quot;, &quot;JPY&quot;): 20.83,
+    (&quot;AUD&quot;, &quot;CNY&quot;): 4.72,
+}
+TRANSLATE_DATA = {
+    (&quot;你好世界&quot;, &quot;english&quot;): &quot;Hello World&quot;,
+    (&quot;Good morning&quot;, &quot;chinese&quot;): &quot;早上好&quot;,
+    (&quot;今天天气真好&quot;, &quot;english&quot;): &quot;The weather is nice today&quot;,
+    (&quot;I love programming&quot;, &quot;chinese&quot;): &quot;我喜欢编程&quot;,
+    (&quot;机器学习很有趣&quot;, &quot;english&quot;): &quot;Machine learning is interesting&quot;,
+    (&quot;Happy birthday&quot;, &quot;chinese&quot;): &quot;生日快乐&quot;,
+}
+UNIT_DATA = {
+    &quot;km_miles&quot;: 0.621371,
+    &quot;miles_km&quot;: 1.60934,
+    &quot;kg_pounds&quot;: 2.20462,
+    &quot;pounds_kg&quot;: 0.453592,
+    &quot;meters_feet&quot;: 3.28084,
+    &quot;feet_meters&quot;: 0.3048,
+    &quot;celsius_fahrenheit&quot;: 1.8,
+    &quot;fahrenheit_celsius&quot;: 0.5556,
+}
+
+MOCK_RESULTS: dict[str, Callable[[dict], dict]] = {
+    &quot;calculate_math&quot;: lambda a: {&quot;result&quot;: str(safe_math_eval(a.get(&quot;expression&quot;, &quot;0&quot;)))},
+    &quot;unit_converter&quot;: lambda a: {
+        &quot;result&quot;: round(
+            float(a.get(&quot;value&quot;, 0))
+            * UNIT_DATA.get(f&quot;{a.get(&#x27;from_unit&#x27;, &#x27;&#x27;).lower()}_{a.get(&#x27;to_unit&#x27;, &#x27;&#x27;).lower()}&quot;, 1),
+            4,
+        )
+    },
+    &quot;get_current_weather&quot;: lambda a: (
+        lambda w: {&quot;city&quot;: a.get(&quot;location&quot;), &quot;temperature&quot;: w[0], &quot;humidity&quot;: &quot;65%&quot;, &quot;condition&quot;: w[1]}
+    )(WEATHER_DATA.get(a.get(&quot;location&quot;) or &quot;&quot;, (&quot;22°C&quot;, &quot;晴&quot;))),
+    &quot;get_current_time&quot;: lambda a: {
+        &quot;datetime&quot;: TIME_DATA.get(a.get(&quot;timezone&quot;, &quot;Asia/Shanghai&quot;), &quot;2025-03-07 14:30:00&quot;),
+        &quot;timezone&quot;: a.get(&quot;timezone&quot;, &quot;Asia/Shanghai&quot;),
+    },
+    &quot;get_exchange_rate&quot;: lambda a: {
+        &quot;from&quot;: a.get(&quot;from_currency&quot;),
+        &quot;to&quot;: a.get(&quot;to_currency&quot;),
+        &quot;rate&quot;: EXCHANGE_DATA.get((a.get(&quot;from_currency&quot;) or &quot;&quot;, a.get(&quot;to_currency&quot;) or &quot;&quot;), 1.0),
+    },
+    &quot;translate_text&quot;: lambda a: {
+        &quot;translated_text&quot;: TRANSLATE_DATA.get(
+            (a.get(&quot;text&quot;) or &quot;&quot;, a.get(&quot;target_language&quot;) or &quot;&quot;), {&quot;translated_text&quot;: a.get(&quot;text&quot;, &quot;&quot;)}
+        )
+    },
+}
+
+CHECK_ARGS = {
+    &quot;calculate_math&quot;: lambda a: bool(a.get(&quot;expression&quot;)),
+    &quot;unit_converter&quot;: lambda a: a.get(&quot;value&quot;) is not None and a.get(&quot;from_unit&quot;) and a.get(&quot;to_unit&quot;),
+    &quot;get_current_weather&quot;: lambda a: bool(a.get(&quot;location&quot;)),
+    &quot;get_current_time&quot;: lambda a: True,
+    &quot;get_exchange_rate&quot;: lambda a: bool(a.get(&quot;from_currency&quot;)) and bool(a.get(&quot;to_currency&quot;)),
+    &quot;translate_text&quot;: lambda a: bool(a.get(&quot;text&quot;)) and bool(a.get(&quot;target_language&quot;)),
+}
+
+
+def parse_tool_calls(text: str) -&gt; list[dict]:
+    &quot;&quot;&quot;从模型输出抽取 &lt;tool_call&gt;{json}&lt;/tool_call&gt;；坏 JSON 静默跳过。&quot;&quot;&quot;
+    calls = []
+    for m in re.findall(r&quot;&lt;tool_call&gt;(.*?)&lt;/tool_call&gt;&quot;, text, re.DOTALL):
+        try:
+            calls.append(json.loads(m.strip()))
+        except json.JSONDecodeError:
+            pass
+    return calls
+
+
+def execute_tool(name: str, args: dict) -&gt; dict | None:
+    fn = MOCK_RESULTS.get(name)
+    if not fn:
+        return None
+    try:
+        return fn(args)
+    except Exception:  # noqa: BLE001  工具失败返回 None 由奖励层扣分
+        return None
+
+
+def safe_math_eval(expression: str) -&gt; float:
+    &quot;&quot;&quot;AST 白名单求值（替代 eval）：算术 + math 白名单 + pi/e/tau；幂运算防爆炸。&quot;&quot;&quot;
+
+    def pow_guard(base, exp):
+        if abs(exp) &gt; 1e4 or (abs(base) &gt; 1 and abs(exp) * math.log10(abs(base)) &gt; 100):
+            raise ValueError(&quot;幂运算结果过大&quot;)
+        return base**exp
+
+    def resolve(node):
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute) and getattr(node.value, &quot;id&quot;, &quot;&quot;) == &quot;math&quot;:
+            return node.attr
+        return None
+
+    def walk(node):
+        if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+            return node.value
+        name = resolve(node)
+        if name in consts:
+            return consts[name]
+        if isinstance(node, ast.UnaryOp):
+            return unary_ops[type(node.op)](walk(node.operand))
+        if isinstance(node, ast.BinOp):
+            return bin_ops[type(node.op)](walk(node.left), walk(node.right))
+        if isinstance(node, ast.Call) and not node.keywords:
+            return funcs[resolve(node.func)](*map(walk, node.args))
+        raise ValueError(f&quot;不支持的表达式语法: {type(node).__name__}&quot;)
+
+    consts = {&quot;pi&quot;: math.pi, &quot;e&quot;: math.e, &quot;tau&quot;: math.tau}
+    funcs = {
+        &quot;pow&quot;: pow_guard,
+        **{
+            n: getattr(math, n)
+            for n in (
+                &quot;sqrt exp log log2 log10 sin cos tan asin acos atan atan2 &quot;
+                &quot;sinh cosh tanh floor ceil trunc fabs fmod hypot gcd degrees radians&quot;
+            ).split()
+        },
+    }
+    bin_ops: dict[type, Callable[[float, float], float]] = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.FloorDiv: operator.floordiv,
+        ast.Mod: operator.mod,
+        ast.Pow: pow_guard,
+    }
+    unary_ops: dict[type, Callable[[float], float]] = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+    chars = str.maketrans({&quot;^&quot;: &quot;**&quot;, &quot;×&quot;: &quot;*&quot;, &quot;÷&quot;: &quot;/&quot;, &quot;−&quot;: &quot;-&quot;, &quot;²&quot;: &quot;**2&quot;, &quot;³&quot;: &quot;**3&quot;, &quot;（&quot;: &quot;(&quot;, &quot;）&quot;: &quot;)&quot;})
+    expr = str(expression).translate(chars).strip()
+    if not expr or len(expr) &gt; 512:
+        raise ValueError(&quot;表达式为空或过长&quot;)
+    try:
+        return walk(ast.parse(expr, mode=&quot;eval&quot;).body)
+    except (KeyError, SyntaxError, TypeError):
+        raise ValueError(&quot;不支持的表达式语法&quot;) from None</code></pre></div>
 </main>
 <script src="../../../../../assets/course.js?v=3"></script>
 </body>

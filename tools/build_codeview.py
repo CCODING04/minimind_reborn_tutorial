@@ -13,19 +13,42 @@
   4. 清理 codeview/ 下不再被引用的孤儿页（--keep-orphans 关闭）。
 
 约定：写课时照常写 ../../Reproduce/... 原始路径（单一事实源），本脚本负责统一转换；
-改完跑 python3 tools/build_codeview.py，再跑 tools/check_course.py。
+改完跑 python3 tools/build_codeview.py [--reborn <仓库路径>]，再跑 tools/check_course.py。
+REBORN 定位优先级：--reborn 参数 > REBORN_REPO 环境变量 > 旧 monorepo 布局。
 """
 
 from __future__ import annotations
 
 import html
+import os
 import re
 import sys
 from pathlib import Path
 
 COURSE_DIR = Path(__file__).resolve().parent.parent
-REPO_ROOT = COURSE_DIR.parent.parent
-REBORN = REPO_ROOT / "Reproduce" / "minimind_reborn"
+
+# codeview 下这些目录是「存档快照」：源为运行时产物（out/、runs/ 不随仓库分发），
+# 已有页保留展示（孤儿清理跳过），由 check_course.py 以警告标注。
+ARCHIVE_TOP_DIRS = ("out", "runs")
+
+
+def resolve_reborn() -> Path:
+    raw = ""
+    if "--reborn" in sys.argv:
+        i = sys.argv.index("--reborn")
+        if i + 1 < len(sys.argv) and not sys.argv[i + 1].startswith("-"):
+            raw = sys.argv[i + 1]
+    raw = raw or os.environ.get("REBORN_REPO", "")
+    if raw:
+        p = Path(raw).expanduser().resolve()
+        if p.is_dir():
+            return p
+        print(f"ERROR: --reborn / REBORN_REPO 指定的仓库不存在：{p}")
+        return COURSE_DIR.parent.parent / "Reproduce" / "minimind_reborn"
+    return COURSE_DIR.parent.parent / "Reproduce" / "minimind_reborn"
+
+
+REBORN = resolve_reborn()
 CODEVIEW = COURSE_DIR / "codeview"
 
 MAX_BYTES = 200 * 1024   # 超过则截断
@@ -179,6 +202,9 @@ def main() -> int:
         if src.suffix.lower() in SKIP_SUFFIXES:
             continue
         if not src.is_file():
+            if rel.split("/")[0] in ARCHIVE_TOP_DIRS:
+                print(f"WARN  存档快照引用（源不随仓库分发，保留现有页）：{rel}")
+                continue
             print(f"ERROR: 引用的文件不存在：Reproduce/minimind_reborn/{rel}")
             errors += 1
             continue
@@ -187,15 +213,19 @@ def main() -> int:
         out.write_text(gen_page(rel), encoding="utf-8")
         written.append(rel)
 
-    # 清理孤儿页
+    # 清理孤儿页（out/、runs/ 下的存档快照除外——源为运行时产物，重建无法再生）
     removed = []
+    kept_archives = []
     keep = {f"{rel}.html" for rel in refs}
     if CODEVIEW.is_dir():
         for f in CODEVIEW.rglob("*.html"):
-            relname = str(f.relative_to(CODEVIEW))
+            relname = f.relative_to(CODEVIEW).as_posix()
             if "--keep-orphans" in sys.argv:
                 continue
             if relname not in keep:
+                if relname.split("/")[0] in ARCHIVE_TOP_DIRS:
+                    kept_archives.append(relname)
+                    continue
                 f.unlink()
                 removed.append(relname)
         # 清掉空目录
@@ -205,7 +235,10 @@ def main() -> int:
 
     changed = rewrite_pages(refs)
 
-    print(f"codeview：生成 {len(written)} 页（{len(removed)} 个孤儿已清理）")
+    print(f"codeview：生成 {len(written)} 页（{len(removed)} 个孤儿已清理，"
+          f"{len(kept_archives)} 个存档快照保留）")
+    if kept_archives:
+        print(f"存档快照（源不随仓库分发，保留展示）：{', '.join(kept_archives)}")
     for rel in written:
         src = REBORN / rel
         print(f"  {rel}  ← 引用页：{', '.join(sorted(refs[rel]))}")

@@ -14,57 +14,57 @@
   <span class="cv-meta">52 行 · 1KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/common/prefetch.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;CUDA 侧流预取器（training §8：H2D 拷贝与当前步计算重叠）。
-
-YOLOX DataPrefetcher 同款模式：维护&quot;下一批&quot;在独立 CUDA stream 上做 non_blocking
-拷贝，训练循环取当前批时先 wait_stream 对齐——数据传输与上一步的反向计算重叠。
-- 仅张量字段搬运，非张量字段（RL 的 messages/tools 等）原样透传；
-- CPU 设备自动旁路（直接透传 loader），符合&quot;GPU 之外无预取语义&quot;。
-&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import torch
-from torch.utils.data import DataLoader
-
-
-class CUDAPrefetcher:
-    def __init__(self, loader: DataLoader, device: str):
-        self.loader = loader
-        self.device = device
-        self.stream = torch.cuda.Stream(device) if device.startswith(&quot;cuda&quot;) else None
-        self._iter = iter(loader)
-        self._next: dict | None = None
-        if self.stream is not None:
-            self._preload()
-
-    def _preload(self) -&gt; None:
-        try:
-            batch = next(self._iter)
-        except StopIteration:
-            self._next = None
-            return
-        with torch.cuda.stream(self.stream):
-            self._next = {
-                k: (v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v)
-                for k, v in batch.items()
-            }
-
-    def __iter__(self) -&gt; CUDAPrefetcher:
-        return self
-
-    def __next__(self) -&gt; dict:
-        if self.stream is None:  # CPU 旁路
-            return next(self._iter)
-        torch.cuda.current_stream().wait_stream(self.stream)  # 等侧流拷贝完成
-        if self._next is None:
-            raise StopIteration
-        batch, self._next = self._next, None
-        self._preload()  # 预载再下一批（与本步计算重叠）
-        return batch
-
-    def __len__(self) -&gt; int:
-        return len(self.loader)</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/common/prefetch.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;CUDA 侧流预取器（training §8：H2D 拷贝与当前步计算重叠）。
+
+YOLOX DataPrefetcher 同款模式：维护&quot;下一批&quot;在独立 CUDA stream 上做 non_blocking
+拷贝，训练循环取当前批时先 wait_stream 对齐——数据传输与上一步的反向计算重叠。
+- 仅张量字段搬运，非张量字段（RL 的 messages/tools 等）原样透传；
+- CPU 设备自动旁路（直接透传 loader），符合&quot;GPU 之外无预取语义&quot;。
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import torch
+from torch.utils.data import DataLoader
+
+
+class CUDAPrefetcher:
+    def __init__(self, loader: DataLoader, device: str):
+        self.loader = loader
+        self.device = device
+        self.stream = torch.cuda.Stream(device) if device.startswith(&quot;cuda&quot;) else None
+        self._iter = iter(loader)
+        self._next: dict | None = None
+        if self.stream is not None:
+            self._preload()
+
+    def _preload(self) -&gt; None:
+        try:
+            batch = next(self._iter)
+        except StopIteration:
+            self._next = None
+            return
+        with torch.cuda.stream(self.stream):
+            self._next = {
+                k: (v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v)
+                for k, v in batch.items()
+            }
+
+    def __iter__(self) -&gt; CUDAPrefetcher:
+        return self
+
+    def __next__(self) -&gt; dict:
+        if self.stream is None:  # CPU 旁路
+            return next(self._iter)
+        torch.cuda.current_stream().wait_stream(self.stream)  # 等侧流拷贝完成
+        if self._next is None:
+            raise StopIteration
+        batch, self._next = self._next, None
+        self._preload()  # 预载再下一批（与本步计算重叠）
+        return batch
+
+    def __len__(self) -&gt; int:
+        return len(self.loader)</code></pre></div>
 </main>
 <script src="../../../../../assets/course.js?v=3"></script>
 </body>

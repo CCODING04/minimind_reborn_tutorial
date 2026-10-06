@@ -14,22 +14,22 @@
   <span class="cv-meta">17 行 · 1KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/distill/loss.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;蒸馏损失：温度软化的 KL（官方 distillation_loss 保留）。&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import torch
-import torch.nn.functional as F
-
-
-def distillation_loss(
-    student_logits: torch.Tensor, teacher_logits: torch.Tensor, temperature: float = 1.0
-) -&gt; torch.Tensor:
-    &quot;&quot;&quot;softmax(T) 教师分布 → KL(student‖teacher) × T²，batchmean 归约。&quot;&quot;&quot;
-    with torch.no_grad():
-        teacher_probs = F.softmax(teacher_logits / temperature, dim=-1).detach()
-    student_log_probs = F.log_softmax(student_logits / temperature, dim=-1)
-    return (temperature**2) * F.kl_div(student_log_probs, teacher_probs, reduction=&quot;batchmean&quot;)</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/distill/loss.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;蒸馏损失：温度软化的 KL（官方 distillation_loss 保留）。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import torch
+import torch.nn.functional as F
+
+
+def distillation_loss(
+    student_logits: torch.Tensor, teacher_logits: torch.Tensor, temperature: float = 1.0
+) -&gt; torch.Tensor:
+    &quot;&quot;&quot;softmax(T) 教师分布 → KL(student‖teacher) × T²，batchmean 归约。&quot;&quot;&quot;
+    with torch.no_grad():
+        teacher_probs = F.softmax(teacher_logits / temperature, dim=-1).detach()
+    student_log_probs = F.log_softmax(student_logits / temperature, dim=-1)
+    return (temperature**2) * F.kl_div(student_log_probs, teacher_probs, reduction=&quot;batchmean&quot;)</code></pre></div>
 </main>
 <script src="../../../../../assets/course.js?v=3"></script>
 </body>
