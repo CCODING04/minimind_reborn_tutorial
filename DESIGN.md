@@ -103,16 +103,16 @@ P6 毕业        M22 🏁C                                全链路与毕业实�
 
 中文正文、中英之间空格、术语首现标英文；正文 16.5px/1.8；emoji 只在法定标记处出现。
 
-## 4. 视觉规范（GitHub light × Coursera 布局）
+## 4. 视觉规范（tokens v2：blueprint 移植 × Coursera 布局）
 
-### 4.1 Design Tokens（Primer light 对齐）
+### 4.1 Design Tokens v2（blueprint 明色基底；暗色全套见 §4.6）
 
 ```css
 --canvas: #ffffff;        /* 主内容底 */
---subtle: #f6f8fa;        /* 侧栏/代码块底/表头 */
---border: #d1d9e0;        /* 边线 */
---border-muted: #8c959f;
---fg: #1f232e;            /* 正文 */
+--subtle: #f3f5f8;        /* 侧栏/代码块底/表头 */
+--border: #d6dae1;        /* 边线 */
+--border-muted: #8b929e;
+--fg: #16181d;            /* 正文 */
 --fg-muted: #59636e;      /* 次要文字 */
 --accent: #0969da;        /* 链接/进行中/交互 */
 --accent-subtle: #ddf4ff;
@@ -151,6 +151,16 @@ P6 毕业        M22 🏁C                                全链路与毕业实�
 - `assets/course.css`：全部样式（**页面禁止内联样式**，QA 检查 `style=` 属性）。
 - `assets/course.js`：`COURSE` 数组（单一事实源：id/file/part/title/minutes/status/milestone/hasFillblank）+ 侧栏渲染 + 进度 + toc + 抽屉。
 - MathJax 3：仅含公式页面加载（`assets/mathjax.html` 片段约定），断网时显示 LaTeX 原文不塌版（页脚明示）。
+
+### 4.6 设计 tokens v2（blueprint 移植）与暗色模式
+
+v2 起，`course.css` 的 tokens 基底移植自 answer-me-with-html 的 blueprint 主题（工程蓝图风），并新增明/暗/自动三态：
+
+- **三态机制**：`<html data-mode="dark">` 显式暗色；`data-mode="light"` 显式明亮；未设置（默认）= 自动，由 CSS `prefers-color-scheme` 原生生效（JS 加载前零闪烁）。topbar 的 ◐/☀/☾ 按钮三态循环，`localStorage["mrt-theme-v1"]` 持久化。两个暗色 token 块（显式 + auto 媒体查询）**必须同步维护**（CSS 无变量 include）。
+- **移植映射**（明色）：中性色与主色取 blueprint——`--subtle #f3f5f8 / --border #d6dae1 / --fg #16181d / --fg-muted #4b5260 / --accent #1d5fbf`；暗色全套取 blueprint dark（`--canvas #0d1c31 / --accent #6ea8ff` 等，以 course.css 为准）。
+- **有意偏离 blueprint 两处**：① 四语义色保留课程 hue（绿=验收/完成、黄=坑、红=红线、紫=工业/里程碑——教学语义优先，blueprint 的 ok=accent 会压平五卡语义），暗色下按对比度重调；② 圆角保留 6px 体系（blueprint 为直角），维持教程"教科书"质感。
+- **新增变量**：`--code-c/--code-s`（代码三色随态切换）、`--topbar-bg/--acc-head-bg/--overlay/--drawer-shadow/--card-hover-shadow/--on-accent/--on-success`（暗色覆盖的派生表面色与"色上文字"色）。终端块恒为 GitHub dark，两态共用。
+- **写作约束不变**：页面禁止内联样式；改 tokens 后全量递增资源版本号并重跑 build_codeview.py（同步 codeview 页引用）。
 
 ## 5. 工作流与 QA
 

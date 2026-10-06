@@ -54,6 +54,42 @@ function saveProgress(set) {
 }
 let progress = loadProgress();
 
+/* —— 主题（明/暗/自动，localStorage）——
+   未设置=自动跟随系统（CSS prefers-color-scheme 原生生效，JS 加载前无闪烁）；
+   显式 light/dark 写 <html data-mode>，与进度同库持久化。 */
+const THEME_KEY = "mrt-theme-v1";
+const THEME_META = { auto: ["◐", "自动（跟随系统）"], light: ["☀", "明亮"], dark: ["☾", "暗黑"] };
+function currentTheme() { return localStorage.getItem(THEME_KEY) || "auto"; }
+function applyTheme() {
+  const mode = currentTheme();
+  if (mode === "auto") delete document.documentElement.dataset.mode;
+  else document.documentElement.dataset.mode = mode;
+}
+function mountThemeToggle() {
+  const bar = document.querySelector(".topbar, .cv-topbar");
+  if (!bar || bar.querySelector(".theme-toggle")) return;
+  const btn = document.createElement("button");
+  btn.className = "theme-toggle";
+  btn.type = "button";
+  btn.setAttribute("aria-label", "切换明暗主题");
+  const refresh = () => {
+    const [icon, name] = THEME_META[currentTheme()];
+    btn.textContent = icon;
+    btn.title = `主题：${name}（点击切换）`;
+  };
+  btn.addEventListener("click", () => {
+    const order = ["auto", "light", "dark"];
+    const next = order[(order.indexOf(currentTheme()) + 1) % order.length];
+    if (next === "auto") localStorage.removeItem(THEME_KEY);
+    else localStorage.setItem(THEME_KEY, next);
+    applyTheme();
+    refresh();
+  });
+  refresh();
+  const anchor = bar.querySelector(".progress-wrap, .cv-meta");
+  if (anchor) anchor.before(btn); else bar.appendChild(btn);
+}
+
 const byId = Object.fromEntries(COURSE.map((m) => [m.id, m]));
 const currentId = document.body.dataset.module || "";
 
@@ -405,6 +441,8 @@ function initCopyButtons() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  applyTheme();
+  mountThemeToggle();
   initDrawer();
   renderSidebar();
   renderPager();        // 先创建按钮，再同步状态（syncProgressUI 会设置按钮文字）
