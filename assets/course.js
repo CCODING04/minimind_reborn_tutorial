@@ -88,7 +88,7 @@ function mountStyleToggle() {
   btn.setAttribute("aria-label", "切换排版风格");
   const refresh = () => {
     const pilot = localStorage.getItem(STYLE_KEY) === "pilot";
-    btn.textContent = "Aa";
+    btn.textContent = pilot ? "样章" : "经典";
     btn.title = `排版风格：${pilot ? "样章" : "经典"}（点击切换）`;
   };
   btn.addEventListener("click", () => {

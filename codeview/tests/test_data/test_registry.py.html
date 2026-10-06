@@ -14,24 +14,24 @@
   <span class="cv-meta">19 行 · 1KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>tests/test_data/test_registry.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;注册表测试：声明式资源未注册名必须报错并指明 json 路径。&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import pytest
-
-from minimind_reborn.data.registry import resolve_dataset
-
-
-def test_unknown_name_raises_with_hint():
-    with pytest.raises(ValueError, match=&quot;datasets.json&quot;):
-        resolve_dataset(&quot;no_such_dataset&quot;)
-
-
-def test_known_names_resolve():
-    for name in (&quot;pretrain_t2t_mini&quot;, &quot;sft_t2t_mini&quot;, &quot;dpo_mini&quot;):
-        entry = resolve_dataset(name)
-        assert entry.file.endswith(&quot;.jsonl&quot;) and entry.kind</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>tests/test_data/test_registry.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;注册表测试：声明式资源未注册名必须报错并指明 json 路径。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import pytest
+
+from minimind_reborn.data.registry import resolve_dataset
+
+
+def test_unknown_name_raises_with_hint():
+    with pytest.raises(ValueError, match=&quot;datasets.json&quot;):
+        resolve_dataset(&quot;no_such_dataset&quot;)
+
+
+def test_known_names_resolve():
+    for name in (&quot;pretrain_t2t_mini&quot;, &quot;sft_t2t_mini&quot;, &quot;dpo_mini&quot;):
+        entry = resolve_dataset(name)
+        assert entry.file.endswith(&quot;.jsonl&quot;) and entry.kind</code></pre></div>
 </main>
 <script src="../../../assets/course.js?v=10"></script>
 </body>

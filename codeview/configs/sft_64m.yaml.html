@@ -14,22 +14,22 @@
   <span class="cv-meta">17 行 · 1KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>configs/sft_64m.yaml</span><span class="lang">yaml</span></div><pre class="code"><code data-lines="1"># 64M 全参数 SFT（基于 pretrain 权重）
-stage: sft
-data:
-  dataset: sft_t2t_mini
-  max_seq_len: 768
-  eval_ratio: 0.005
-  num_workers: 8
-train:
-  epochs: 2
-  batch_size: 16
-  gradient_accumulation_steps: 1
-  learning_rate: 1.0e-5    # SFT 用小 lr 防灾难性遗忘（官方推荐）
-  dtype: bf16
-  init_from: pretrain      # 严格加载 pretrain 产物
-  save_interval_steps: 500
-  log_interval: 50</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>configs/sft_64m.yaml</span><span class="lang">yaml</span></div><pre class="code"><code data-lines="1"># 64M 全参数 SFT（基于 pretrain 权重）
+stage: sft
+data:
+  dataset: sft_t2t_mini
+  max_seq_len: 768
+  eval_ratio: 0.005
+  num_workers: 8
+train:
+  epochs: 2
+  batch_size: 16
+  gradient_accumulation_steps: 1
+  learning_rate: 1.0e-5    # SFT 用小 lr 防灾难性遗忘（官方推荐）
+  dtype: bf16
+  init_from: pretrain      # 严格加载 pretrain 产物
+  save_interval_steps: 500
+  log_interval: 50</code></pre></div>
 </main>
 <script src="../../assets/course.js?v=10"></script>
 </body>

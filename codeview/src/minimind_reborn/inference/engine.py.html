@@ -14,231 +14,231 @@
   <span class="cv-meta">226 行 · 9KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/inference/engine.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;引擎门面（llm-inference §1）：build() 静态工厂收拢全部脏活，__init__ 只收现成组件。
-
-用户代码里除 build 外不应出现任何环境/路径/设备处理；
-推理请求结构化返回并携带 request_id/延迟/停止原因（logging-metrics §4）。
-&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import time
-import uuid
-from pathlib import Path
-from typing import Any
-
-import torch
-
-from minimind_reborn import envs
-from minimind_reborn.configuration.schemas import GenerateConfig
-from minimind_reborn.inference.chat import ChatSession, render_chat, split_reasoning
-from minimind_reborn.inference.generator import GenerationOutput, generate
-from minimind_reborn.loggers import get_logger, warning_once
-from minimind_reborn.models.config import MiniMindConfig
-from minimind_reborn.models.model import MiniMindForCausalLM
-from minimind_reborn.models.weights import load_inference_weights, resolve_weight_path
-
-logger = get_logger(&quot;engine&quot;)
-
-# 精度回退链：首选 bf16 → 设备不支持时逐级回退并警告一次（llm-inference §5）
-_DTYPE_FALLBACK = {&quot;bf16&quot;: torch.bfloat16, &quot;fp16&quot;: torch.float16, &quot;fp32&quot;: torch.float32}
-
-
-class MiniMindLLM:
-    &quot;&quot;&quot;推理门面：持有模型与 tokenizer，提供 generate_tokens / generate_text / chat_session。&quot;&quot;&quot;
-
-    def __init__(self, model: MiniMindForCausalLM, tokenizer, device: str, dtype: torch.dtype):
-        self.model = model
-        self.tokenizer = tokenizer
-        self.device = device
-        self.dtype = dtype
-        self.model.eval()
-
-    # ---------- 构造 ----------
-    @classmethod
-    def build(
-        cls,
-        weight: str = &quot;full_sft&quot;,
-        *,
-        hidden_size: int = 768,
-        num_hidden_layers: int = 8,
-        use_moe: bool = False,
-        config_path: str | Path | None = None,
-        out_root: str | Path | None = None,
-        device: str | None = None,
-        dtype: str = &quot;bf16&quot;,
-    ) -&gt; MiniMindLLM:
-        &quot;&quot;&quot;读 checkpoint → 建模型 → 加载权重 → 精度回退 → 设备搬运，一次收拢。
-
-        config_path 给出时结构以快照为准（跨源一致性），否则用显式结构参数。
-        &quot;&quot;&quot;
-        device = device or (&quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;)
-        if config_path is not None:
-            import json
-
-            snap = json.loads(Path(config_path).read_text(encoding=&quot;utf-8&quot;))
-            m = snap[&quot;model&quot;]
-            cfg = MiniMindConfig(
-                hidden_size=m[&quot;hidden_size&quot;],
-                num_hidden_layers=m[&quot;num_hidden_layers&quot;],
-                use_moe=m[&quot;use_moe&quot;],
-                vocab_size=m[&quot;vocab_size&quot;],
-                num_attention_heads=m[&quot;num_attention_heads&quot;],
-                num_key_value_heads=m[&quot;num_key_value_heads&quot;],
-                dropout=0.0,
-            )
-        else:
-            cfg = MiniMindConfig(hidden_size=hidden_size, num_hidden_layers=num_hidden_layers, use_moe=use_moe)
-
-        root = out_root if out_root is not None else envs.out_root()
-        weight_path = resolve_weight_path(weight, root, cfg.hidden_size, cfg.use_moe)
-        if not weight_path.exists():
-            raise FileNotFoundError(
-                f&quot;权重文件不存在：{weight_path}。请先训练（tools/train.py configs/*.yaml）&quot;
-                f&quot;或用 --weight 指定 out 目录下的其他权重名&quot;
-            )
-
-        target_dtype = _resolve_dtype(dtype, device)
-        from minimind_reborn.models.weights import to_dtype
-
-        model = to_dtype(MiniMindForCausalLM(cfg), target_dtype)
-        load_inference_weights(model, weight_path, strict=True)
-        from minimind_reborn.models.weights import to_device
-
-        model = to_device(model, device)
-
-        # 跨源一致性前置校验（业务校验用 raise，不用 assert——python -O 下 assert 会消失）
-        tokenizer = _load_tokenizer()
-        if cfg.vocab_size != len(tokenizer):
-            raise ValueError(
-                f&quot;模型词表({cfg.vocab_size}) 与 tokenizer 词表({len(tokenizer)}) 不一致——&quot;
-                f&quot;权重与 tokenizer 来自不同训练产物，禁止混用&quot;
-            )
-        logger.info(
-            &quot;引擎就绪：%s | %s | %.2fM 参数&quot;,
-            weight_path.name,
-            device,
-            sum(p.numel() for p in model.parameters()) / 1e6,
-        )
-        return cls(model, tokenizer, device, target_dtype)
-
-    # ---------- 内核层（token in / GenerationOutput out） ----------
-    def _check_context_length(self, n_tokens: int) -&gt; None:
-        &quot;&quot;&quot;输入+生成总长超 RoPE 表上限时显式报错——此前会穿透到 rotary 广播处炸张量形状错误（multiturn #5）。
-
-        2026-10-06 起 n_tokens 由调用方传\&quot;输入 + 生成上限\&quot;合计：只查输入长度时，
-        KV cache 容量按 prompt+steps 预分配，写溢出保护不会先触发，越界最终落在
-        RoPE 表切片返回空张量后的裸广播形状错误（如输入 32000 + max_new 1024）。
-        &quot;&quot;&quot;
-        limit = self.model.config.max_position_embeddings
-        if n_tokens &gt; limit:
-            raise ValueError(
-                f&quot;输入长度+生成上限 {n_tokens} token 超过模型位置编码上限 {limit}。&quot;
-                f&quot;请缩短输入（或缩短对话历史）、调小 max_new_tokens，&quot;
-                f&quot;或在构建模型时开启 inference_rope_scaling 以外推位置编码&quot;
-            )
-
-    def generate_tokens(
-        self,
-        input_ids: torch.Tensor,
-        gen: GenerateConfig,
-        *,
-        attention_mask: torch.Tensor | None = None,
-        max_new_tokens: int | None = None,
-        streamer=None,
-        cancel=None,
-    ) -&gt; GenerationOutput:
-        steps = max_new_tokens if max_new_tokens is not None else gen.max_new_tokens
-        self._check_context_length(input_ids.shape[1] + steps)
-        input_ids = input_ids.to(self.device)
-        if attention_mask is not None:
-            attention_mask = attention_mask.to(self.device)
-        return generate(
-            self.model,
-            input_ids,
-            gen,
-            eos_token_id=self.tokenizer.eos_token_id,
-            pad_token_id=self.tokenizer.pad_token_id,
-            max_new_tokens=max_new_tokens,
-            attention_mask=attention_mask,
-            streamer=streamer,
-            cancel=cancel,
-        )
-
-    # ---------- 文本层（messages in / 结构化 dict out，带 request 追溯） ----------
-    def generate_text(
-        self,
-        messages: list[dict[str, Any]],
-        gen: GenerateConfig | None = None,
-        *,
-        tools: list | None = None,
-        open_thinking: bool = False,
-        pretrain_mode: bool = False,
-    ) -&gt; dict[str, Any]:
-        &quot;&quot;&quot;对话补全：渲染模板 → 生成 → 拆 reasoning → 追溯字段（request_id/延迟/停止原因）。&quot;&quot;&quot;
-        gen = gen or GenerateConfig()
-        request_id = uuid.uuid4().hex[:12]
-        started = time.perf_counter()
-        if pretrain_mode:
-            prompt = self.tokenizer.bos_token + messages[-1][&quot;content&quot;]
-        else:
-            prompt = render_chat(self.tokenizer, messages, tools=tools, open_thinking=open_thinking)
-        inputs = self.tokenizer(prompt, return_tensors=&quot;pt&quot;, truncation=True).to(self.device)
-        self._check_context_length(inputs[&quot;input_ids&quot;].shape[1] + gen.max_new_tokens)
-        out = generate(
-            self.model,
-            inputs[&quot;input_ids&quot;],
-            gen,
-            eos_token_id=self.tokenizer.eos_token_id,
-            pad_token_id=self.tokenizer.pad_token_id,
-            attention_mask=inputs[&quot;attention_mask&quot;],
-        )
-        new_tokens = out[&quot;sequences&quot;][0, inputs[&quot;input_ids&quot;].shape[1] :]
-        text = self._decode_truncated(new_tokens)
-        reasoning, content = split_reasoning(text)
-        latency = time.perf_counter() - started
-        result = {
-            &quot;request_id&quot;: request_id,
-            &quot;content&quot;: content,
-            &quot;reasoning_content&quot;: reasoning,
-            &quot;finish_reason&quot;: out[&quot;finish_reasons&quot;][0],
-            &quot;generated_tokens&quot;: int(new_tokens.shape[0]),
-            &quot;latency_ms&quot;: round(latency * 1000, 1),
-            &quot;latency_per_token_ms&quot;: round(latency * 1000 / max(new_tokens.shape[0], 1), 2),
-        }
-        logger.info(
-            &quot;推理完成 request_id=%s finish=%s tokens=%d 延迟=%.0fms&quot;,
-            request_id,
-            result[&quot;finish_reason&quot;],
-            result[&quot;generated_tokens&quot;],
-            result[&quot;latency_ms&quot;],
-        )
-        return result
-
-    def chat_session(self, gen: GenerateConfig | None = None, *, pretrain_mode: bool = False) -&gt; ChatSession:
-        return ChatSession(self.tokenizer, self.generate_tokens, gen or GenerateConfig(), pretrain_mode=pretrain_mode)
-
-    def _decode_truncated(self, token_ids: torch.Tensor) -&gt; str:
-        ids = token_ids.tolist()
-        eos = self.tokenizer.eos_token_id
-        if eos is not None and eos in ids:
-            ids = ids[: ids.index(eos)]  # 停止三重之 3
-        return self.tokenizer.decode(ids, skip_special_tokens=True)
-
-
-def _resolve_dtype(name: str, device: str) -&gt; torch.dtype:
-    &quot;&quot;&quot;精度回退链：bf16 需要设备支持；不支持则逐级回退并警告一次。&quot;&quot;&quot;
-    target = _DTYPE_FALLBACK[name]
-    if name == &quot;bf16&quot; and device == &quot;cpu&quot;:
-        warning_once(logger, &quot;dtype-cpu&quot;, &quot;CPU 不支持 bf16 高效推理，回退 fp32&quot;)
-        return torch.float32
-    return target
-
-
-def _load_tokenizer():
-    from transformers import AutoTokenizer
-
-    return AutoTokenizer.from_pretrained(envs.tokenizer_path())</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/inference/engine.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;引擎门面（llm-inference §1）：build() 静态工厂收拢全部脏活，__init__ 只收现成组件。
+
+用户代码里除 build 外不应出现任何环境/路径/设备处理；
+推理请求结构化返回并携带 request_id/延迟/停止原因（logging-metrics §4）。
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import time
+import uuid
+from pathlib import Path
+from typing import Any
+
+import torch
+
+from minimind_reborn import envs
+from minimind_reborn.configuration.schemas import GenerateConfig
+from minimind_reborn.inference.chat import ChatSession, render_chat, split_reasoning
+from minimind_reborn.inference.generator import GenerationOutput, generate
+from minimind_reborn.loggers import get_logger, warning_once
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+from minimind_reborn.models.weights import load_inference_weights, resolve_weight_path
+
+logger = get_logger(&quot;engine&quot;)
+
+# 精度回退链：首选 bf16 → 设备不支持时逐级回退并警告一次（llm-inference §5）
+_DTYPE_FALLBACK = {&quot;bf16&quot;: torch.bfloat16, &quot;fp16&quot;: torch.float16, &quot;fp32&quot;: torch.float32}
+
+
+class MiniMindLLM:
+    &quot;&quot;&quot;推理门面：持有模型与 tokenizer，提供 generate_tokens / generate_text / chat_session。&quot;&quot;&quot;
+
+    def __init__(self, model: MiniMindForCausalLM, tokenizer, device: str, dtype: torch.dtype):
+        self.model = model
+        self.tokenizer = tokenizer
+        self.device = device
+        self.dtype = dtype
+        self.model.eval()
+
+    # ---------- 构造 ----------
+    @classmethod
+    def build(
+        cls,
+        weight: str = &quot;full_sft&quot;,
+        *,
+        hidden_size: int = 768,
+        num_hidden_layers: int = 8,
+        use_moe: bool = False,
+        config_path: str | Path | None = None,
+        out_root: str | Path | None = None,
+        device: str | None = None,
+        dtype: str = &quot;bf16&quot;,
+    ) -&gt; MiniMindLLM:
+        &quot;&quot;&quot;读 checkpoint → 建模型 → 加载权重 → 精度回退 → 设备搬运，一次收拢。
+
+        config_path 给出时结构以快照为准（跨源一致性），否则用显式结构参数。
+        &quot;&quot;&quot;
+        device = device or (&quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;)
+        if config_path is not None:
+            import json
+
+            snap = json.loads(Path(config_path).read_text(encoding=&quot;utf-8&quot;))
+            m = snap[&quot;model&quot;]
+            cfg = MiniMindConfig(
+                hidden_size=m[&quot;hidden_size&quot;],
+                num_hidden_layers=m[&quot;num_hidden_layers&quot;],
+                use_moe=m[&quot;use_moe&quot;],
+                vocab_size=m[&quot;vocab_size&quot;],
+                num_attention_heads=m[&quot;num_attention_heads&quot;],
+                num_key_value_heads=m[&quot;num_key_value_heads&quot;],
+                dropout=0.0,
+            )
+        else:
+            cfg = MiniMindConfig(hidden_size=hidden_size, num_hidden_layers=num_hidden_layers, use_moe=use_moe)
+
+        root = out_root if out_root is not None else envs.out_root()
+        weight_path = resolve_weight_path(weight, root, cfg.hidden_size, cfg.use_moe)
+        if not weight_path.exists():
+            raise FileNotFoundError(
+                f&quot;权重文件不存在：{weight_path}。请先训练（tools/train.py configs/*.yaml）&quot;
+                f&quot;或用 --weight 指定 out 目录下的其他权重名&quot;
+            )
+
+        target_dtype = _resolve_dtype(dtype, device)
+        from minimind_reborn.models.weights import to_dtype
+
+        model = to_dtype(MiniMindForCausalLM(cfg), target_dtype)
+        load_inference_weights(model, weight_path, strict=True)
+        from minimind_reborn.models.weights import to_device
+
+        model = to_device(model, device)
+
+        # 跨源一致性前置校验（业务校验用 raise，不用 assert——python -O 下 assert 会消失）
+        tokenizer = _load_tokenizer()
+        if cfg.vocab_size != len(tokenizer):
+            raise ValueError(
+                f&quot;模型词表({cfg.vocab_size}) 与 tokenizer 词表({len(tokenizer)}) 不一致——&quot;
+                f&quot;权重与 tokenizer 来自不同训练产物，禁止混用&quot;
+            )
+        logger.info(
+            &quot;引擎就绪：%s | %s | %.2fM 参数&quot;,
+            weight_path.name,
+            device,
+            sum(p.numel() for p in model.parameters()) / 1e6,
+        )
+        return cls(model, tokenizer, device, target_dtype)
+
+    # ---------- 内核层（token in / GenerationOutput out） ----------
+    def _check_context_length(self, n_tokens: int) -&gt; None:
+        &quot;&quot;&quot;输入+生成总长超 RoPE 表上限时显式报错——此前会穿透到 rotary 广播处炸张量形状错误（multiturn #5）。
+
+        2026-10-06 起 n_tokens 由调用方传\&quot;输入 + 生成上限\&quot;合计：只查输入长度时，
+        KV cache 容量按 prompt+steps 预分配，写溢出保护不会先触发，越界最终落在
+        RoPE 表切片返回空张量后的裸广播形状错误（如输入 32000 + max_new 1024）。
+        &quot;&quot;&quot;
+        limit = self.model.config.max_position_embeddings
+        if n_tokens &gt; limit:
+            raise ValueError(
+                f&quot;输入长度+生成上限 {n_tokens} token 超过模型位置编码上限 {limit}。&quot;
+                f&quot;请缩短输入（或缩短对话历史）、调小 max_new_tokens，&quot;
+                f&quot;或在构建模型时开启 inference_rope_scaling 以外推位置编码&quot;
+            )
+
+    def generate_tokens(
+        self,
+        input_ids: torch.Tensor,
+        gen: GenerateConfig,
+        *,
+        attention_mask: torch.Tensor | None = None,
+        max_new_tokens: int | None = None,
+        streamer=None,
+        cancel=None,
+    ) -&gt; GenerationOutput:
+        steps = max_new_tokens if max_new_tokens is not None else gen.max_new_tokens
+        self._check_context_length(input_ids.shape[1] + steps)
+        input_ids = input_ids.to(self.device)
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(self.device)
+        return generate(
+            self.model,
+            input_ids,
+            gen,
+            eos_token_id=self.tokenizer.eos_token_id,
+            pad_token_id=self.tokenizer.pad_token_id,
+            max_new_tokens=max_new_tokens,
+            attention_mask=attention_mask,
+            streamer=streamer,
+            cancel=cancel,
+        )
+
+    # ---------- 文本层（messages in / 结构化 dict out，带 request 追溯） ----------
+    def generate_text(
+        self,
+        messages: list[dict[str, Any]],
+        gen: GenerateConfig | None = None,
+        *,
+        tools: list | None = None,
+        open_thinking: bool = False,
+        pretrain_mode: bool = False,
+    ) -&gt; dict[str, Any]:
+        &quot;&quot;&quot;对话补全：渲染模板 → 生成 → 拆 reasoning → 追溯字段（request_id/延迟/停止原因）。&quot;&quot;&quot;
+        gen = gen or GenerateConfig()
+        request_id = uuid.uuid4().hex[:12]
+        started = time.perf_counter()
+        if pretrain_mode:
+            prompt = self.tokenizer.bos_token + messages[-1][&quot;content&quot;]
+        else:
+            prompt = render_chat(self.tokenizer, messages, tools=tools, open_thinking=open_thinking)
+        inputs = self.tokenizer(prompt, return_tensors=&quot;pt&quot;, truncation=True).to(self.device)
+        self._check_context_length(inputs[&quot;input_ids&quot;].shape[1] + gen.max_new_tokens)
+        out = generate(
+            self.model,
+            inputs[&quot;input_ids&quot;],
+            gen,
+            eos_token_id=self.tokenizer.eos_token_id,
+            pad_token_id=self.tokenizer.pad_token_id,
+            attention_mask=inputs[&quot;attention_mask&quot;],
+        )
+        new_tokens = out[&quot;sequences&quot;][0, inputs[&quot;input_ids&quot;].shape[1] :]
+        text = self._decode_truncated(new_tokens)
+        reasoning, content = split_reasoning(text)
+        latency = time.perf_counter() - started
+        result = {
+            &quot;request_id&quot;: request_id,
+            &quot;content&quot;: content,
+            &quot;reasoning_content&quot;: reasoning,
+            &quot;finish_reason&quot;: out[&quot;finish_reasons&quot;][0],
+            &quot;generated_tokens&quot;: int(new_tokens.shape[0]),
+            &quot;latency_ms&quot;: round(latency * 1000, 1),
+            &quot;latency_per_token_ms&quot;: round(latency * 1000 / max(new_tokens.shape[0], 1), 2),
+        }
+        logger.info(
+            &quot;推理完成 request_id=%s finish=%s tokens=%d 延迟=%.0fms&quot;,
+            request_id,
+            result[&quot;finish_reason&quot;],
+            result[&quot;generated_tokens&quot;],
+            result[&quot;latency_ms&quot;],
+        )
+        return result
+
+    def chat_session(self, gen: GenerateConfig | None = None, *, pretrain_mode: bool = False) -&gt; ChatSession:
+        return ChatSession(self.tokenizer, self.generate_tokens, gen or GenerateConfig(), pretrain_mode=pretrain_mode)
+
+    def _decode_truncated(self, token_ids: torch.Tensor) -&gt; str:
+        ids = token_ids.tolist()
+        eos = self.tokenizer.eos_token_id
+        if eos is not None and eos in ids:
+            ids = ids[: ids.index(eos)]  # 停止三重之 3
+        return self.tokenizer.decode(ids, skip_special_tokens=True)
+
+
+def _resolve_dtype(name: str, device: str) -&gt; torch.dtype:
+    &quot;&quot;&quot;精度回退链：bf16 需要设备支持；不支持则逐级回退并警告一次。&quot;&quot;&quot;
+    target = _DTYPE_FALLBACK[name]
+    if name == &quot;bf16&quot; and device == &quot;cpu&quot;:
+        warning_once(logger, &quot;dtype-cpu&quot;, &quot;CPU 不支持 bf16 高效推理，回退 fp32&quot;)
+        return torch.float32
+    return target
+
+
+def _load_tokenizer():
+    from transformers import AutoTokenizer
+
+    return AutoTokenizer.from_pretrained(envs.tokenizer_path())</code></pre></div>
 </main>
 <script src="../../../../assets/course.js?v=10"></script>
 </body>

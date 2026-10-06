@@ -14,64 +14,64 @@
   <span class="cv-meta">59 行 · 1KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/data/registry.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;数据集声明式注册表（project-structure §4：数据描述的资源走配置文件）。
-
-未注册名报错时指明本 json 路径；kind 决定 Dataset 类的派发。
-&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import json
-from dataclasses import dataclass
-from importlib import resources
-from pathlib import Path
-
-from minimind_reborn import envs
-from minimind_reborn.loggers import get_logger
-
-logger = get_logger(&quot;data.registry&quot;)
-
-_REGISTRY_FILE = &quot;datasets.json&quot;
-
-
-@dataclass(frozen=True)
-class DatasetEntry:
-    name: str
-    file: str
-    kind: str  # pretrain | sft | dpo | rlaif | agent
-    description: str
-
-
-def _load_registry() -&gt; dict[str, DatasetEntry]:
-    raw = json.loads(resources.files(&quot;minimind_reborn.data&quot;).joinpath(_REGISTRY_FILE).read_text(encoding=&quot;utf-8&quot;))
-    return {
-        name: DatasetEntry(name=name, file=item[&quot;file&quot;], kind=item[&quot;kind&quot;], description=item.get(&quot;description&quot;, &quot;&quot;))
-        for name, item in raw.items()
-    }
-
-
-_REGISTRY = _load_registry()
-
-
-def resolve_dataset(name: str, data_root: Path | None = None) -&gt; DatasetEntry:
-    &quot;&quot;&quot;注册表名 → 条目；本地文件缺失时报三要素错误。&quot;&quot;&quot;
-    if name not in _REGISTRY:
-        raise ValueError(
-            f&quot;数据集 &#x27;{name}&#x27; 未注册。已注册：{sorted(_REGISTRY)}。&quot;
-            f&quot;新增数据集请在 {Path(_REGISTRY_FILE)} 中声明（名称/文件名/kind），不要散落硬编码路径&quot;
-        )
-    entry = _REGISTRY[name]
-    path = (data_root or envs.data_root()) / entry.file
-    if not path.exists():
-        raise FileNotFoundError(
-            f&quot;数据集文件不存在：{path}（注册名 &#x27;{name}&#x27;）。&quot;
-            f&quot;请检查 MINIMIND_REBORN_DATA_ROOT 或运行 tools/download_data.py --name {name} 从 modelscope 下载&quot;
-        )
-    return entry
-
-
-def file_path(entry: DatasetEntry, data_root: Path | None = None) -&gt; Path:
-    return (data_root or envs.data_root()) / entry.file</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/data/registry.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;数据集声明式注册表（project-structure §4：数据描述的资源走配置文件）。
+
+未注册名报错时指明本 json 路径；kind 决定 Dataset 类的派发。
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from importlib import resources
+from pathlib import Path
+
+from minimind_reborn import envs
+from minimind_reborn.loggers import get_logger
+
+logger = get_logger(&quot;data.registry&quot;)
+
+_REGISTRY_FILE = &quot;datasets.json&quot;
+
+
+@dataclass(frozen=True)
+class DatasetEntry:
+    name: str
+    file: str
+    kind: str  # pretrain | sft | dpo | rlaif | agent
+    description: str
+
+
+def _load_registry() -&gt; dict[str, DatasetEntry]:
+    raw = json.loads(resources.files(&quot;minimind_reborn.data&quot;).joinpath(_REGISTRY_FILE).read_text(encoding=&quot;utf-8&quot;))
+    return {
+        name: DatasetEntry(name=name, file=item[&quot;file&quot;], kind=item[&quot;kind&quot;], description=item.get(&quot;description&quot;, &quot;&quot;))
+        for name, item in raw.items()
+    }
+
+
+_REGISTRY = _load_registry()
+
+
+def resolve_dataset(name: str, data_root: Path | None = None) -&gt; DatasetEntry:
+    &quot;&quot;&quot;注册表名 → 条目；本地文件缺失时报三要素错误。&quot;&quot;&quot;
+    if name not in _REGISTRY:
+        raise ValueError(
+            f&quot;数据集 &#x27;{name}&#x27; 未注册。已注册：{sorted(_REGISTRY)}。&quot;
+            f&quot;新增数据集请在 {Path(_REGISTRY_FILE)} 中声明（名称/文件名/kind），不要散落硬编码路径&quot;
+        )
+    entry = _REGISTRY[name]
+    path = (data_root or envs.data_root()) / entry.file
+    if not path.exists():
+        raise FileNotFoundError(
+            f&quot;数据集文件不存在：{path}（注册名 &#x27;{name}&#x27;）。&quot;
+            f&quot;请检查 MINIMIND_REBORN_DATA_ROOT 或运行 tools/download_data.py --name {name} 从 modelscope 下载&quot;
+        )
+    return entry
+
+
+def file_path(entry: DatasetEntry, data_root: Path | None = None) -&gt; Path:
+    return (data_root or envs.data_root()) / entry.file</code></pre></div>
 </main>
 <script src="../../../../assets/course.js?v=10"></script>
 </body>

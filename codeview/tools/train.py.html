@@ -14,67 +14,67 @@
   <span class="cv-meta">62 行 · 2KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>tools/train.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;训练薄入口（project-structure §2.2：只做 解析参数 → 取配置 → 启动）。
-
-用法：
-    uv run python tools/train.py configs/pretrain_64m.yaml
-    uv run python tools/train.py configs/pretrain_64m.yaml --set train.max_steps=10 --set model.hidden_size=512
-&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import argparse
-
-from minimind_reborn.configuration import load_config
-from minimind_reborn.loggers import catch_main, get_logger, setup_logging
-from minimind_reborn.utils import dist
-
-logger = get_logger(&quot;train&quot;)
-
-WORKFLOWS = {
-    &quot;pretrain&quot;: &quot;minimind_reborn.training.pretrain&quot;,
-    &quot;sft&quot;: &quot;minimind_reborn.training.sft&quot;,
-    &quot;dpo&quot;: &quot;minimind_reborn.training.dpo&quot;,
-    &quot;distill&quot;: &quot;minimind_reborn.training.distill&quot;,
-    &quot;lora&quot;: &quot;minimind_reborn.training.lora&quot;,
-    &quot;grpo&quot;: &quot;minimind_reborn.training.grpo&quot;,
-    &quot;ppo&quot;: &quot;minimind_reborn.training.ppo&quot;,
-    &quot;agent&quot;: &quot;minimind_reborn.training.agent&quot;,
-}
-
-
-@catch_main
-def main() -&gt; None:
-    parser = argparse.ArgumentParser(description=&quot;minimind_reborn 训练入口（配方 yaml 即实验名）&quot;)
-    parser.add_argument(&quot;recipe&quot;, nargs=&quot;?&quot;, default=None, help=&quot;配方文件路径（configs/*.yaml）&quot;)
-    parser.add_argument(
-        &quot;--set&quot;,
-        dest=&quot;overrides&quot;,
-        action=&quot;append&quot;,
-        default=[],
-        metavar=&quot;domain.field=value&quot;,
-        help=&quot;命令行覆盖（yaml 之后生效，未知 key 报错）&quot;,
-    )
-    args = parser.parse_args()
-
-    from minimind_reborn.utils.runtime import configure_runtime
-
-    configure_runtime()  # 线程数/文件句柄上限：训练入口一次设置（training §8）
-    local_rank = dist.init_distributed()
-    cfg = load_config(args.recipe, args.overrides)
-    cfg.run_dir = dist.broadcast_object(cfg.run_dir)  # 时间戳在各 rank 各自取会得到不同目录，以 rank0 为准
-    setup_logging(cfg.run_dir)
-    logger.info(&quot;配方=%s stage=%s overrides=%s&quot;, cfg.recipe_name, cfg.stage, args.overrides)
-
-    import importlib
-
-    workflow = importlib.import_module(WORKFLOWS[cfg.stage])
-    workflow.run(cfg, local_rank=local_rank)
-    dist.cleanup()
-
-
-if __name__ == &quot;__main__&quot;:
-    main()</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>tools/train.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;训练薄入口（project-structure §2.2：只做 解析参数 → 取配置 → 启动）。
+
+用法：
+    uv run python tools/train.py configs/pretrain_64m.yaml
+    uv run python tools/train.py configs/pretrain_64m.yaml --set train.max_steps=10 --set model.hidden_size=512
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import argparse
+
+from minimind_reborn.configuration import load_config
+from minimind_reborn.loggers import catch_main, get_logger, setup_logging
+from minimind_reborn.utils import dist
+
+logger = get_logger(&quot;train&quot;)
+
+WORKFLOWS = {
+    &quot;pretrain&quot;: &quot;minimind_reborn.training.pretrain&quot;,
+    &quot;sft&quot;: &quot;minimind_reborn.training.sft&quot;,
+    &quot;dpo&quot;: &quot;minimind_reborn.training.dpo&quot;,
+    &quot;distill&quot;: &quot;minimind_reborn.training.distill&quot;,
+    &quot;lora&quot;: &quot;minimind_reborn.training.lora&quot;,
+    &quot;grpo&quot;: &quot;minimind_reborn.training.grpo&quot;,
+    &quot;ppo&quot;: &quot;minimind_reborn.training.ppo&quot;,
+    &quot;agent&quot;: &quot;minimind_reborn.training.agent&quot;,
+}
+
+
+@catch_main
+def main() -&gt; None:
+    parser = argparse.ArgumentParser(description=&quot;minimind_reborn 训练入口（配方 yaml 即实验名）&quot;)
+    parser.add_argument(&quot;recipe&quot;, nargs=&quot;?&quot;, default=None, help=&quot;配方文件路径（configs/*.yaml）&quot;)
+    parser.add_argument(
+        &quot;--set&quot;,
+        dest=&quot;overrides&quot;,
+        action=&quot;append&quot;,
+        default=[],
+        metavar=&quot;domain.field=value&quot;,
+        help=&quot;命令行覆盖（yaml 之后生效，未知 key 报错）&quot;,
+    )
+    args = parser.parse_args()
+
+    from minimind_reborn.utils.runtime import configure_runtime
+
+    configure_runtime()  # 线程数/文件句柄上限：训练入口一次设置（training §8）
+    local_rank = dist.init_distributed()
+    cfg = load_config(args.recipe, args.overrides)
+    cfg.run_dir = dist.broadcast_object(cfg.run_dir)  # 时间戳在各 rank 各自取会得到不同目录，以 rank0 为准
+    setup_logging(cfg.run_dir)
+    logger.info(&quot;配方=%s stage=%s overrides=%s&quot;, cfg.recipe_name, cfg.stage, args.overrides)
+
+    import importlib
+
+    workflow = importlib.import_module(WORKFLOWS[cfg.stage])
+    workflow.run(cfg, local_rank=local_rank)
+    dist.cleanup()
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre></div>
 </main>
 <script src="../../assets/course.js?v=10"></script>
 </body>

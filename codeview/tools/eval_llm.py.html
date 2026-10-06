@@ -14,58 +14,58 @@
   <span class="cv-meta">53 行 · 2KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>tools/eval_llm.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;自动评测：固定问题集 + 吞吐统计（官方 eval_llm.py 的重构）。&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import argparse
-
-from minimind_reborn.configuration.schemas import GenerateConfig
-from minimind_reborn.inference.engine import MiniMindLLM
-
-PROMPTS = [
-    &quot;你有什么特长？&quot;,
-    &quot;为什么天空是蓝色的&quot;,
-    &quot;请用Python写一个计算斐波那契数列的函数&quot;,
-    &#x27;解释一下&quot;光合作用&quot;的基本过程&#x27;,
-    &quot;如果明天下雨，我应该如何出门&quot;,
-    &quot;比较一下猫和狗作为宠物的优缺点&quot;,
-    &quot;解释什么是机器学习&quot;,
-    &quot;推荐一些中国的美食&quot;,
-]
-
-
-def main() -&gt; None:
-    parser = argparse.ArgumentParser(description=&quot;minimind_reborn 自动评测&quot;)
-    parser.add_argument(&quot;--weight&quot;, default=&quot;full_sft&quot;)
-    parser.add_argument(&quot;--hidden-size&quot;, type=int, default=768)
-    parser.add_argument(&quot;--num-hidden-layers&quot;, type=int, default=8)
-    parser.add_argument(&quot;--use-moe&quot;, action=&quot;store_true&quot;)
-    parser.add_argument(&quot;--temperature&quot;, type=float, default=0.85)
-    parser.add_argument(&quot;--top-p&quot;, type=float, default=0.95)
-    parser.add_argument(&quot;--max-new-tokens&quot;, type=int, default=256)
-    parser.add_argument(&quot;--pretrain-mode&quot;, action=&quot;store_true&quot;, help=&quot;base 模型走 bos+text 直拼&quot;)
-    args = parser.parse_args()
-
-    llm = MiniMindLLM.build(
-        args.weight, hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=args.use_moe
-    )
-    gen = GenerateConfig(temperature=args.temperature, top_p=args.top_p, max_new_tokens=args.max_new_tokens)
-    total_tokens = total_time = 0.0
-    for prompt in PROMPTS:
-        result = llm.generate_text([{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: prompt}], gen, pretrain_mode=args.pretrain_mode)
-        total_tokens += result[&quot;generated_tokens&quot;]
-        total_time += result[&quot;latency_ms&quot;] / 1000
-        print(
-            f&quot;💬: {prompt}\n🧠: {result[&#x27;content&#x27;]}&quot;
-            + (f&quot;\n（思考：{result[&#x27;reasoning_content&#x27;][:80]}…）&quot; if result[&quot;reasoning_content&quot;] else &quot;&quot;)
-            + f&quot;\n[{result[&#x27;generated_tokens&#x27;]} tok | {result[&#x27;latency_ms&#x27;]:.0f}ms | {result[&#x27;finish_reason&#x27;]}]\n&quot;
-        )
-    print(f&quot;平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s&quot;)
-
-
-if __name__ == &quot;__main__&quot;:
-    main()</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>tools/eval_llm.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;自动评测：固定问题集 + 吞吐统计（官方 eval_llm.py 的重构）。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import argparse
+
+from minimind_reborn.configuration.schemas import GenerateConfig
+from minimind_reborn.inference.engine import MiniMindLLM
+
+PROMPTS = [
+    &quot;你有什么特长？&quot;,
+    &quot;为什么天空是蓝色的&quot;,
+    &quot;请用Python写一个计算斐波那契数列的函数&quot;,
+    &#x27;解释一下&quot;光合作用&quot;的基本过程&#x27;,
+    &quot;如果明天下雨，我应该如何出门&quot;,
+    &quot;比较一下猫和狗作为宠物的优缺点&quot;,
+    &quot;解释什么是机器学习&quot;,
+    &quot;推荐一些中国的美食&quot;,
+]
+
+
+def main() -&gt; None:
+    parser = argparse.ArgumentParser(description=&quot;minimind_reborn 自动评测&quot;)
+    parser.add_argument(&quot;--weight&quot;, default=&quot;full_sft&quot;)
+    parser.add_argument(&quot;--hidden-size&quot;, type=int, default=768)
+    parser.add_argument(&quot;--num-hidden-layers&quot;, type=int, default=8)
+    parser.add_argument(&quot;--use-moe&quot;, action=&quot;store_true&quot;)
+    parser.add_argument(&quot;--temperature&quot;, type=float, default=0.85)
+    parser.add_argument(&quot;--top-p&quot;, type=float, default=0.95)
+    parser.add_argument(&quot;--max-new-tokens&quot;, type=int, default=256)
+    parser.add_argument(&quot;--pretrain-mode&quot;, action=&quot;store_true&quot;, help=&quot;base 模型走 bos+text 直拼&quot;)
+    args = parser.parse_args()
+
+    llm = MiniMindLLM.build(
+        args.weight, hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=args.use_moe
+    )
+    gen = GenerateConfig(temperature=args.temperature, top_p=args.top_p, max_new_tokens=args.max_new_tokens)
+    total_tokens = total_time = 0.0
+    for prompt in PROMPTS:
+        result = llm.generate_text([{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: prompt}], gen, pretrain_mode=args.pretrain_mode)
+        total_tokens += result[&quot;generated_tokens&quot;]
+        total_time += result[&quot;latency_ms&quot;] / 1000
+        print(
+            f&quot;💬: {prompt}\n🧠: {result[&#x27;content&#x27;]}&quot;
+            + (f&quot;\n（思考：{result[&#x27;reasoning_content&#x27;][:80]}…）&quot; if result[&quot;reasoning_content&quot;] else &quot;&quot;)
+            + f&quot;\n[{result[&#x27;generated_tokens&#x27;]} tok | {result[&#x27;latency_ms&#x27;]:.0f}ms | {result[&#x27;finish_reason&#x27;]}]\n&quot;
+        )
+    print(f&quot;平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre></div>
 </main>
 <script src="../../assets/course.js?v=10"></script>
 </body>

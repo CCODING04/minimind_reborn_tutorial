@@ -14,36 +14,36 @@
   <span class="cv-meta">31 行 · 1KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/utils/io.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;磁盘 IO 原子性（training §4：写盘用临时文件 + rename，防中断留坏文件）。&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import json
-import os
-from pathlib import Path
-from typing import Any
-
-
-def atomic_save(obj: Any, path: str | Path) -&gt; Path:
-    &quot;&quot;&quot;torch.save 的原子版本：先写 .tmp 再 os.replace（同目录保证原子性）。&quot;&quot;&quot;
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + &quot;.tmp&quot;)
-    import torch
-
-    torch.save(obj, tmp)
-    os.replace(tmp, path)
-    return path
-
-
-def atomic_write_json(data: Any, path: str | Path) -&gt; Path:
-    &quot;&quot;&quot;json 序列化的原子版本（配置快照/环境指纹/指标摘要）。&quot;&quot;&quot;
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + &quot;.tmp&quot;)
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding=&quot;utf-8&quot;)
-    os.replace(tmp, path)
-    return path</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/utils/io.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;磁盘 IO 原子性（training §4：写盘用临时文件 + rename，防中断留坏文件）。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+
+def atomic_save(obj: Any, path: str | Path) -&gt; Path:
+    &quot;&quot;&quot;torch.save 的原子版本：先写 .tmp 再 os.replace（同目录保证原子性）。&quot;&quot;&quot;
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + &quot;.tmp&quot;)
+    import torch
+
+    torch.save(obj, tmp)
+    os.replace(tmp, path)
+    return path
+
+
+def atomic_write_json(data: Any, path: str | Path) -&gt; Path:
+    &quot;&quot;&quot;json 序列化的原子版本（配置快照/环境指纹/指标摘要）。&quot;&quot;&quot;
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + &quot;.tmp&quot;)
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding=&quot;utf-8&quot;)
+    os.replace(tmp, path)
+    return path</code></pre></div>
 </main>
 <script src="../../../../assets/course.js?v=10"></script>
 </body>

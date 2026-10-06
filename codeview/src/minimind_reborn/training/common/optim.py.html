@@ -14,31 +14,31 @@
   <span class="cv-meta">26 行 · 1KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/common/optim.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;优化器构造（training §3：decay 分组放构造处，不散在训练循环）。&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import inspect
-
-import torch
-
-
-def configure_optimizers(model: torch.nn.Module, lr: float, weight_decay: float, params=None) -&gt; torch.optim.Optimizer:
-    &quot;&quot;&quot;AdamW + 权重 decay 分组：≥2 维张量 decay，bias 与 1 维参数（norm）不 decay。
-
-    params=None 时对全部可训练参数分组（LoRA 场景传入自己的参数集）；
-    fused 实现经签名探测可用才开（能力探测优于版本判断）。
-    &quot;&quot;&quot;
-    trainable = [p for p in (params if params is not None else model.parameters()) if p.requires_grad]
-    decay = [p for p in trainable if p.dim() &gt;= 2]
-    no_decay = [p for p in trainable if p.dim() &lt; 2]
-    groups = [
-        {&quot;params&quot;: decay, &quot;weight_decay&quot;: weight_decay},
-        {&quot;params&quot;: no_decay, &quot;weight_decay&quot;: 0.0},
-    ]
-    fused_available = &quot;fused&quot; in inspect.signature(torch.optim.AdamW).parameters
-    extra = {&quot;fused&quot;: True} if (fused_available and torch.cuda.is_available()) else {}
-    return torch.optim.AdamW(groups, lr=lr, betas=(0.9, 0.95), **extra)</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/common/optim.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;优化器构造（training §3：decay 分组放构造处，不散在训练循环）。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import inspect
+
+import torch
+
+
+def configure_optimizers(model: torch.nn.Module, lr: float, weight_decay: float, params=None) -&gt; torch.optim.Optimizer:
+    &quot;&quot;&quot;AdamW + 权重 decay 分组：≥2 维张量 decay，bias 与 1 维参数（norm）不 decay。
+
+    params=None 时对全部可训练参数分组（LoRA 场景传入自己的参数集）；
+    fused 实现经签名探测可用才开（能力探测优于版本判断）。
+    &quot;&quot;&quot;
+    trainable = [p for p in (params if params is not None else model.parameters()) if p.requires_grad]
+    decay = [p for p in trainable if p.dim() &gt;= 2]
+    no_decay = [p for p in trainable if p.dim() &lt; 2]
+    groups = [
+        {&quot;params&quot;: decay, &quot;weight_decay&quot;: weight_decay},
+        {&quot;params&quot;: no_decay, &quot;weight_decay&quot;: 0.0},
+    ]
+    fused_available = &quot;fused&quot; in inspect.signature(torch.optim.AdamW).parameters
+    extra = {&quot;fused&quot;: True} if (fused_available and torch.cuda.is_available()) else {}
+    return torch.optim.AdamW(groups, lr=lr, betas=(0.9, 0.95), **extra)</code></pre></div>
 </main>
 <script src="../../../../../assets/course.js?v=10"></script>
 </body>

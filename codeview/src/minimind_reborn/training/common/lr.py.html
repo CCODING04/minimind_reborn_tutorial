@@ -14,28 +14,28 @@
   <span class="cv-meta">23 行 · 1KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/common/lr.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;LR 纯函数（training §7）：手写 warmup + 余弦，不引入 scheduler 对象状态。&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import math
-
-
-def get_lr(
-    step: int,
-    total_steps: int,
-    base_lr: float,
-    *,
-    warmup_steps: int = 0,
-    min_ratio: float = 0.1,
-) -&gt; float:
-    &quot;&quot;&quot;warmup 线性爬升 → 余弦衰减到 base_lr·min_ratio（官方 get_lr 的地板语义保留）。&quot;&quot;&quot;
-    if total_steps &lt;= 0:
-        return base_lr
-    if warmup_steps &gt; 0 and step &lt; warmup_steps:
-        return base_lr * (step + 1) / warmup_steps
-    progress = min((step - warmup_steps) / max(total_steps - warmup_steps, 1), 1.0)
-    return base_lr * (min_ratio + (1 - min_ratio) * 0.5 * (1 + math.cos(math.pi * progress)))</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/common/lr.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;LR 纯函数（training §7）：手写 warmup + 余弦，不引入 scheduler 对象状态。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import math
+
+
+def get_lr(
+    step: int,
+    total_steps: int,
+    base_lr: float,
+    *,
+    warmup_steps: int = 0,
+    min_ratio: float = 0.1,
+) -&gt; float:
+    &quot;&quot;&quot;warmup 线性爬升 → 余弦衰减到 base_lr·min_ratio（官方 get_lr 的地板语义保留）。&quot;&quot;&quot;
+    if total_steps &lt;= 0:
+        return base_lr
+    if warmup_steps &gt; 0 and step &lt; warmup_steps:
+        return base_lr * (step + 1) / warmup_steps
+    progress = min((step - warmup_steps) / max(total_steps - warmup_steps, 1), 1.0)
+    return base_lr * (min_ratio + (1 - min_ratio) * 0.5 * (1 + math.cos(math.pi * progress)))</code></pre></div>
 </main>
 <script src="../../../../../assets/course.js?v=10"></script>
 </body>

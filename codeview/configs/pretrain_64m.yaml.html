@@ -14,22 +14,22 @@
   <span class="cv-meta">17 行 · 1KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>configs/pretrain_64m.yaml</span><span class="lang">yaml</span></div><pre class="code"><code data-lines="1"># 64M dense 预训练配方（hidden 768×8，与官方 minimind-3 同构）
-# 默认值全部在 src/minimind_reborn/configuration/schemas.py，本文件只写差异
-stage: pretrain
-data:
-  dataset: pretrain_t2t_mini
-  max_seq_len: 340        # 中文 1 token ≈ 1.5~1.7 字符
-  eval_ratio: 0.005       # 尾部 0.5% 做验证集，观测过拟合
-  num_workers: 8
-train:
-  epochs: 2
-  batch_size: 32
-  gradient_accumulation_steps: 8   # DDP 下等效 batch = 32 × world × 8
-  learning_rate: 5.0e-4
-  dtype: bf16
-  save_interval_steps: 1000
-  log_interval: 50</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>configs/pretrain_64m.yaml</span><span class="lang">yaml</span></div><pre class="code"><code data-lines="1"># 64M dense 预训练配方（hidden 768×8，与官方 minimind-3 同构）
+# 默认值全部在 src/minimind_reborn/configuration/schemas.py，本文件只写差异
+stage: pretrain
+data:
+  dataset: pretrain_t2t_mini
+  max_seq_len: 340        # 中文 1 token ≈ 1.5~1.7 字符
+  eval_ratio: 0.005       # 尾部 0.5% 做验证集，观测过拟合
+  num_workers: 8
+train:
+  epochs: 2
+  batch_size: 32
+  gradient_accumulation_steps: 8   # DDP 下等效 batch = 32 × world × 8
+  learning_rate: 5.0e-4
+  dtype: bf16
+  save_interval_steps: 1000
+  log_interval: 50</code></pre></div>
 </main>
 <script src="../../assets/course.js?v=10"></script>
 </body>

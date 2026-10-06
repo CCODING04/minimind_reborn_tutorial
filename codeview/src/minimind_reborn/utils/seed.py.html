@@ -14,74 +14,74 @@
   <span class="cv-meta">69 行 · 2KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/utils/seed.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;全链路随机种子（training §1：可复现性先于一切）。
-
-不变量：相同 seed + 相同代码 + 相同硬件 → 逐位相同的训练前若干步 loss。
-两个易漏点都在这里处理：
-- dataloader worker 种子：fork 后叠加 rank/worker 无关熵，防增强样本跨 worker 重复
-  （原版 num_workers=8 + SFT 运行时随机增强正踩此坑）；
-- 分布式按 rank 偏移：数据顺序/dropout 各 rank 错开，模型初始化保持一致。
-&quot;&quot;&quot;
-
-from __future__ import annotations
-
-import logging
-import random
-
-import numpy as np
-import torch
-
-logger = logging.getLogger(__name__)
-
-
-def set_seed(seed: int, *, deterministic: bool = False) -&gt; None:
-    &quot;&quot;&quot;设置 python/numpy/torch 全部随机源。
-
-    deterministic=True 时开启 cudnn 确定性——有可观测的性能代价，
-    仅在复现实验位对位时打开（默认关闭，打开时警告一次）。
-    &quot;&quot;&quot;
-    if deterministic:
-        logger.warning(&quot;cudnn.deterministic 已开启：可复现但训练会变慢（training §1 减速警告）&quot;)
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = deterministic
-    torch.backends.cudnn.benchmark = not deterministic
-
-
-def seed_worker(worker_id: int) -&gt; None:
-    &quot;&quot;&quot;DataLoader worker_init_fn：每个 worker 的种子叠加进程无关熵。
-
-    torch 的默认 worker seed 已含 base_seed（由主进程生成），
-    这里再叠加 numpy/python 两个源，保证多 worker 的运行时增强互不重复。
-    &quot;&quot;&quot;
-    worker_seed = torch.initial_seed() % 2**32
-    np.random.seed(worker_seed)
-    random.seed(worker_seed)
-
-
-def worker_init() -&gt; dict:
-    &quot;&quot;&quot;DataLoader 构造参数：所有入口统一使用，不再各自手写。&quot;&quot;&quot;
-    return {&quot;worker_init_fn&quot;: seed_worker}
-
-
-def loader_kwargs(num_workers: int) -&gt; dict:
-    &quot;&quot;&quot;DataLoader 通用 kwargs（pin_memory + 深预取 + 常驻 worker + worker 种子），集中一处。
-
-    prefetch_factor=4 / persistent_workers=True（2026-09-29 perf_analysis 案 A 放大器
-    修复）：SFT 编码带重尾（p99≈7900 token 的样本单条秒级），默认浅缓冲（prefetch=2、
-    非常驻）会让尾延迟全额透传成 GPU 停等——加深到 4×workers 个 batch 的缓冲吸收抖动，
-    常驻 worker 免去每 epoch 重建。两参数仅 num_workers&gt;0 时合法。
-    &quot;&quot;&quot;
-    kwargs: dict = {&quot;num_workers&quot;: num_workers, &quot;pin_memory&quot;: True}
-    if num_workers &gt; 0:
-        kwargs.update(
-            worker_init_fn=seed_worker,
-            prefetch_factor=4,
-            persistent_workers=True,
-        )
-    return kwargs</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/utils/seed.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;全链路随机种子（training §1：可复现性先于一切）。
+
+不变量：相同 seed + 相同代码 + 相同硬件 → 逐位相同的训练前若干步 loss。
+两个易漏点都在这里处理：
+- dataloader worker 种子：fork 后叠加 rank/worker 无关熵，防增强样本跨 worker 重复
+  （原版 num_workers=8 + SFT 运行时随机增强正踩此坑）；
+- 分布式按 rank 偏移：数据顺序/dropout 各 rank 错开，模型初始化保持一致。
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import logging
+import random
+
+import numpy as np
+import torch
+
+logger = logging.getLogger(__name__)
+
+
+def set_seed(seed: int, *, deterministic: bool = False) -&gt; None:
+    &quot;&quot;&quot;设置 python/numpy/torch 全部随机源。
+
+    deterministic=True 时开启 cudnn 确定性——有可观测的性能代价，
+    仅在复现实验位对位时打开（默认关闭，打开时警告一次）。
+    &quot;&quot;&quot;
+    if deterministic:
+        logger.warning(&quot;cudnn.deterministic 已开启：可复现但训练会变慢（training §1 减速警告）&quot;)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = deterministic
+    torch.backends.cudnn.benchmark = not deterministic
+
+
+def seed_worker(worker_id: int) -&gt; None:
+    &quot;&quot;&quot;DataLoader worker_init_fn：每个 worker 的种子叠加进程无关熵。
+
+    torch 的默认 worker seed 已含 base_seed（由主进程生成），
+    这里再叠加 numpy/python 两个源，保证多 worker 的运行时增强互不重复。
+    &quot;&quot;&quot;
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+
+def worker_init() -&gt; dict:
+    &quot;&quot;&quot;DataLoader 构造参数：所有入口统一使用，不再各自手写。&quot;&quot;&quot;
+    return {&quot;worker_init_fn&quot;: seed_worker}
+
+
+def loader_kwargs(num_workers: int) -&gt; dict:
+    &quot;&quot;&quot;DataLoader 通用 kwargs（pin_memory + 深预取 + 常驻 worker + worker 种子），集中一处。
+
+    prefetch_factor=4 / persistent_workers=True（2026-09-29 perf_analysis 案 A 放大器
+    修复）：SFT 编码带重尾（p99≈7900 token 的样本单条秒级），默认浅缓冲（prefetch=2、
+    非常驻）会让尾延迟全额透传成 GPU 停等——加深到 4×workers 个 batch 的缓冲吸收抖动，
+    常驻 worker 免去每 epoch 重建。两参数仅 num_workers&gt;0 时合法。
+    &quot;&quot;&quot;
+    kwargs: dict = {&quot;num_workers&quot;: num_workers, &quot;pin_memory&quot;: True}
+    if num_workers &gt; 0:
+        kwargs.update(
+            worker_init_fn=seed_worker,
+            prefetch_factor=4,
+            persistent_workers=True,
+        )
+    return kwargs</code></pre></div>
 </main>
 <script src="../../../../assets/course.js?v=10"></script>
 </body>

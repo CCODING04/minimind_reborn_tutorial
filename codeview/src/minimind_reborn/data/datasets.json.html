@@ -14,52 +14,52 @@
   <span class="cv-meta">47 行 · 1KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/data/datasets.json</span><span class="lang">json</span></div><pre class="code"><code data-lines="1">{
-  &quot;pretrain_t2t_mini&quot;: {
-    &quot;file&quot;: &quot;pretrain_t2t_mini.jsonl&quot;,
-    &quot;kind&quot;: &quot;pretrain&quot;,
-    &quot;description&quot;: &quot;预训练语料（text 字段），MiniMind 官方 mini 版约 1.2GB&quot;
-  },
-  &quot;sft_t2t_mini&quot;: {
-    &quot;file&quot;: &quot;sft_t2t_mini.jsonl&quot;,
-    &quot;kind&quot;: &quot;sft&quot;,
-    &quot;description&quot;: &quot;SFT 对话语料（conversations 字段，支持 tools/reasoning_content）&quot;
-  },
-  &quot;dpo_mini&quot;: {
-    &quot;file&quot;: &quot;dpo.jsonl&quot;,
-    &quot;kind&quot;: &quot;dpo&quot;,
-    &quot;description&quot;: &quot;DPO 偏好对（chosen/rejected 各为消息列表）&quot;
-  },
-  &quot;rlaif_mini&quot;: {
-    &quot;file&quot;: &quot;rlaif.jsonl&quot;,
-    &quot;kind&quot;: &quot;rlaif&quot;,
-    &quot;description&quot;: &quot;RL 系提示集（conversations，最后一轮 assistant 回复被去掉）&quot;
-  },
-  &quot;agent_rl_mini&quot;: {
-    &quot;file&quot;: &quot;agent_rl.jsonl&quot;,
-    &quot;kind&quot;: &quot;agent&quot;,
-    &quot;description&quot;: &quot;Agent RL 轨迹（conversations + tools + gt 真值）&quot;
-  },
-  &quot;pretrain_t2t&quot;: {
-    &quot;file&quot;: &quot;pretrain_t2t.jsonl&quot;,
-    &quot;kind&quot;: &quot;pretrain&quot;,
-    &quot;description&quot;: &quot;预训练语料全量版（~10GB）&quot;
-  },
-  &quot;sft_t2t&quot;: {
-    &quot;file&quot;: &quot;sft_t2t.jsonl&quot;,
-    &quot;kind&quot;: &quot;sft&quot;,
-    &quot;description&quot;: &quot;SFT 对话语料全量版（~14GB）&quot;
-  },
-  &quot;sft_t2t_mt&quot;: {
-    &quot;file&quot;: &quot;sft_t2t_mt.jsonl&quot;,
-    &quot;kind&quot;: &quot;sft&quot;,
-    &quot;description&quot;: &quot;档二多轮增强：sft_t2t 全量 + Belle multiturn 中文多轮 30 万（seed 42 确定性抽取，去污染后）&quot;
-  },
-  &quot;pretrain_longctx&quot;: {
-    &quot;file&quot;: &quot;pretrain_longctx.jsonl&quot;,
-    &quot;kind&quot;: &quot;pretrain&quot;,
-    &quot;description&quot;: &quot;档二 4a 长上下文续训子集：≥768 token 长文档（tokenize 精筛）+ 25% 短文档回放&quot;
-  }
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/data/datasets.json</span><span class="lang">json</span></div><pre class="code"><code data-lines="1">{
+  &quot;pretrain_t2t_mini&quot;: {
+    &quot;file&quot;: &quot;pretrain_t2t_mini.jsonl&quot;,
+    &quot;kind&quot;: &quot;pretrain&quot;,
+    &quot;description&quot;: &quot;预训练语料（text 字段），MiniMind 官方 mini 版约 1.2GB&quot;
+  },
+  &quot;sft_t2t_mini&quot;: {
+    &quot;file&quot;: &quot;sft_t2t_mini.jsonl&quot;,
+    &quot;kind&quot;: &quot;sft&quot;,
+    &quot;description&quot;: &quot;SFT 对话语料（conversations 字段，支持 tools/reasoning_content）&quot;
+  },
+  &quot;dpo_mini&quot;: {
+    &quot;file&quot;: &quot;dpo.jsonl&quot;,
+    &quot;kind&quot;: &quot;dpo&quot;,
+    &quot;description&quot;: &quot;DPO 偏好对（chosen/rejected 各为消息列表）&quot;
+  },
+  &quot;rlaif_mini&quot;: {
+    &quot;file&quot;: &quot;rlaif.jsonl&quot;,
+    &quot;kind&quot;: &quot;rlaif&quot;,
+    &quot;description&quot;: &quot;RL 系提示集（conversations，最后一轮 assistant 回复被去掉）&quot;
+  },
+  &quot;agent_rl_mini&quot;: {
+    &quot;file&quot;: &quot;agent_rl.jsonl&quot;,
+    &quot;kind&quot;: &quot;agent&quot;,
+    &quot;description&quot;: &quot;Agent RL 轨迹（conversations + tools + gt 真值）&quot;
+  },
+  &quot;pretrain_t2t&quot;: {
+    &quot;file&quot;: &quot;pretrain_t2t.jsonl&quot;,
+    &quot;kind&quot;: &quot;pretrain&quot;,
+    &quot;description&quot;: &quot;预训练语料全量版（~10GB）&quot;
+  },
+  &quot;sft_t2t&quot;: {
+    &quot;file&quot;: &quot;sft_t2t.jsonl&quot;,
+    &quot;kind&quot;: &quot;sft&quot;,
+    &quot;description&quot;: &quot;SFT 对话语料全量版（~14GB）&quot;
+  },
+  &quot;sft_t2t_mt&quot;: {
+    &quot;file&quot;: &quot;sft_t2t_mt.jsonl&quot;,
+    &quot;kind&quot;: &quot;sft&quot;,
+    &quot;description&quot;: &quot;档二多轮增强：sft_t2t 全量 + Belle multiturn 中文多轮 30 万（seed 42 确定性抽取，去污染后）&quot;
+  },
+  &quot;pretrain_longctx&quot;: {
+    &quot;file&quot;: &quot;pretrain_longctx.jsonl&quot;,
+    &quot;kind&quot;: &quot;pretrain&quot;,
+    &quot;description&quot;: &quot;档二 4a 长上下文续训子集：≥768 token 长文档（tokenize 精筛）+ 25% 短文档回放&quot;
+  }
 }</code></pre></div>
 </main>
 <script src="../../../../assets/course.js?v=10"></script>

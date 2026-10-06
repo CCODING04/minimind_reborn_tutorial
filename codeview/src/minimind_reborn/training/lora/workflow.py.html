@@ -14,70 +14,70 @@
   <span class="cv-meta">65 行 · 2KB · minimind_reborn</span>
 </header>
 <main class="cv-main">
-  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/lora/workflow.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;LoRA workflow：冻结基模只训适配器；保存的是 LoRA 权重（经 save_weights_fn 钩子）。&quot;&quot;&quot;
-
-from __future__ import annotations
-
-from minimind_reborn.configuration.schemas import RunConfig
-from minimind_reborn.loggers import get_logger, setup_logging
-from minimind_reborn.models.lora import apply_lora
-from minimind_reborn.training.common.setup import build_lm_dataset, build_model, load_tokenizer
-from minimind_reborn.training.common.trainer import Trainer
-from minimind_reborn.utils.io import atomic_save
-
-logger = get_logger(&quot;lora&quot;)
-
-
-def run(cfg: RunConfig, *, device: str | None = None, local_rank: int = 0) -&gt; Trainer:
-    setup_logging(cfg.run_dir)
-    tokenizer = load_tokenizer()
-    model = build_model(cfg, tokenizer)
-    apply_lora(model, rank=cfg.lora.rank)
-
-    lora_params = [p for n, p in model.named_parameters() if &quot;lora&quot; in n]
-    for n, p in model.named_parameters():
-        p.requires_grad = &quot;lora&quot; in n
-    total = sum(p.numel() for p in model.parameters())
-    lora_count = sum(p.numel() for p in lora_params)
-    logger.info(
-        &quot;LoRA rank=%d：%.3fM/%.3fM（%.2f%%）&quot;, cfg.lora.rank, lora_count / 1e6, total / 1e6, 100 * lora_count / total
-    )
-
-    train_ds, eval_ds = build_lm_dataset(cfg, tokenizer, kind=&quot;sft&quot;)
-
-    def compute_loss(batch, m):
-        out = m(batch[&quot;input_ids&quot;], labels=batch[&quot;labels&quot;])
-        loss = out.loss + out.aux_loss
-        return loss, {&quot;train/loss&quot;: out.loss.item(), &quot;train/aux_loss&quot;: float(out.aux_loss)}
-
-    def save_lora_only(m, path):
-        raw = m.module if hasattr(m, &quot;module&quot;) else m
-        raw = getattr(raw, &quot;_orig_mod&quot;, raw)
-        atomic_save(
-            {
-                f&quot;{n}.lora.{k}&quot;: v.detach().cpu().half()
-                for n, mod in raw.named_modules()
-                if hasattr(mod, &quot;lora&quot;)
-                for k, v in mod.lora.state_dict().items()
-            },
-            path,
-        )
-
-    trainer = Trainer(
-        cfg,
-        model,
-        tokenizer,
-        train_ds,
-        eval_ds,
-        compute_loss=compute_loss,
-        save_weight=cfg.lora.lora_name,
-        device=device,
-        local_rank=local_rank,
-        save_weights_fn=save_lora_only,
-        optimizer_params=lora_params,
-    )
-    trainer.run()
-    return trainer</code></pre></div>
+  <div class="codeblock"><div class="code-head"><span>src/minimind_reborn/training/lora/workflow.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;LoRA workflow：冻结基模只训适配器；保存的是 LoRA 权重（经 save_weights_fn 钩子）。&quot;&quot;&quot;
+
+from __future__ import annotations
+
+from minimind_reborn.configuration.schemas import RunConfig
+from minimind_reborn.loggers import get_logger, setup_logging
+from minimind_reborn.models.lora import apply_lora
+from minimind_reborn.training.common.setup import build_lm_dataset, build_model, load_tokenizer
+from minimind_reborn.training.common.trainer import Trainer
+from minimind_reborn.utils.io import atomic_save
+
+logger = get_logger(&quot;lora&quot;)
+
+
+def run(cfg: RunConfig, *, device: str | None = None, local_rank: int = 0) -&gt; Trainer:
+    setup_logging(cfg.run_dir)
+    tokenizer = load_tokenizer()
+    model = build_model(cfg, tokenizer)
+    apply_lora(model, rank=cfg.lora.rank)
+
+    lora_params = [p for n, p in model.named_parameters() if &quot;lora&quot; in n]
+    for n, p in model.named_parameters():
+        p.requires_grad = &quot;lora&quot; in n
+    total = sum(p.numel() for p in model.parameters())
+    lora_count = sum(p.numel() for p in lora_params)
+    logger.info(
+        &quot;LoRA rank=%d：%.3fM/%.3fM（%.2f%%）&quot;, cfg.lora.rank, lora_count / 1e6, total / 1e6, 100 * lora_count / total
+    )
+
+    train_ds, eval_ds = build_lm_dataset(cfg, tokenizer, kind=&quot;sft&quot;)
+
+    def compute_loss(batch, m):
+        out = m(batch[&quot;input_ids&quot;], labels=batch[&quot;labels&quot;])
+        loss = out.loss + out.aux_loss
+        return loss, {&quot;train/loss&quot;: out.loss.item(), &quot;train/aux_loss&quot;: float(out.aux_loss)}
+
+    def save_lora_only(m, path):
+        raw = m.module if hasattr(m, &quot;module&quot;) else m
+        raw = getattr(raw, &quot;_orig_mod&quot;, raw)
+        atomic_save(
+            {
+                f&quot;{n}.lora.{k}&quot;: v.detach().cpu().half()
+                for n, mod in raw.named_modules()
+                if hasattr(mod, &quot;lora&quot;)
+                for k, v in mod.lora.state_dict().items()
+            },
+            path,
+        )
+
+    trainer = Trainer(
+        cfg,
+        model,
+        tokenizer,
+        train_ds,
+        eval_ds,
+        compute_loss=compute_loss,
+        save_weight=cfg.lora.lora_name,
+        device=device,
+        local_rank=local_rank,
+        save_weights_fn=save_lora_only,
+        optimizer_params=lora_params,
+    )
+    trainer.run()
+    return trainer</code></pre></div>
 </main>
 <script src="../../../../../assets/course.js?v=10"></script>
 </body>
