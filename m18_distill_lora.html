@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M18 · 蒸馏与 LoRA：小成本改造 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=5">
+<link rel="stylesheet" href="assets/course.css?v=6">
 </head>
 <body data-module="m18">
 
@@ -38,7 +38,7 @@
         </p>
         <div class="meta">
           <span class="chip">前置：<b>M17</b>（全参微调的代价已见，本课把它砍下来）</span>
-          <span class="chip">时长：<b>约 70 分钟</b></span>
+          <span class="chip">时长：<b>约 95 分钟</b>（含推导与术语消化）</span>
           <span class="chip">新概念：<b>知识蒸馏（KL 散度）· LoRA（低秩适配）</b></span>
           <span class="chip">对照：<code>training/distill/</code> · <code>models/lora.py</code> · <code>training/lora/</code> · <code>configs/{distill,lora}_64m.yaml</code></span>
         </div>
@@ -216,7 +216,8 @@ distill:
       <h3 id="distill-run">实测：smoke_distill 20 步，CE/KL 分项</h3>
       <p>
         冒烟配方里教师与学生都是 tiny 尺寸（教师 = <code>out/pretrain_64.pth</code>，M16 你训过的小基座；学生从零）。
-        把步数放大到 20 真跑（tiny + SFT 数据逐条模板渲染，M16 讲过数据侧慢，全程约 8 分钟）：
+        把步数放大到 20 真跑（tiny + SFT 数据逐条模板渲染，M16 讲过数据侧慢，GPU 上全程约 8 分钟；
+        CPU 学员预期 ~15 分钟，数据侧渲染占大头，数字仅供 GPU 对照）：
       </p>
       <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_distill.yaml --set train.max_steps=20 --set train.resume=false</span>
 <span class="out">10:37:33 | INFO | minimind.distill | 教师权重：pretrain_64.pth（0.53M）</span>
@@ -382,7 +383,8 @@ trainer.run()</code></pre></div>
       <p>
         注意 compute_loss 与 SFT <b>完全相同</b>——范式没换损失，换的是"谁在学"：梯度经由冻结的基座
         流到旁路的 A、B（链式法则穿过 W 的计算即可，不需要 W 本身更新）。优化器状态也只为 0.6% 的参数存在。
-        真跑 20 步（tiny、rank=8；紧跟着 distill 跑，数据页缓存已热，全程 19 秒）：
+        真跑 20 步（tiny、rank=8；紧跟着 distill 跑，数据页缓存已热，GPU 上全程 19 秒——
+        CPU 学员冷启动预期 ~3 分钟，数字仅供 GPU 对照）：
       </p>
       <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_lora.yaml --set train.max_steps=20 --set train.resume=false</span>
 <span class="out">10:45:54 | INFO | minimind.lora | LoRA rank=8：0.004M/0.537M（0.76%）</span>
@@ -677,6 +679,6 @@ print("3 checks passed")</code></pre></div>
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=5"></script>
+<script src="assets/course.js?v=6"></script>
 </body>
 </html>

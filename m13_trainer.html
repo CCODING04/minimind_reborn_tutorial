@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M13 · 训练基座：Trainer 生命周期与可观测 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=5">
+<link rel="stylesheet" href="assets/course.css?v=6">
 </head>
 <body data-module="m13">
 
@@ -53,6 +53,72 @@
         <li>说出 bf16 与 fp16 的分野（为什么 fp16 要 GradScaler 而 bf16 不要），用实测数字说明混合精度的收益随模型变大而放大；</li>
         <li>打开任意一个 <code>runs/&lt;recipe&gt;/&lt;时间戳&gt;/</code> 目录，逐件指认四件套，用 MFU 公式解释 tiny 模型为何只有 0.1%。</li>
       </ul>
+      <p><b>配套阅读：</b>本课的 unscale_→clip 顺序、no_sync、zero_grad(set_to_none)、param_groups——逐条详解（直觉/为什么/坑/最小示例）见 <a href="pytorch_guide.html">附录 · PyTorch 特殊用法指南</a>，档 A 学员随查随练。</p>
+
+      <h2 id="bridge">十分钟导览：五主题各自消费 M12 的什么</h2>
+      <p>
+        M12 备下的产物不会闲置——本课五个主题各按不同方式把它们接进引擎。先给一张"谁消费什么"的接线表，
+        十分钟读完再进正文，每一节都能对号入座：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w200">本课主题</th><th>它消费 M12 的什么产物</th></tr></thead>
+          <tbody>
+            <tr><td><b>生命周期</b>（<a href="#lifecycle">§一台引擎</a>）</td><td>数据集对象（train_ds/eval_ds）在这里被 <code>_build_loader</code> 包成 <b>DataLoader</b>：种子打乱、worker 种子（M12 的 seed_worker）与续训跳批都落在这一步；训练视图的<b>多轮上采样</b>（manifest 的轮次标记 → ×2/×3 展开）也由这台装载器逐批兑现</td></tr>
+            <tr><td><b>LR 调度</b>（<a href="#lr">§学习率</a>）</td><td>不吃 token 内容，但吃"有多少数据"：余弦分母的 total_steps 按 M12 数据集的样本数折算（per_rank_full_iters）——数据量决定调度的刻度</td></tr>
+            <tr><td><b>AMP 混合精度</b>（<a href="#amp">§AMP</a>）</td><td>不消费 M12 的产物——它吃的是 M04 的 dtype 配置与 M05 的位宽；列在这张表里是为了看清基件分工：数据侧与精度侧互不越界</td></tr>
+            <tr><td><b>decay 分组</b>（<a href="#optim">§优化器</a>）</td><td>同样不吃数据——按模型参数维度切组（M05–M09）；M12 的 labels 张量要等 compute_loss 的交叉熵按 <b>-100 忽略位</b>记账时才登场（M16 逐棒展开）</td></tr>
+            <tr><td><b>可观测</b>（<a href="#observ">§四件套</a>）</td><td>runs 四件套里 train/loss "只对回答区计账"的口径，源头是 M12 的 <b>loss_mask</b>；M12 的 stats 与数据卡不在本课落盘——它们在 M16 SFT 训练收尾写进 run_dir/data_card.json</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 id="optimizer-primer">开小灶：优化器 30 分钟（无 ML 背景先读）</h2>
+      <p>
+        有 ML 基础的同学可以直接跳到 <a href="#lifecycle">下一节</a>。这一节是给零背景同学的缓冲垫：
+        不讲 reborn 任何源码，只用一条抛物线把"训练到底在干什么"讲到能读懂
+        <a href="#optim">§优化器</a> 两行配置的程度。蒙上眼，开始下山。
+      </p>
+      <div class="callout tip">
+        <div class="co-title">💡 直觉：蒙眼下山——只能摸脚下的坡</div>
+        <p>
+          把"调参数"想象成蒙着眼在抛物线 y = x² 上找谷底（最低点 x=0）。你看不见全图，
+          唯一的信息是<b>脚下坡度</b>：y = x² 的导数是 2x，站在 x=2 处坡度是 +4——"往右会爬升"，
+          那就往左走。<b>梯度</b>（gradient）就是坡度，<b>学习率</b>（lr）就是步长：
+          每一步 x ← x − lr·坡度，这就是<b>梯度下降</b>（gradient descent）的全部。
+          真训练里全量数据太贵，每步只抽一小批估坡度——方向带噪声，这就是
+          <b>SGD</b>（stochastic gradient descent，随机梯度下降）。
+        </p>
+      </div>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m13_primer_gd.py · 手写 3 步梯度下降</span><span class="lang">python</span></div><pre class="code"><code>x, lr = 2.0, 0.1                       # 出发点 x=2，学习率 0.1
+for step in range(1, 4):
+    grad = 2 * x                       # y=x² 的导数：脚下的坡度
+    x = x - lr * grad                  # 沿坡度反方向迈一步
+    print(f"step {step}: 坡度 {grad:+.2f} → x = {x:.4f}")
+# step 1: 坡度 +4.00 → x = 1.6000
+# step 2: 坡度 +3.20 → x = 1.2800
+# step 3: 坡度 +2.56 → x = 1.0240   ← 每步离谷底 x=0 更近，且越近坡越缓、步子自动变小</code></pre></div>
+      <p>
+        带噪声的坡度让轨迹发抖，于是加<b>动量</b>（momentum）：把最近若干步的梯度做滑动平均再当方向——
+        惯性抹平来回震荡，像一颗重球滚下山，而不是醉汉蹦跳。<b>AdamW</b> 再给每个参数配两本账：
+        <b>一阶矩 m</b>（梯度的滑动平均）管方向——就是带惯性的 SGD；<b>二阶矩 v</b>（梯度平方的滑动平均）管步幅——
+        更新量取 m/√v，梯度常年很吵的参数分母大、自动小步走，信号稳定的参数大步走，
+        <b>逐参数自适应配速</b>。名字里的 W 是解耦的 weight decay（每步把参数往零拉一小把的正则项，
+        <a href="#optim">§优化器</a> 的 decay 分组就是围绕它展开的）。
+      </p>
+      <div class="codeblock"><div class="code-head"><span>/tmp/m13_primer_clip.py · clip_grad_norm_ 的手算等价</span><span class="lang">python</span></div><pre class="code"><code>import torch
+g = torch.tensor([0.3, 4.0])           # 两个参数的梯度：一个正常，一个突然"变悬崖"
+print(f"裁剪前范数 {g.norm():.2f}")     # 4.01 —— 照这个总步长迈一步就是跳崖
+clipped = g * 1.0 / g.norm()           # clip_grad_norm_(…, max_norm=1.0) 的等价手算
+print(f"裁剪后范数 {clipped.norm():.2f}，梯度 {clipped.tolist()}")
+# 裁剪后范数 1.00，方向比例仍是 0.3 : 4.0 —— 只限总步长、不改方向；
+# M01 冒烟日志里的 grad_norm 列，就是这把尺子量出的"裁剪时读数"</code></pre></div>
+      <p>
+        最后是<b>为什么 clip</b>：某个坏 batch 可能让坡度瞬间变成悬崖（梯度爆炸），一步迈出去就再也回不来——
+        <code>clip_grad_norm_</code> 把所有参数的梯度拼起来量总长度（范数），超过阈值 <code>grad_clip=1.0</code>
+        就等比例缩回安全圈。带着这套直觉回读 <a href="#optim">§优化器</a> 的 AdamW 两行配置 + M01 冒烟日志的
+        grad_norm 列，全部落地。
+      </p>
 
       <h2 id="lifecycle">一台引擎，八种范式</h2>
       <p>
@@ -607,11 +673,11 @@ def estimate_eta_minutes(elapsed_total_s, steps_done, steps_left) -&gt; float:
       </details>
 
       <details class="quiz">
-        <summary>测验 3 · betas=(0.9, 0.95) 里的 0.95 改的是什么？为什么 LLM 训练不用 PyTorch 默认的 0.999？</summary>
+        <summary>测验 3 · AdamW 的两矩分别平滑的是什么？clip_grad_norm_ 为什么必须在 unscale_ 之后？</summary>
         <div class="quiz-body">
           <div class="quiz-ans">
-            <p><b>答案：</b>0.95 是 β₂——AdamW 二阶矩（梯度平方的滑动平均）的衰减率，窗口长度 ≈ 1/(1-β₂)：默认 0.999 对应约 1000 步，0.95 收窄到约 20 步。语言模型训练早期梯度分布变化剧烈、loss 尖峰常见，长窗口的尺度估计更新太慢，短窗口能让步长配速跟得上突变、对尖峰更稳健——GPT-3 起的 LLM 惯例。β₁（动量）保持 0.9 不变。</p>
-            <p class="back">答错回看：<a href="#optim">优化器</a> 小节的 betas 段。</p>
+            <p><b>答案：</b>一阶矩 m 平滑<b>梯度本身</b>——最近若干步梯度的滑动平均，管方向（带惯性的 SGD，开小灶里"滚下山的重球"）；二阶矩 v 平滑<b>梯度的平方</b>——管每个参数的步幅，更新量 ∝ m/√v：梯度常年很吵的参数自动小步走、信号稳定的大步走，逐参数自适应配速。clip 必须在 unscale_ 之后：fp16 路径下 GradScaler 把梯度整体放大了 65536 倍，此时量出的"范数"是虚胖的——不先还原真实大小，clip 阈值 1.0 的"超长就等比例缩回安全圈"语义根本不成立，等于全程按假尺子裁剪。</p>
+            <p class="back">答错回看：<a href="#optimizer-primer">开小灶：优化器 30 分钟</a> 的两矩直觉与 clip 手算、<a href="#micro">micro step 与 optimizer step</a> 的三个"为什么"。</p>
           </div>
         </div>
       </details>
@@ -779,6 +845,6 @@ for step in range(6):
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=5"></script>
+<script src="assets/course.js?v=6"></script>
 </body>
 </html>

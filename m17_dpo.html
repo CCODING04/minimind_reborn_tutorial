@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M17 · DPO：偏好对齐 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=5">
+<link rel="stylesheet" href="assets/course.css?v=6">
 </head>
 <body data-module="m17">
 
@@ -38,7 +38,7 @@
         </p>
         <div class="meta">
           <span class="chip">前置：<b>M16</b>（模型会说话了，本课教它挑更好的说法）</span>
-          <span class="chip">时长：<b>约 80 分钟</b></span>
+          <span class="chip">时长：<b>约 110 分钟</b>（含推导与术语消化）</span>
           <span class="chip">新概念：<b>偏好优化（Bradley-Terry→DPO）· 冻结参考模型</b></span>
           <span class="chip">对照：<code>training/dpo/{workflow,loss}.py</code> · <code>configs/dpo_64m.yaml</code> · <code>runs/dpo_full/</code></span>
         </div>
@@ -103,7 +103,8 @@
         <summary>📐 折叠深读：从 Bradley-Terry 到 DPO（可跳过，不影响主线）</summary>
           <p>
             主线只需要最终损失。但 M01 测验 2 埋的话("M17 推 DPO 公式时这个数字会再次出现")在这里兑现——
-            四小步，每步只换一个变量。
+            四小步，每步只换一个变量。推导链出自
+            <a href="https://arxiv.org/abs/2305.18290" target="_blank" rel="noopener">DPO 原论文 arXiv:2305.18290</a>（论文 §4，变量记号略有出入、结构一致）。
           </p>
           <p>
             <b>第 1 步：偏好也是概率。</b>"chosen 比 rejected 好"这个人类判断，最经典的刻度是
@@ -128,6 +129,19 @@
             $ \pi^*(y|x) \propto \pi_{\mathrm{ref}}(y|x)\, e^{r(x,y)/\beta} $。
             两边取对数、移项，奖励被表示成了<b>两个模型的对数概率比</b>：
           </p>
+          <details>
+            <summary>展开：这个解析最优解是怎么解出来的（三步，可跳过）</summary>
+            <p>
+              ① 把 KL 惩罚并进目标（β 已在式子里，扮演拉格朗日乘子的倒数角色）后，
+              对<b>每个候选 y</b> 的概率 $\pi(y|x)$ 逐点求导并置零。
+              ② 解得最优策略 $ \pi^*(y|x) \propto \pi_{\mathrm{ref}}(y|x)\, e^{r(x,y)/\beta} $——
+              参考分布按奖励做<b>指数加权</b>：奖励越高加权越猛，β 越小加压力道越大
+              （与后文"β 是敏感度旋钮"互证）。③ 两边取对数：
+              $ \log\dfrac{\pi^*}{\pi_{\mathrm{ref}}} = \dfrac{r}{\beta} + \mathrm{const}(x) $，
+              移项即正文公式——归一化常数只依赖 x，被吸进 const，而它在下一步 Bradley-Terry 的
+              <b>差分</b>里恰好相消，所以敢略去不写。
+            </p>
+          </details>
           <p>$$ r(x,y) = \beta \log \frac{\pi^*(y|x)}{\pi_{\mathrm{ref}}(y|x)} + \text{const} $$</p>
           <p>
             这一步是全部魔法：奖励模型 r 被消掉了——"偏离参考模型多远"本身就是奖励的等价表达。
@@ -350,7 +364,8 @@ dpo:
 
       <h2 id="labs">实测：三档学习率，与 64M 的偏好曲线</h2>
       <p>
-        M01 冒烟只跑了 4 步 DPO（loss 0.6931→0.6908）。本课放大到 40 步，做三档学习率对照。
+        M01 冒烟只跑了 4 步 DPO（loss 0.6931→0.6908）。本课放大到 40 步，做三档学习率对照
+        （每档 40 步 GPU 上秒级完成；CPU 学员预期每档 ~5 分钟——两份模型各一次前向，数字仅供 GPU 对照）。
         <b>实验一</b>，用"正经"的 DPO 学习率 4e-8：
       </p>
       <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_dpo.yaml --set train.max_steps=40 --set train.resume=false --set train.log_interval=4 --set train.save_interval_steps=1000 --set train.learning_rate=4e-8</span>
@@ -666,6 +681,6 @@ pol[1, -1] -= 0.5; loss2 = dpo_loss(ref, pol, mask, beta=0.15)</code></pre></div
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=5"></script>
+<script src="assets/course.js?v=6"></script>
 </body>
 </html>

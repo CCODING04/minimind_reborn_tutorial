@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M20 · 推理栈深潜：采样、停止与引擎 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=5">
+<link rel="stylesheet" href="assets/course.css?v=6">
 </head>
 <body data-module="m20">
 
@@ -52,6 +52,7 @@
         <li>对照 ChatSession 的 history_budget 滑窗与训练侧 C1 截断，复述"训练怎么截，推理就怎么忘"；</li>
         <li>把 engine 四层分层对应到 serve.py 的 OpenAI 风格端点，真跑一次服务并读懂流式 delta 与 M02 签名 bug 的终章。</li>
       </ul>
+      <p><b>配套阅读：</b>本课的 top_k 阈值、top_p 的 cumsum+scatter、multinomial+Generator——逐条详解（直觉/为什么/坑/最小示例）见 <a href="pytorch_guide.html">附录 · PyTorch 特殊用法指南</a>，档 A 学员随查随练。</p>
 
       <h2 id="map">开工地图：M03 的②③④⑥站，今天拆到螺钉级</h2>
       <p>
@@ -635,7 +636,12 @@ for rp in (1.0, 1.5):
             <li><code>14 passed</code>，无 failed / error；</li>
             <li>插桩脚本打出 <code>调用次数 = 4</code> 与 <code>= 1</code> 两行——generate 路径每步两次、直调一次，缝隙可数；</li>
             <li>五连数值例子脚本能跑通，五个函数各有可复算的输出；</li>
-            <li>变式练习完成预测→观察闭环（重复率对比两行都在）。</li>
+            <li>变式练习完成预测→观察闭环（重复率对比两行都在）；</li>
+            <li>真跑一次服务（对应"学完你能"第⑤条）：按 <a href="#engine-serve">engine 与 serve</a> 一节的
+              <code>uv run python tools/serve.py --port 8998</code> 起服，一条
+              <code>curl -s -X POST …/v1/chat/completions</code> 冒烟请求（非流式）拿到非空 JSON——
+              HTTP 200 且 <code>choices[0].message.content</code> 非空即算过（CPU 也可跑，权重加载约 20 秒；
+              看完日志记得收进程）。</li>
           </ul>
           <details>
             <summary>失败了怎么办？（按症状分流）</summary>
@@ -692,6 +698,6 @@ for rp in (1.0, 1.5):
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=5"></script>
+<script src="assets/course.js?v=6"></script>
 </body>
 </html>

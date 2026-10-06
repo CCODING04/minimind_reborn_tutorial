@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M19 · RL 一览：rollout 的世界 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=5">
+<link rel="stylesheet" href="assets/course.css?v=6">
 </head>
 <body data-module="m19">
 
@@ -38,7 +38,7 @@
         </p>
         <div class="meta">
           <span class="chip">前置：<b>M18</b>（M12 的 RLAIF 数据集与 M17 的参考模型将再次登场）</span>
-          <span class="chip">时长：<b>约 75 分钟</b></span>
+          <span class="chip">时长：<b>约 105 分钟</b>（含推导与术语消化）</span>
           <span class="chip">新概念：<b>rollout 型训练 · 组相对优势（GRPO）</b></span>
           <span class="chip">对照：<code>training/rollout.py</code> · <code>training/grpo/workflow.py</code> · <code>training/{ppo,agent}/</code> · <code>training/common/{rl_utils,rewards}.py</code></span>
         </div>
@@ -355,6 +355,17 @@ else:                                         # 分支 B：grpo 双面 clip（PP
     clipped = torch.clamp(ratio, 1 - rl.epsilon, 1 + rl.epsilon)
     per_token_loss = -(torch.min(ratio * advantages.unsqueeze(1),
                                  clipped * advantages.unsqueeze(1)) - rl.beta * per_token_kl)</code></pre></div>
+      <div class="callout tip">
+        <div class="co-title">💡 为什么长这样——重要性采样（importance sampling）</div>
+        <p>
+          ratio = exp(new − old) 不是凑出来的系数。rollout 的数据是<b>旧策略</b>采的，
+          要回答的问题却是问<b>新策略</b>的：数据是旧口径、期望要新口径。exp(Δ) 恰好是
+          "同一件事在新旧策略下的<b>概率倍数</b>"——拿它给旧数据逐 token 加权，旧口径下算的期望
+          就换算回新策略口径（重要性权重 w = π_new/π_old）。两个分支的 clip / cispo 钳制
+          都是在给这个倍数上保险：离 1 太远说明"新策略想把这条数据的账改写成几十倍"，
+          这样的更新不可信，掐掉。
+        </p>
+      </div>
       <p>
         一句话讲清共同点与差别：两个分支都在做"高优势回答的 logp 推高、低优势压低，
         同时按 β=0.1 扣一笔离参考模型太远的罚金"（KL 锚——回收 M17：参考模型是 SFT 权重的冻结副本，
@@ -418,7 +429,7 @@ else:                                         # 分支 B：grpo 双面 clip（PP
 <span class="out">10:37:31 | INFO | minimind.grpo | 达到 max_steps=6 截断（冒烟/调试预算）</span>
 <span class="ok">10:37:31 | INFO | minimind.rl | 已保存 grpo_64.pth（epoch=1 step=6）</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · seed=42 · 存档 runs/smoke_grpo/20261001_103728]</b>
-      全程约 3 秒（含启动；纯 CPU 也能跑）。另注：与 2 步版（存档 runs/smoke_grpo/20261001_103703）相比，
+      全程约 3 秒（含启动；纯 CPU 也能跑——CPU 学员预期 ~1 分钟，启动与数据装载占大头，数字仅供 GPU 对照）。另注：与 2 步版（存档 runs/smoke_grpo/20261001_103703）相比，
       前两行逐位相同——同 seed 同数据序，M14 的确定性纪律在 RL 循环里同样成立。</p>
       <p>四个读数，每个都对回正文：</p>
       <ul>
@@ -665,7 +676,7 @@ response_old_logps.extend([0.0] * len(obs_delta))</code></pre></div>
       <div class="accept" id="accept">
         <div class="acc-head">✅ M19 验收：smoke_grpo 黑箱跑通 + RL 前三问自查</div>
         <div class="acc-body">
-          <p><b>本课需要：</b>RL 数据（<code>make download-rl</code>，即 rlaif_mini + agent_rl_mini 两个注册名，需 <code>uv sync --extra download</code>）；smoke_grpo 全程约 3 秒，CPU 可跑。</p>
+          <p><b>本课需要：</b>RL 数据（<code>make download-rl</code>，即 rlaif_mini + agent_rl_mini 两个注册名，需 <code>uv sync --extra download</code>）；smoke_grpo 全程 GPU 上约 3 秒，CPU 可跑（CPU 学员预期 ~1 分钟，数字仅供 GPU 对照）。</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下两步。第一步，RL 数据就位（rlaif_mini 提示集 + agent 轨迹）：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">make download-rl</span>
 <span class="out">uv run python tools/download_data.py --name rlaif_mini</span>
@@ -752,6 +763,6 @@ response_old_logps.extend([0.0] * len(obs_delta))</code></pre></div>
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=5"></script>
+<script src="assets/course.js?v=6"></script>
 </body>
 </html>

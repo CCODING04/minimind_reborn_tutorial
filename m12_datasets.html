@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M12 · Dataset 家族与 loss_mask | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=5">
+<link rel="stylesheet" href="assets/course.css?v=6">
 </head>
 <body data-module="m12">
 
@@ -870,8 +870,9 @@ print(f"渲染变体 {len(texts)} 种；全长 {len(ids)} token；监督 {sum(1 
 
       <p>
         至此第三篇收官：文本有了刀（M10）、仓库有了索引（M11）、样本有了着色法（本课）——<code>{"input_ids", "labels"}</code>
-        已经是 Trainer 能直接消费的形态。下一课 M13 打开第四篇：训练基座 Trainer 的生命周期、学习率纯函数、AMP 混合精度，
-        以及本课埋下的伏笔如何被消费——DataLoader 的 worker 种子、stats 与数据卡怎么进训练侧的可观测。
+        已经是 Trainer 能直接消费的形态。下一课点火 Trainer——DataLoader 的 num_workers 与预取在
+        <a href="m13_trainer.html#lifecycle">M13 的预取器对照</a>与 <a href="m13_trainer.html#eta">num_workers 度量实验</a>兑现，
+        data_card 数据卡在 <a href="m16_pretrain_sft.html#tiny-sft">M16 SFT 训练收尾</a>落盘时登场。
       </p>
 
       <section class="glossary" id="glossary">
@@ -897,6 +898,6 @@ print(f"渲染变体 {len(texts)} 种；全长 {len(ids)} token；监督 {sum(1 
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=5"></script>
+<script src="assets/course.js?v=6"></script>
 </body>
 </html>

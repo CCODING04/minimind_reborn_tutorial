@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M07 · Attention：GQA、QK-Norm 与三条路径 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=5">
+<link rel="stylesheet" href="assets/course.css?v=6">
 </head>
 <body data-module="m07">
 
@@ -52,6 +52,7 @@
         <li>默写<b>三条执行路径</b>的判定条件与场景，动手证明同权重 fp32 下三路径 allclose；</li>
         <li>✏️ 补全路径③的三个关键行（缩放 / 因果 mask / softmax 维度），自测脚本验证与路径①一致。</li>
       </ul>
+      <p><b>配套阅读：</b>本课的 view/reshape 之辨、unsqueeze 广播、masked_fill、triu 因果块——逐条详解（直觉/为什么/坑/最小示例）见 <a href="pytorch_guide.html">附录 · PyTorch 特殊用法指南</a>，档 A 学员随查随练。</p>
 
       <h2 id="qkv">Q/K/V：先把注意力当一次检索</h2>
       <p>注意力（attention）要解决的问题是：生成第 $t$ 个 token 时，前文 $t$ 个 token <b>各自该贡献多少</b>。最直觉的模型是一次检索：</p>
@@ -660,6 +661,6 @@ for kv in (4, 8):   # 4 = GQA（n_rep=2），8 = MHA（n_rep=1）
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=5"></script>
+<script src="assets/course.js?v=6"></script>
 </body>
 </html>

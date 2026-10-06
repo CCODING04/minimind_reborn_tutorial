@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M05 · 地基件：RMSNorm 与 RoPE | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=5">
+<link rel="stylesheet" href="assets/course.css?v=6">
 </head>
 <body data-module="m05">
 
@@ -52,6 +52,7 @@
         <li>沿 freqs <code>(end, dim/2)</code> → cos/sin <code>(end, dim)</code> → q/k <code>(B, T, H, D)</code> 的 shape 链路读懂两个 RoPE 函数；</li>
         <li>讲清 YaRN 折叠深读里"常数曾是 2048"为什么是 bug（真实训练窗 380），把 <code>test_rope_scaling.py</code> 的 6 个测试当回归锚点。</li>
       </ul>
+      <p><b>配套阅读：</b>本课的 mean(-1, keepdim=True)、x.float() 精度纪律、零拷贝切片——逐条详解（直觉/为什么/坑/最小示例）见 <a href="pytorch_guide.html">附录 · PyTorch 特殊用法指南</a>，档 A 学员随查随练。</p>
 
       <h2 id="map">从尺寸到零件：⑤站的第一块砖</h2>
       <p>
@@ -587,6 +588,6 @@ print('eps=0   :', RMSNorm(768, eps=0.0)(x).abs().sum().item())"</span></code></
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=5"></script>
+<script src="assets/course.js?v=6"></script>
 </body>
 </html>

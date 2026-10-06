@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M21 · 评测与官方对照 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=5">
+<link rel="stylesheet" href="assets/course.css?v=6">
 </head>
 <body data-module="m21">
 
@@ -106,7 +106,7 @@
         <p>
           工业界的完整评测分三层：自动指标（PPL、重复率）→ 客观基准（lm-evaluation-harness 上的
           ceval / arc 等选择题集，有唯一答案可自动判分）→ 人工/模型裁判（LLM-as-judge 给开放式回答打分）。
-          官方 minimind-3 发布时用了第二层（<b>[存档 重构报告 §9.4]</b>：ceval 24.89 / arc 28.49）；
+          官方 minimind-3 发布时用了第二层（<b>[存档 重构报告 §9.4 · 项目仓库 docs/index.html]</b>：ceval 24.89 / arc 28.49）；
           reborn 没有接入 harness，本课的三把尺都在第一、三层之间——每个数字都要记得它是<b>哪把尺量出来的</b>，
           越界解读（拿 PPL 排名"谁更聪明"）是评测最常见的翻车姿势。
         </p>
@@ -313,7 +313,7 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
       </div>
       <p class="prov"><b>[存档 out/official_compare.md · 2026-09-24 · 2×RTX 4090 · fp16]</b>
       两边结构逐项一致（hidden 768 / 8 层 / 8 注意头 4 KV 头 / head_dim 96 / 词表 6400，91 个
-      state_dict 键逐一对上——[存档 重构报告 §9.1]）。这意味着重构没造生态孤岛：官方权重能直接进
+      state_dict 键逐一对上——[存档 重构报告 §9.1 · 项目仓库 docs/index.html]）。这意味着重构没造生态孤岛：官方权重能直接进
       我们的推理/训练栈，我们的权重官方也能吃。</p>
       <p>
         <b>Phase B 双实现一致性</b>：同一份官方 full_sft_768 权重，分别用我们的 generator（M20，
@@ -341,7 +341,7 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
         fp16 下官方 prefill（对 prompt 的首次前向，M03 的术语）走 SDPA 融合（M07 的路径三）、
         我们走 manual fp32 打分，两条浮点路径的
         舍入差被 8 层放大；把一致率最低的两例换到 <b>fp32 重跑，逐位一致率 100%</b>
-        （<b>[存档 重构报告 §9.2 · 2026-09]</b>）。逻辑差异是刚性的（换精度也不消失），浮点差异是
+        （<b>[存档 重构报告 §9.2 · 2026-09 · 项目仓库 docs/index.html]</b>）。逻辑差异是刚性的（换精度也不消失），浮点差异是
         柔性的（升精度即消失）——这正是 M07 验证 manual/SDPA 三条路径等价时用过的同款思路：
         <b>等价性要用"能放大差异的口径"去攻击，攻击不倒才算数</b>。顺带地，贪心输出对上了，
         也反向验证了 M20 推理栈的正确性——KV cache 预分配没有偷偷改数学。
@@ -362,7 +362,7 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
           </tbody>
         </table>
       </div>
-      <p class="prov"><b>[存档 重构报告 §9.3 · 2026-09-24 · 评测语料 = mini pretrain val 20 batch + sft val 10 batch · era1 权重]</b>
+      <p class="prov"><b>[存档 重构报告 §9.3 · 2026-09-24 · 评测语料 = mini pretrain val 20 batch + sft val 10 batch · era1 权重 · 项目仓库 docs/index.html]</b>
       两个反直觉读数要展开：①pretrain 我们"反超"官方（2.18 vs 2.35）——不是代码更强，是<b>混杂因素</b>
       （对照实验没冻住的外来变量）：官方在 full 10GB 语料训练，对 mini 语料的 val 切片分布不匹配，
       我们在同一份 mini 语料上训练天然占便宜，评测集换到 full 语料结论会反转。②SFT 官方领先 0.16 CE——
@@ -591,6 +591,6 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=5"></script>
+<script src="assets/course.js?v=6"></script>
 </body>
 </html>
