@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M12 · Dataset 家族与 loss_mask | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=4">
+<link rel="stylesheet" href="assets/course.css?v=5">
 </head>
 <body data-module="m12">
 
@@ -16,7 +16,7 @@
     <span>minimind_reborn 教程<span class="crumb"> · 第三篇 数据</span></span>
   </a>
   <div class="progress-wrap">
-    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span>完成 <span id="topbar-progress">0/23</span></span>
     <span class="progress-bar"><i></i></span>
     <a class="map-link" href="index.html#map">课程地图</a>
   </div>
@@ -811,6 +811,35 @@ print(f"渲染变体 {len(texts)} 种；全长 {len(ids)} token；监督 {sum(1 
         </div>
       </div>
 
+      <div class="btrack-ch">
+        <div class="ch-title">✍️ 自写挑战 · B 轨 <code>T6</code>：手写 find_response_spans</div>
+        <p>
+          任务书：从空白文件 <code>my_impl/loss_mask.py</code> 开始，手写纯函数
+          <code>find_response_spans(input_ids: list[int], prefix_ids: list[int], suffix_ids: list[int]) -&gt; list[tuple[int, int]]</code>——
+          对 token 序列做模式扫描，返回全部完整 assistant 回答的 <b>[start, end) 半开区间</b>：start 在回答首 token
+          （prefix 之后），end 含结尾 suffix；只有 prefix 开头、suffix 被截断丢失的<b>尾部残段不计入</b>区间
+          （C2 语义——残段学不到"把话说完"）。参照 <code>src/minimind_reborn/data/loss_mask.py</code>（本体是
+          <code>scan_response_spans</code>，额外返回残段计数 dangling；<code>find_response_spans</code> 取其区间部分）。
+        </p>
+        <details>
+          <summary>提示 1 · 方向</summary>
+          <p>两指针扫描：外层从头找 prefix 的落点，找到后从 prefix 尾部起向后找 suffix 的落点——
+            找到则入区间并跳到 suffix 之后继续（防重叠匹配）；扫到头都没找到 suffix 就是残段，直接停。</p>
+        </details>
+        <details>
+          <summary>提示 2 · 表达式级</summary>
+          <p>匹配判定一行：<code>seq[i : i + len(pattern)] == pattern</code>（Python 切片越界自动截断，天然安全）；
+            区间入表：<code>spans.append((i + len(prefix_ids), end + len(suffix_ids)))</code>。</p>
+        </details>
+        <p>
+          对拍：脚本模板见 <a href="btrack.html">B 轨总纲</a>——合成小序列（含多轮、含截断残段）逐 case 对照
+          <code>from minimind_reborn.data.loss_mask import find_response_spans</code>。裁判测试
+          <code>tests/test_data/test_loss_mask.py</code>（先跑一遍看参考行为：
+          <code>uv run pytest tests/test_data/test_loss_mask.py -q</code>——单轮/多轮/残段三组用例用真实
+          tokenizer 逐 token 断言，正是你要对齐的三种形态）。
+        </p>
+      </div>
+
       <div class="accept" id="accept">
         <div class="acc-head">✅ M12 验收</div>
         <div class="acc-body">
@@ -868,6 +897,6 @@ print(f"渲染变体 {len(texts)} 种；全长 {len(ids)} token；监督 {sum(1 
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=4"></script>
+<script src="assets/course.js?v=5"></script>
 </body>
 </html>

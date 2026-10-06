@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>B 轨 · 自写挑战总纲 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=5">
+</head>
+<body data-page="btrack">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · B 轨 · 自写挑战</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/23</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <p><a href="m00_week0.html">← M00 · Week-0 准备</a> ｜ 本页是附录，不在 22 个主线模块之列 ｜ <a href="m01_get_started.html">进入 M01 →</a></p>
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-ms">B 轨</span><span>附录 · 自写挑战</span></div>
+        <h1>B 轨 · 自写挑战总纲</h1>
+        <p class="lede">
+          A 轨教你怎么<b>读</b>，B 轨考你怎么<b>写</b>：走完一个模块后，不看源码，凭讲解把那个组件
+          自己写出来，再与 reborn 逐张量对拍。八个任务，一条终点 🏁D——用自己的手，
+          让官方权重在你的代码里说出第一句话。
+        </p>
+        <div class="meta">
+          <span class="chip">定位：<b>附录页 · A 轨主线不变</b></span>
+          <span class="chip">任务数：<b>8 个 · 每个约 20-60 分钟</b></span>
+          <span class="chip">终点：<b>🏁D 自己的模型说话</b></span>
+          <span class="chip">加入时机：<b>读到 M05 即可开始（BT1）</b></span>
+        </div>
+      </header>
+
+      <h2 id="manifesto">B 轨宣言</h2>
+      <p>
+        这门课有两条轨道，不是两个阵营：
+        <b>A 轨（跟读主线）不变</b>——22 个模块、绿灯验收、数字溯源，一门都不改、一课都不少；
+        <b>B 轨（自写挑战）是叠加项</b>——每个挑战对应一个已读模块，规则只有一句话：
+      </p>
+      <div class="callout note">
+        <div class="co-title">📐 B 轨规则：先自己写、再与 reborn 对拍</div>
+        <p>
+          读完某模块 → <b>合上源码</b>，只凭页内讲解与自己的笔记，把该组件写出来 →
+          用统一的<b>对拍脚本</b>把你的实现与 reborn 的实现喂同一输入 →
+          <code>torch.testing.assert_close</code> 全绿，任务完成。
+          reborn 在 B 轨里从"教材"升格为<b>"对拍答案"</b>——它仍然是你最终要对齐的那份真实工程代码，
+          这不违背课程宪法（跟读真实代码、绿灯验收、数字溯源）：B 轨只是把"读懂它"升级成"默写出与它逐值等价的它"。
+        </p>
+      </div>
+      <p>
+        为什么值得：A 轨的验收证明你<b>读懂了</b>，B 轨的对拍证明你<b>写得出</b>——
+        两者的差距就是"看会了"与"学会了"的差距。默写会失败在你想不到的地方（dtype、边界、就地改写），
+        而每一处失败都是 A 轨读漏的细节。
+      </p>
+
+      <h2 id="tasks">八任务总表</h2>
+      <p>
+        每个任务的"对拍裁判"是 reborn 仓库里真实服役的测试文件——你的实现要么通过它，
+        要么用它揭示差距。任务与主线模块一一对应，<b>先读后写</b>（读 = 对应模块的 A 轨）：
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>任务</th><th>模块</th><th>组件（你要写的）</th><th class="u-w200">对拍裁判（reborn 测试文件）</th><th>预计耗时</th></tr></thead>
+          <tbody>
+            <tr><td><b>BT1</b></td><td><a href="m05_layers.html">M05</a></td><td>RMSNorm 与 RoPE（含 YaRN 频率表）</td><td><a href="codeview/tests/test_models/test_rope_scaling.py.html"><code>tests/test_models/test_rope_scaling.py</code></a></td><td>20-30 min</td></tr>
+            <tr><td><b>BT2</b></td><td><a href="m06_kv_cache.html">M06</a></td><td>KV Cache（预分配 + 就地切片）</td><td><a href="codeview/tests/test_models/test_kv_cache.py.html"><code>tests/test_models/test_kv_cache.py</code></a></td><td>30-45 min</td></tr>
+            <tr><td><b>BT3</b></td><td><a href="m07_attention.html">M07</a></td><td>Attention（GQA · QK-Norm · 三条路径等价）</td><td><a href="codeview/tests/test_models/test_model.py.html"><code>tests/test_models/test_model.py</code></a>（SDPA/手动等价用例）</td><td>45-60 min</td></tr>
+            <tr><td><b>BT4</b></td><td><a href="m08_ffn_moe.html">M08</a></td><td>FFN（SwiGLU 密集版 + MoE 路由与 aux loss）</td><td><a href="codeview/tests/test_models/test_model.py.html"><code>tests/test_models/test_model.py</code></a>（MoE aux loss 用例）</td><td>30-45 min</td></tr>
+            <tr><td><b>BT5</b></td><td><a href="m09_model.html">M09</a></td><td>组装 <code>MiniMindForCausalLM</code>（参数账本 + tied）</td><td><a href="codeview/tests/test_models/test_model.py.html"><code>tests/test_models/test_model.py</code></a>（形状/损失、tied、权重往返）</td><td>45-60 min</td></tr>
+            <tr><td><b>BT6</b></td><td><a href="m12_datasets.html">M12</a></td><td>loss_mask（多轮 span + 悬空截断）</td><td><a href="codeview/tests/test_data/test_loss_mask.py.html"><code>tests/test_data/test_loss_mask.py</code></a></td><td>20-40 min</td></tr>
+            <tr><td><b>BT7</b></td><td><a href="m13_trainer.html">M13</a></td><td>训练基座件（lr 调度 · 优化器分组 · 六件套存取）</td><td><a href="codeview/tests/test_training/test_common.py.html"><code>tests/test_training/test_common.py</code></a></td><td>30-45 min</td></tr>
+            <tr><td><b>BT8</b></td><td><a href="m20_inference.html">M20</a></td><td>采样链（top_k · top_p · 重复惩罚 · 三重停止）</td><td><a href="codeview/tests/test_inference/test_generator.py.html"><code>tests/test_inference/test_generator.py</code></a></td><td>30-45 min</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[事实核对]</b> 裁判路径按 reborn 仓库 <code>tests/</code> 实际目录逐个核实（2026-10-06）。仓库没有独立的 test_layers.py / test_attention.py / test_feedforward.py / test_sampling.py——地基件与注意力的覆盖在 <code>test_rope_scaling.py</code> 与 <code>test_model.py</code>，采样在 <code>test_generator.py</code>；每个任务的详细挑战块（含提示折叠）随对应模块页发布。</p>
+
+      <h2 id="template">通用对拍脚本模板</h2>
+      <p>
+        八个任务共用同一个对拍骨架，五步纪律：<b>固定 seed → 同一输入 → 双实现前向 →
+        assert_close → 打印 PASS</b>。以 BT1 的 RMSNorm 为例（把两个 import 换成当次任务的组件即可复用全程）：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>对拍模板 · 每个任务把"裁判"与"选手"换成本次的组件</span><span class="lang">python</span></div><pre class="code"><code><span class="k">import</span> torch
+<span class="k">from</span> minimind_reborn.models.layers <span class="k">import</span> RMSNorm    <span class="c"># 裁判：reborn 参考实现</span>
+<span class="k">from</span> my_model.layers <span class="k">import</span> RMSNorm <span class="k">as</span> MyRMSNorm     <span class="c"># 选手：你自己的实现</span>
+
+torch.manual_seed(<span class="n">42</span>)              <span class="c"># ① 固定 seed：两边吃同一份随机性</span>
+x = torch.randn(<span class="n">3</span>, <span class="n">7</span>, <span class="n">32</span>)          <span class="c"># ② 同一输入（batch/seq 用质数，学 conftest 防 shape 硬编码）</span>
+
+ref = <span class="f">RMSNorm</span>(<span class="n">32</span>)(x)               <span class="c"># ③ 同输入分别前向</span>
+mine = <span class="f">MyRMSNorm</span>(<span class="n">32</span>)(x)
+
+torch.testing.assert_close(mine, ref, rtol=<span class="n">1e-5</span>, atol=<span class="n">1e-6</span>)  <span class="c"># ④ 逐元素对拍</span>
+<span class="f">print</span>(<span class="s">"PASS"</span>)                      <span class="c"># ⑤ 绿灯——唯一的成功输出</span></code></pre></div>
+      <div class="callout tip">
+        <div class="co-title">💡 三条对拍礼仪</div>
+        <p>
+          <b>容差写死并保留</b>——<code>rtol/atol</code> 是任务的一部分，改大容差换 PASS 是自欺；
+          <b>输入要刁钻</b>——照抄 conftest 的癖好：batch 用质数 3、seq 用 7、维度用 32，专打抄形状的写法；
+          <b>PASS 之外的一切输出都算线索</b>——<code>assert_close</code> 的失败信息会点名第一处不匹配的位置与量级，
+          它就是你的下一步路标。
+        </p>
+      </div>
+
+      <h2 id="help">求助梯度（四层，只升不跳）</h2>
+      <p>卡住是 B 轨的常态——按层级求助，<b>每层停留够久再升下一层</b>：</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>层级</th><th>动作</th><th class="u-w200">允许看到什么</th></tr></thead>
+          <tbody>
+            <tr><td><b>① 重读</b></td><td>回对应模块的 A 轨小节再读一遍——任务说明书就写在那里</td><td>全部讲解、图示与源码讲解（重读不扣分）</td></tr>
+            <tr><td><b>② 提示</b></td><td>展开该任务的<b>提示折叠块</b>（在各模块页的挑战块内）</td><td>一句话方向提示，不含代码</td></tr>
+            <tr><td><b>③ 签名</b></td><td>打开 reborn 对应函数，<b>只看签名与 docstring，不看函数体</b>——看完关掉再写</td><td>参数名、类型、默认值、返回形状</td></tr>
+            <tr><td><b>④ 规格</b></td><td>跑该任务的对拍测试文件，读测试<b>怎么使用</b>这个组件——测试即行为规格</td><td>输入构造方式与断言的不变量（仍不许抄实现）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>四层用尽仍未通过：回 A 轨把整个模块重读一遍再战——那不叫失败，叫发现了一个读漏的盲区。</p>
+
+      <h2 id="finish-d">🏁D 终点定义</h2>
+      <div class="milestone">
+        <div class="ms-head"><span class="flag">🏁</span>
+          <div>
+            <div class="ms-title">里程碑 D · 自己的模型说话</div>
+            <div class="ms-sub">与 🏁A 同一验收口径，但实现是你自己的</div>
+          </div>
+        </div>
+        <div class="ms-body">
+          <p>
+            用 B 轨八件套中的四件——<b>M05</b>（RMSNorm 与 RoPE）、<b>M07</b>（Attention）、
+            <b>M08</b>（FFN）、<b>M09</b>（组装）——拼出一个<b>最小 CausalLM</b>，
+            然后让它开口：
+          </p>
+          <ul class="checklist">
+            <li><b>① 四件套先各自过关</b>：BT1 / BT3 / BT4 / BT5 的对拍脚本全部 <code>PASS</code>——地基不牢的终点站没有意义；</li>
+            <li><b>② 官方权重 strict 互通</b>：你的模型以 <code>strict=True</code> 加载 <code>out/official/pretrain_768.pth</code>——无缺失 key、无多余 key，参数量 63.91M（与 <a href="m09_model.html#milestone-a">🏁A 的验收口径</a>完全一致）；</li>
+            <li><b>③ 贪心生成本课程的第一句话</b>：temperature=0 逐 token 贪心解码，把你手写的模型生成的第一句话记下来——它就是你 B 轨的毕业证书；</li>
+            <li><b>④ 口径声明</b>：与 🏁A 的差别只有一个——<b>实现是谁写的</b>。验收一样硬：都是可判定的绿灯，不是"感觉会了"。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h2 id="graduation">与 M22 毕业实验的关系</h2>
+      <p>
+        走完 B 轨的人，毕业实验（<a href="m22_graduation.html#gradexp">M22</a>）相当于<b>直接锁定"复现对比"题</b>：
+        你的实现与 reborn 的对拍数据（哪里逐值一致、哪里有残差、什么边缘输入下分叉）就是现成的自变量与因变量，
+        不必再另找选题——按 M22 的四步模板（假设 / 设计 / 数据 / 结论）把"两套实现的差异及其来源"写成一份有数据支撑的报告即可。
+        对 A 轨同学这是一道要现攒数据的题，对 B 轨完成者它已经躺在你的对拍日志里。
+      </p>
+
+      <p><a href="m00_week0.html">← M00 · Week-0 准备</a> ｜ 回到主线继续跟读 ｜ <a href="m01_get_started.html">进入 M01 →</a></p>
+    </div>
+  </main>
+
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script src="assets/course.js?v=5"></script>
+</body>
+</html>

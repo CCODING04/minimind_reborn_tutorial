@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M00 · Week-0 准备：环境与前置自测 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=5">
+</head>
+<body data-module="m00">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 第 0 篇 准备</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/23</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content">
+
+      <header class="unit-head">
+        <div class="kicker"><span class="badge-m">M00</span><span>第 0 篇 · 准备</span></div>
+        <h1>Week-0 准备：环境与前置自测</h1>
+        <p class="lede">
+          上一课？没有——这里是课程<b>真正的第 0 步</b>。用约 40 分钟做三件事：
+          判断自己属于三档受众中的哪一档、把最小工具箱清点一遍、点亮三盏版本绿灯。
+          三件事做完，M01 的"11 秒跑通全链路"对你就只是一次普通的敲回车。
+        </p>
+        <div class="meta">
+          <span class="chip">前置：<b>无（真正的零门槛入口）</b></span>
+          <span class="chip">时长：<b>约 40 分钟</b></span>
+          <span class="chip">新概念：<b>三档受众自测 · B 轨</b></span>
+          <span class="chip">对照：<code>uv</code> · <code>git</code> · <code>python</code> 三件工具的版本自检</span>
+        </div>
+      </header>
+
+      <h2 id="self">三档受众与自测</h2>
+      <p>
+        这门课的门槛不在数学、不在硬件，在<b>你从哪一档起步</b>。先诚实回答一个问题：
+        下面三行描述里，哪一行是你？
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">你是哪一档</th><th>判断标准</th><th>你的路线</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><b>① 完全零基础</b></td>
+              <td>没写过 Python，或写了也看不懂 <code>for</code> 循环和函数定义</td>
+              <td>先走<a href="#resources">资源清单</a>的先修路线（不必通读，够用即回），再回到本页点亮三盏绿灯，然后进 M01。慢即是快。</td>
+            </tr>
+            <tr>
+              <td><b>② 会 Python、不懂 PyTorch</b></td>
+              <td>能读懂函数、类、列表推导；没碰过张量与 <code>nn.Module</code></td>
+              <td><b>主线即为你设计</b>：PyTorch 即需即讲 + 附录速查（B5 将并入）。完成本页 <a href="#pyself">Python 自测三小题</a>即可进 M01，不必先学 PyTorch。</td>
+            </tr>
+            <tr>
+              <td><b>③ 会 PyTorch</b></td>
+              <td>写过 <code>nn.Module</code> 子类，知道 <code>forward</code> 与 <code>state_dict</code></td>
+              <td>本页只做<a href="#accept">验收三盏绿灯</a>（约 5 分钟），然后<b>直接 M01</b>。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout note">
+        <div class="co-title">📐 为什么要先分档？</div>
+        <p>
+          因为"零基础"不是一种状态，是三种完全不同的起点。把第①档的人直接扔进 M05 的 RoPE，
+          和把第③档的人按住重听 Python 语法，同样浪费时间。分档的目的是让每个人都在
+          <b>"跳一跳够得着"</b>的难度上开始——这也是全课程"难度是平的"承诺的第 0 块铺路石。
+        </p>
+      </div>
+      <p>
+        另一个从今天起就存在的岔路是<b>学习模式</b>：A 轨（跟读主线）是所有人的必经之路；
+        如果你想要更狠的版本——先自己写、再与 reborn 对拍——那条路叫
+        <a href="btrack.html">B 轨 · 自写挑战</a>，总纲立在那里，随时可加入，不急于今天决定。
+      </p>
+
+      <h2 id="toolbox">最小工具箱</h2>
+      <p>
+        这门课只需要一件"武器"：一个终端。下面三组技能是<b>最小集</b>——
+        每组都给出"你会用它做什么"，对照判断自己是否已具备：
+      </p>
+
+      <h3 id="cli">命令行三件套：cd / ls / 环境变量</h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">技能</th><th>会这一个就够</th><th>课程里什么时候用</th></tr></thead>
+          <tbody>
+            <tr><td><code>cd</code>（切换目录）</td><td><code>cd Reproduce/minimind_reborn</code>——进入仓库根目录</td><td>每节课的命令都在仓库根执行（M01 起）</td></tr>
+            <tr><td><code>ls</code>（列目录）</td><td><code>ls out/</code>——看看产物在不在</td><td>验收块里"看到 <code>pretrain_64.pth</code>"全靠它</td></tr>
+            <tr><td>环境变量</td><td><code>export MINIMIND_REBORN_DATA_ROOT=/path/to/dataset</code>（bash）／<code>set</code>（Windows cmd）</td><td>M01 数据就位、HF 镜像端点设置</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>三件套现场体检（在任意目录执行，能看懂输出即可）：</p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">cd ~ &amp;&amp; pwd</span>
+<span class="out">/home/you          ← 你现在在哪</span>
+<span class="p">$ </span><span class="cmd">ls</span>
+<span class="out">Desktop  Downloads  ... ← 这个目录里有什么</span>
+<span class="p">$ </span><span class="cmd">echo $HOME</span>
+<span class="out">/home/you          ← 环境变量就是"整条命令都能读到"的全局值</span></code></pre>
+
+      <h3 id="git">git 最小集：clone / log / show</h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">命令</th><th>一句话职责</th><th>课程里什么时候用</th></tr></thead>
+          <tbody>
+            <tr><td><code>git clone</code></td><td>把远程仓库整个复制到本地</td><td>M01 第 0 步拿到 reborn 代码</td></tr>
+            <tr><td><code>git log --oneline</code></td><td>看提交历史（一行一条）</td><td>bug 猎场：缺陷调查要回到"案发现场"的 commit</td></tr>
+            <tr><td><code>git show &lt;hash&gt;</code></td><td>看某次提交具体改了什么</td><td>同上——读懂修复 diff 是猎场的主要动作</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="prov"><b>[说明]</b> git 的分支、rebase 等进阶操作本课程主线不需要——需要时对应模块会即需即讲。</p>
+
+      <h3 id="pyself">Python 自测：三小题</h3>
+      <p>
+        第②档的分界线在这里。逐段读下面的代码，<b>能看懂大意</b>（不必每行都解释）即通过。
+        三段都选自课程真实会遇到的代码形态：
+      </p>
+      <div class="codeblock"><div class="code-head"><span>自测 1 · dataclass：M04 配置系统的地基</span><span class="lang">python</span></div><pre class="code"><code><span class="k">from</span> dataclasses <span class="k">import</span> dataclass
+
+<span class="k">@dataclass</span>
+<span class="k">class</span> <span class="f">TrainConfig</span>:
+    lr: <span class="f">float</span> = <span class="n">1e-4</span>
+    epochs: <span class="f">int</span> = <span class="n">2</span>
+
+cfg = <span class="f">TrainConfig</span>(lr=<span class="n">3e-4</span>)
+<span class="f">print</span>(cfg.lr, cfg.epochs)  <span class="c"># 这行输出什么？</span></code></pre></div>
+      <div class="codeblock"><div class="code-head"><span>自测 2 · 列表推导与 zip：M12 "错一位"的最小原型</span><span class="lang">python</span></div><pre class="code"><code>tokens = [<span class="n">1</span>, <span class="n">2</span>, <span class="n">3</span>, <span class="n">4</span>]
+pairs = [(cur, nxt) <span class="k">for</span> cur, nxt <span class="k">in</span> <span class="f">zip</span>(tokens, tokens[<span class="n">1</span>:])]
+<span class="f">print</span>(pairs)  <span class="c"># 这行输出什么？</span></code></pre></div>
+      <div class="codeblock"><div class="code-head"><span>自测 3 · with open：课程里所有"读文件"的标准姿势</span><span class="lang">python</span></div><pre class="code"><code><span class="k">with</span> <span class="f">open</span>(<span class="s">"config.yaml"</span>, encoding=<span class="s">"utf-8"</span>) <span class="k">as</span> f:
+    text = f.read()
+<span class="c"># 离开 with 块，文件已自动关闭——即使中途抛了异常</span></code></pre></div>
+      <p>
+        三段的参考答案：<b>1</b> 输出 <code>0.0003 2</code>（dataclass 让"带默认值的类"一行一个字段，
+        不用写 <code>__init__</code>）；<b>2</b> 输出 <code>[(1, 2), (2, 3), (3, 4)]</code>
+        （<code>zip</code> 把序列与它的右移版对齐——这就是语言模型"用前一个词预测后一个词"的数据形态）；
+        <b>3</b> 没有输出，但你知道 <code>text</code> 里是文件全文、文件已经关好。
+        三题全通，你就是第②档以上。
+      </p>
+
+      <h2 id="resources">资源清单（按档取用）</h2>
+      <p>
+        只列<b>官方或事实标准</b>的中性资源，每档 2-3 个，全部免费。
+        原则：<b>用到什么读什么，不必通读</b>——先修的目标是"回到主线"，不是"学完另一门课"。
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="u-w130">补什么</th><th>推荐资源</th><th class="u-w200">读到什么程度就回来</th></tr></thead>
+          <tbody>
+            <tr>
+              <td rowspan="2"><b>Python 基础</b>（第①档）</td>
+              <td><a href="https://docs.python.org/3/tutorial/" target="_blank" rel="noopener noreferrer">Python 官方 Tutorial</a>（第 3-9 章足够）</td>
+              <td>能读懂上面三段自测代码</td>
+            </tr>
+            <tr>
+              <td>《Python Crash Course》任一版本的函数/类两章（图书馆或二手即可）</td>
+              <td>同上——教材只挑一本，不要囤</td>
+            </tr>
+            <tr>
+              <td rowspan="2"><b>命令行</b>（第①档）</td>
+              <td><a href="https://swcarpentry.github.io/shell-novice/" target="_blank" rel="noopener noreferrer">Software Carpentry · The Unix Shell</a>（入门课，几小时量级）</td>
+              <td>cd / ls / 环境变量三件套不陌生</td>
+            </tr>
+            <tr>
+              <td><a href="https://missing.csail.mit.edu/" target="_blank" rel="noopener noreferrer">MIT · The Missing Semester</a>（有社区中文译版；shell + git 讲得最值得）</td>
+              <td>同上，顺带补 git 心智模型</td>
+            </tr>
+            <tr>
+              <td><b>git</b>（第①②档）</td>
+              <td><a href="https://git-scm.com/book/zh/v2" target="_blank" rel="noopener noreferrer">Pro Git · 官方 book（中文版）</a>第 1、2 章</td>
+              <td>clone / log / show 三个命令敢敲</td>
+            </tr>
+            <tr>
+              <td rowspan="2"><b>PyTorch</b>（第②档，可选）</td>
+              <td><a href="https://pytorch.org/tutorials/beginner/deep_learning_60min_blitz.html" target="_blank" rel="noopener noreferrer">PyTorch 官方 · 60 分钟闪电战</a></td>
+              <td>张量、autograd 两节能看懂即可</td>
+            </tr>
+            <tr>
+              <td><a href="https://pytorch.org/tutorials/" target="_blank" rel="noopener noreferrer">PyTorch 官方 Tutorials</a>（即需即查，不必修完）</td>
+              <td>主线讲到哪个概念，回来查哪节</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout tip">
+        <div class="co-title">💡 第②档不必先学 PyTorch</div>
+        <p>
+          主线对 PyTorch 的处理是<b>即需即讲</b>：张量在 M01 冒烟日志处讲、<code>nn.Module</code> 在 M05 第一个地基件处讲、
+          <code>state_dict</code> 在 M09 参数账本处讲——每个概念都在"马上要用"的那一刻出现。
+          上表的 PyTorch 资源是<b>加餐</b>不是<b>门槛</b>：自测三题通过即可直接进 M01。
+        </p>
+      </div>
+
+      <div class="accept" id="accept">
+        <div class="acc-head">✅ M00 验收</div>
+        <div class="acc-body">
+          <p>在任意目录执行三条命令，三盏绿灯：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv --version</span>
+<span class="out">uv 0.12.5</span>
+<span class="p">$ </span><span class="cmd">git --version</span>
+<span class="out">git version 2.50.1</span>
+<span class="p">$ </span><span class="cmd">python -c "import json"</span>
+<span class="ok">(无输出，即第三盏绿灯)</span></code></pre>
+           <p class="prov">[作者实测 · 2026-10-06 · Windows 11 · Python 3.12 · uv 0.9]</p>
+          <ul class="pass-criteria">
+            <li><code>uv --version</code> 打印出以 <code>uv </code> 开头的版本号（版本新旧不论，装上即绿）；</li>
+            <li><code>git --version</code> 打印出 <code>git version …</code>；</li>
+            <li><code>python -c "import json"</code> 无任何输出、无 <code>Traceback</code>（import 成功本就静默）；</li>
+            <li>对照<a href="#self">三档自测表</a>给自己定了档，并知道下一站是哪个模块。</li>
+          </ul>
+          <details>
+            <summary>某盏灯不亮怎么办？</summary>
+            <p>
+              <b>uv 未安装</b> → M01「<a href="m01_get_started.html#env">环境准备</a>」里的两条官方安装命令在 Week-0 同样适用，
+              提前装好它，M01 就只剩 <code>uv sync</code> 一件事；
+              <b>git 未安装</b> → 官方 book 附录的安装指引，或发行版包管理器（如 <code>winget install Git.Git</code> / <code>apt install git</code>）；
+              <b>python 报错或不存在</b> → 不必单独装 Python：reborn 的锁定环境由 uv 接管（Python 3.12+，M01 <code>uv sync</code> 时自动就位），
+              本盏灯真正要验的是"终端能敲、引号能配对、命令能执行"。
+            </p>
+          </details>
+        </div>
+      </div>
+      <p class="prov"><b>[说明]</b> 版本号仅为作者环境示意（uv 0.12.5 · 2026-10-06），你机器上的数字不同不影响验收；三盏绿灯的判定标准只有"命令存在且不报错"。</p>
+
+      <h2 id="quiz">检验一下</h2>
+
+      <details class="quiz">
+        <summary>测验 1 · 为什么 <code>python -c "import json"</code> 一点输出都没有？</summary>
+        <div class="quiz-body">
+          <p>验收第三盏灯的判定标准是"无输出即绿"。可命令明明"执行成功"了，它为什么一句话都不说？想要它开口，有什么办法？</p>
+          <div class="quiz-ans">
+            <p><b>答案：</b><code>import</code> 成功时本来就静默——Python 只在<b>失败</b>时说话（抛 <code>ModuleNotFoundError</code>）。想看到"成功"的证据，让它做一件可见的事：<code>python -c "import json; print(json.__file__)"</code>——输出的路径还顺便告诉你<b>正在用的是哪个解释器</b>，这个技巧在变式练习里马上用到。</p>
+            <p class="back">答错回看：<a href="#accept">M00 验收</a> 的第三盏绿灯。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 2 · 环境变量到底是干什么的？这门课里谁已经用上了？</summary>
+        <div class="quiz-body">
+          <p>提示：本页命令行三件套里它排第三；M01 有一件"数据就位"的事全靠它。</p>
+          <div class="quiz-ans">
+            <p><b>答案：</b>环境变量是"整个终端会话里所有程序都能读到的全局配置值"，作用是<b>把配置写在代码外面</b>——换一台机器、换一个数据目录，代码一行不改。这门课的第一个出场者是 <code>MINIMIND_REBORN_DATA_ROOT</code>（M01 数据就位）：训练数据不进 git 仓库，代码靠这个变量找到你的数据根目录。</p>
+            <p class="back">答错回看：<a href="#cli">命令行三件套</a> 的体检示例 + 本页词汇表"环境变量"。</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="quiz">
+        <summary>测验 3 · <code>git clone</code> 完成之后，怎么知道"这个仓库最近在改什么"？</summary>
+        <div class="quiz-body">
+          <div class="quiz-ans">
+            <p><b>答案：</b>两步：<code>git log --oneline</code> 先看提交历史（一行一条，拿到 hash）；对哪条感兴趣，再 <code>git show &lt;hash&gt;</code> 看那次提交的具体改动。这正是本课程 bug 猎场的标准动作——先定位"案发现场"的 commit，再读修复 diff。</p>
+            <p class="back">答错回看：<a href="#git">git 最小集</a> 的三行表。</p>
+          </div>
+        </div>
+      </details>
+
+      <h2 id="exercise">变式练习</h2>
+      <div class="exercise">
+        <div class="ex-head">🧪 变式 · <code>uv run python -c "print(1)"</code> 和裸 <code>python -c "print(1)"</code> 有什么差别？</div>
+        <div class="ex-body">
+          <p>在任意目录（暂不需要克隆仓库）先后执行：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">python -c "print(1)"</span>
+<span class="p">$ </span><span class="cmd">uv run python -c "print(1)"</span></code></pre>
+          <div class="ex-predict"></div>
+          <p>先写下预测：两条命令的输出相同吗？它们用的是<b>同一个 Python 解释器</b>吗？为什么？</p>
+          <details>
+            <summary>观察结果与解释（先动手再看）</summary>
+            <p>
+              输出相同——都是 <code>1</code>。但"是谁打印的"未必相同：用
+              <code>python -c "import sys; print(sys.executable)"</code> 和
+              <code>uv run python -c "import sys; print(sys.executable)"</code> 各验一次，
+              多半会看到两个不同的路径。
+            </p>
+            <p>
+              <b>机制：</b>裸 <code>python</code> 用的是 <code>PATH</code> 环境变量里排第一个的解释器——哪来的用哪的；
+              <code>uv run</code> 则由 uv 决定"该用哪个 Python"：在包含 <code>pyproject.toml</code> 的项目目录里，
+              它会自动创建/同步锁定环境（<code>.venv</code>）再执行——首次可能花几分钟下载依赖，
+              这正是 M01 <code>uv sync</code> 做的事；在项目之外，它用 uv 托管的解释器。
+            </p>
+            <p>
+              这 30 秒的观察是 M01"锁定环境、逐位一致"的第一块拼图：
+              <b>同一行代码，换一个解释器，依赖与版本就换了一个世界</b>——课程把"用哪个 Python"从运气变成约定。
+            </p>
+          </details>
+        </div>
+      </div>
+
+      <p>
+        三盏绿灯亮起，你手里已经有了这门课的全部门票。<b>下一站 <a href="m01_get_started.html">M01</a></b>：
+        拿代码、装环境、11 秒跑通第一个全链路；想加码的，先去
+        <a href="btrack.html">B 轨 · 自写挑战总纲</a>把名字记下——等你走到 M05 再回来赴约。
+      </p>
+
+      <section class="glossary" id="glossary">
+        <h2>本课词汇</h2>
+        <dl>
+          <dt>终端 <span class="en">terminal</span></dt><dd>敲命令、看输出的文本界面；这门课的"驾驶舱"，每节课都在这里度过。</dd>
+          <dt>环境变量 <span class="en">environment variable</span></dt><dd>整个终端会话里所有程序都能读到的全局配置值，把配置写在代码外面（如 <code>MINIMIND_REBORN_DATA_ROOT</code>）。</dd>
+          <dt>虚拟环境 <span class="en">virtual environment</span></dt><dd>为一个项目单独安装的一套依赖，与系统和其他项目隔离；reborn 的 <code>.venv</code> 由 uv 按锁文件创建，逐位一致。</dd>
+          <dt>PATH</dt><dd>一个环境变量：终端按它列出的目录顺序查找你敲的命令——裸 <code>python</code> 用谁的，由它决定。</dd>
+        </dl>
+      </section>
+
+      <nav class="pager" id="pager"></nav>
+    </div>
+  </main>
+
+  <aside class="toc" id="toc"></aside>
+</div>
+
+<script src="assets/course.js?v=5"></script>
+</body>
+</html>

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M07 · Attention：GQA、QK-Norm 与三条路径 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=4">
+<link rel="stylesheet" href="assets/course.css?v=5">
 </head>
 <body data-module="m07">
 
@@ -16,7 +16,7 @@
     <span>minimind_reborn 教程<span class="crumb"> · 第二篇 模型：造</span></span>
   </a>
   <div class="progress-wrap">
-    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span>完成 <span id="topbar-progress">0/23</span></span>
     <span class="progress-bar"><i></i></span>
     <a class="map-link" href="index.html#map">课程地图</a>
   </div>
@@ -564,6 +564,38 @@ for kv in (4, 8):   # 4 = GQA（n_rep=2），8 = MHA（n_rep=1）
         </div>
       </div>
 
+      <div class="btrack-ch">
+        <div class="ch-title">✍️ 自写挑战 · B 轨 <code>T3</code>：从零手写 manual 注意力路径</div>
+        <p>
+          任务书：从空白文件 <code>my_impl/attention.py</code> 开始，手写纯函数
+          <code>manual_attention(xq, xk, xv, attention_mask=None) -> torch.Tensor</code>（三个输入都已 reshape 到
+          <code>(b, heads, seq, head_dim)</code>、xk/xv 已含历史）。四步算式：<b>QK<sup>T</sup>/√d</b> →
+          <b>因果 mask</b> → <b>softmax</b> → <b>·V</b>，数值纪律照抄 reborn 路径③（
+          <code>src/minimind_reborn/models/attention.py</code> 的 manual 分支）：打分<b>升 fp32</b>，softmax 后
+          <code>.type_as(xq)</code> 回落。GQA 的 kv 头对齐可直接引用 <code>from minimind_reborn.models.layers import repeat_kv</code>——
+          本题考注意力本身，不考广播复制。
+        </p>
+        <details>
+          <summary>提示 1 · 方向</summary>
+          <p>因果 mask 只落在"新位置块"：对无 cache 的全段输入，构造 <code>(seq, seq)</code> 的
+            <code>triu(1)</code> 上三角填 $-\infty$ 加到打分上——第 i 行只许看前 i+1 列；
+            padding 用加性掩码 <code>(1 - mask) * -1e9</code> 广播到 head 维，<b>别把因果的 $-\infty$ 与 pad 的 -1e9 记反</b>。</p>
+        </details>
+        <details>
+          <summary>提示 2 · 表达式级</summary>
+          <p>核心一行：<code>scores = (xq @ xk.transpose(-2, -1)).float() / math.sqrt(head_dim)</code>；
+            出口一行：<code>out = F.softmax(scores.masked_fill(causal_mask, float("-inf")), dim=-1).type_as(xq) @ xv</code>。</p>
+        </details>
+        <p>
+          对拍：脚本模板见 <a href="btrack.html">B 轨总纲</a>——fp32 下你的实现 vs
+          <code>F.scaled_dot_product_attention(..., is_causal=True)</code>，<code>allclose(atol=1e-5)</code> 必须成立
+          （fp32 下三路径逐位一致是 reborn 的既定事实）。裁判测试
+          <code>tests/test_models/test_model.py::test_sdpa_vs_manual_attention_equivalence</code>（先跑一遍看参考行为：
+          <code>uv run pytest tests/test_models/test_model.py -q</code>——它关掉 <code>flash</code> 逼走 manual 分支再对拍，
+          正是你要复刻的对照结构）。
+        </p>
+      </div>
+
       <div class="accept" id="accept">
         <div class="acc-head">✅ M07 验收</div>
         <div class="acc-body">
@@ -628,6 +660,6 @@ for kv in (4, 8):   # 4 = GQA（n_rep=2），8 = MHA（n_rep=1）
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=4"></script>
+<script src="assets/course.js?v=5"></script>
 </body>
 </html>

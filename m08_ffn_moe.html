@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M08 · FFN：SwiGLU 与 MoE | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=4">
+<link rel="stylesheet" href="assets/course.css?v=5">
 </head>
 <body data-module="m08">
 
@@ -16,7 +16,7 @@
     <span>minimind_reborn 教程<span class="crumb"> · 第二篇 模型：造</span></span>
   </a>
   <div class="progress-wrap">
-    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span>完成 <span id="topbar-progress">0/23</span></span>
     <span class="progress-bar"><i></i></span>
     <a class="map-link" href="index.html#map">课程地图</a>
   </div>
@@ -552,6 +552,36 @@ print("单 token 调用的专家:", sorted(called))</code></pre></div>
         </div>
       </div>
 
+      <div class="btrack-ch">
+        <div class="ch-title">✍️ 自写挑战 · B 轨 <code>T4</code>：手写 SwiGLU FFN</div>
+        <p>
+          任务书：从空白文件 <code>my_impl/feedforward.py</code> 开始，手写 dense FFN——参照 reborn 的
+          <code>FeedForward</code>（<code>src/minimind_reborn/models/feedforward.py</code>，SwiGLU 结构）。构造三把投影：
+          <code>gate_proj</code> / <code>up_proj</code>（<code>hidden_size → intermediate_size</code>）与
+          <code>down_proj</code>（<code>intermediate_size → hidden_size</code>），<b>全部 <code>bias=False</code></b>
+          （与官方/LLaMA 一致，也是 M09 strict 载入的硬前提）；激活用 <code>ACT2FN["silu"]</code>。
+          维度公式对齐 M04 伏笔：<code>intermediate_size = ceil(hidden_size · π / 64) · 64</code>（hidden=768 → 2432）——
+          手算一遍再动手。
+        </p>
+        <details>
+          <summary>提示 1 · 方向</summary>
+          <p>SwiGLU 的"门控"是<b>乘法门</b>不是门控循环网络：gate 支路过激活函数当开合系数，up 支出原始内容，
+            两者逐元素相乘再降维——名字里的 GLU（gated linear unit）指的就是这个乘法结构。</p>
+        </details>
+        <details>
+          <summary>提示 2 · 表达式级</summary>
+          <p>forward 一行：<code>return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))</code>——
+            先激活 gate 再乘 up（顺序写反，数值上不等价于 reborn）。</p>
+        </details>
+        <p>
+          对拍：脚本模板见 <a href="btrack.html">B 轨总纲</a>——同 seed 构造你的 FFN 与
+          <code>from minimind_reborn.models.feedforward import FeedForward</code>，<code>load_state_dict</code> 灌同一份权重，
+          随机输入逐位对照；再断言 <code>state_dict()</code> 键名与参数形状完全一致（这是 🏁D 权重互通的预演）。
+          FFN 无专属单测，参考行为由模型级测试锁定，先跑一遍：
+          <code>uv run pytest tests/test_models/test_model.py -q</code>（<code>test_forward_shapes_and_loss</code> 会走完整 FFN 路径）。
+        </p>
+      </div>
+
       <div class="accept" id="accept">
         <div class="acc-head">✅ M08 验收</div>
         <div class="acc-body">
@@ -621,6 +651,6 @@ print("单 token 调用的专家:", sorted(called))</code></pre></div>
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=4"></script>
+<script src="assets/course.js?v=5"></script>
 </body>
 </html>

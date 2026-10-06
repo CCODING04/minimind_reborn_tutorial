@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>setup.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../../../assets/course.css?v=4">
+<link rel="stylesheet" href="../../../../../assets/course.css?v=5">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -76,6 +76,6 @@ def build_preference_dataset(cfg: RunConfig, tokenizer) -&gt; DPODataset:
     path = file_path(resolve_dataset(cfg.data.dataset))
     return DPODataset(path, tokenizer, max_length=cfg.data.max_seq_len, empty_think_ratio=cfg.data.empty_think_ratio)</code></pre></div>
 </main>
-<script src="../../../../../assets/course.js?v=4"></script>
+<script src="../../../../../assets/course.js?v=5"></script>
 </body>
 </html>

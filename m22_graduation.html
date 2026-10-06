@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M22 · 全链路与毕业实验：从一条命令到一个结论 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=4">
+<link rel="stylesheet" href="assets/course.css?v=5">
 </head>
 <body data-module="m22">
 
@@ -16,7 +16,7 @@
     <span>minimind_reborn 教程<span class="crumb"> · 第六篇 毕业</span></span>
   </a>
   <div class="progress-wrap">
-    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span>完成 <span id="topbar-progress">0/23</span></span>
     <span class="progress-bar"><i></i></span>
     <a class="map-link" href="index.html#map">课程地图</a>
   </div>
@@ -279,6 +279,11 @@ done</span>
         选②当示范的理由：零训练、单脚本、两分钟出数据，且直接接 M21 弱项清单的第三条
         （"贪心复读循环 → 对比采样温度作为复读抑制剂"）。四步模板完整走一遍。
       </p>
+      <p>
+        完成 <a href="btrack.html">B 轨</a>（自写挑战 T1–T8）者的毕业实验推荐加一道⑤<b>复现对比</b>题：
+        自己拼出的最小 CausalLM vs reborn——同一份官方权重 strict 载入、同一批 prompt、贪心解码，
+        输出逐位对照（逐位一致率就是因变量，"我的实现与参考实现数值等价"是可判定的结论）。
+      </p>
 
       <h3 id="demo-hypo">第一步 · 假设</h3>
       <p>
@@ -398,6 +403,10 @@ for t in (0.7, 0.85):                        # 自变量：唯一的旋钮
             都是你亲手跑出来或逐行读出来的，不是听来的。<b>一套读真实代码的方法</b>：绿灯验收（可判定的
             完成标准）、测试当锚点（改坏了知道哪断）、存档当教材（读真实日志是正式路径）、
             弱项当路标（每个缺点都是一个可实验的假设）。模型会过时，这套方法跟着你走下一个项目。
+          </p>
+          <p>
+            （括注：无 GPU 的毕业实得物 = 0.53M tiny（生成以高频字为主）+ 全链路经验——
+            完整分档见 <a href="index.html">index</a>「硬件 × 毕业实得物」表。）
           </p>
         </div>
       </div>
@@ -564,6 +573,6 @@ done</span>
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=4"></script>
+<script src="assets/course.js?v=5"></script>
 </body>
 </html>

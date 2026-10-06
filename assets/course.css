@@ -432,6 +432,15 @@ pre.term .dim{color:#7d8590}
 .callout.danger .co-title{color:var(--danger)}
 .callout.industry{border-color:var(--done-border);border-left-color:var(--done);background:var(--done-subtle)}
 .callout.industry .co-title{color:var(--done)}
+
+/* ═══════════════ B 轨自写挑战块（btrack 配套，done 语义色随暗色自动适配） ═══════════════ */
+.btrack-ch{
+  border:1.5px solid var(--done-border);border-left-width:3px;border-radius:var(--radius);
+  background:var(--done-subtle);padding:12px 16px;margin:18px 0;
+}
+.btrack-ch .ch-title{font-weight:650;color:var(--done);margin-bottom:6px;font-size:14px}
+.btrack-ch p:last-child,.btrack-ch ul:last-child,.btrack-ch ol:last-child{margin-bottom:0}
+
 /* 坑卡三段式 */
 .pit-stages{margin:8px 0 0;padding:0;list-style:none}
 .pit-stages li{margin:6px 0;padding-left:64px;position:relative}

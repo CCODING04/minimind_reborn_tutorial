@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="跟着 minimind_reborn 造一个大模型：22 模块的 LLM 全栈实训课——跟读真实工程代码、跑通训练全链路、复用 85 个测试做绿灯验收。">
+<meta name="description" content="跟着 minimind_reborn 造一个大模型：23 模块（含 Week-0 准备）的 LLM 全栈实训课——跟读真实工程代码、跑通训练全链路、复用 85 个测试做绿灯验收。">
 <title>跟着 minimind_reborn 造一个大模型 · 课程主页</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=4">
+<link rel="stylesheet" href="assets/course.css?v=5">
 </head>
 <body data-page="index">
 
@@ -17,7 +17,7 @@
     <span>minimind_reborn 教程<span class="crumb"> · 课程主页</span></span>
   </a>
   <div class="progress-wrap">
-    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span>完成 <span id="topbar-progress">0/23</span></span>
     <span class="progress-bar"><i></i></span>
   </div>
 </header>
@@ -30,7 +30,7 @@
 
       <section class="hero">
         <div class="hero-inner">
-          <div class="eyebrow">Hands-on LLM Course · 22 模块</div>
+          <div class="eyebrow">Hands-on LLM Course · 23 模块</div>
           <h1>跟着 minimind_reborn<br>造一个大模型</h1>
           <p class="subtitle">
             以工程化重构的 <b>minimind_reborn</b>（64M 中文小模型：pretrain → SFT → DPO → 蒸馏/LoRA → RL → 推理服务）为唯一实现目标——
@@ -38,7 +38,7 @@
             不造"教学专用玩具代码"：你在课里读的每一行，都在真实仓库里服役。
           </p>
           <div class="hero-meta">
-            <span class="chip"><b>22</b> 个模块 · 6 篇</span>
+            <span class="chip"><b>23</b> 个模块 · 6 篇 + Week-0</span>
             <span class="chip">主线约 <b>26</b> 小时</span>
             <span class="chip">全程 <b>CPU/tiny</b> 可完成</span>
             <span class="chip">🎮 64M 实训选做</span>
@@ -52,6 +52,7 @@
         <div class="quickstart">
           <h3>五分钟拿到第一个绿灯</h3>
           <ol>
+            <li>先完成 <a href="m00_week0.html">M00 · Week-0 准备</a>：三档受众自测 + 最小工具箱 + 三盏版本绿灯（约 40 分钟，会 PyTorch 者约 5 分钟）；</li>
             <li>准备 Python 3.12+ 与 <a href="https://docs.astral.sh/uv/" target="_blank" rel="noopener noreferrer">uv</a>（课程唯一指定工具链）；</li>
             <li><code>cd Reproduce/minimind_reborn &amp;&amp; uv sync --extra dev</code> 安装锁定环境；</li>
             <li><code>uv run python tools/verify_env.py</code> 验证 torch / CUDA；</li>
@@ -74,6 +75,26 @@
         <div class="parts-grid" id="parts-grid"></div>
       </section>
 
+      <section id="hardware">
+        <h2 class="section-title">硬件 × 毕业实得物</h2>
+        <p>
+          不同硬件能走到的深度不同，但<b>每一档都有完整的毕业实得物</b>——先看表再对号入座：
+        </p>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th class="u-w130">硬件档位</th><th>毕业时你拿走什么</th></tr></thead>
+            <tbody>
+              <tr><td><b>无 GPU（纯 CPU）</b></td><td>tiny <b>0.53M</b> 模型（只吐高频字，但 pretrain→SFT→DPO 全链路是你亲手真跑的）+ 全链路真跑经验 + 读懂 reborn 存档（训练日志 / 指标 / 权重）的分析力</td></tr>
+              <tr><td><b>单卡</b></td><td>64M <b>短训</b>（约 4000 步）——能对话但质量有限，胜在"我训过"</td></tr>
+              <tr><td><b>双卡</b></td><td>64M <b>全量三段训练</b>（pretrain→SFT→DPO）+ 官方对照评测（M21）</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="qs-note">
+          宣传语"拿走你自己的 64M 模型"按此表分档理解——无 GPU 也有 tiny 模型与全链路经验可拿走，64M 实得物对应单卡/双卡档位（全程标 🎮 选做）。
+        </p>
+      </section>
+
       <section id="how">
         <h2 class="section-title">这门课怎么学</h2>
         <div class="table-scroll">
@@ -94,7 +115,7 @@
         <h2 class="section-title">常见问题</h2>
         <details>
           <summary>我需要什么基础？</summary>
-          <div class="faq-body">会 Python 和基本 PyTorch（张量、autograd、nn.Module）；LLM 零经验可以，每个概念都会在使用处即需即讲，重推导折叠可跳。</div>
+          <div class="faq-body">先做 <a href="m00_week0.html">M00 · Week-0 准备</a> 的三档自测：完全零基础有先修资源路线，会 Python 不懂 PyTorch 正是主线的设计对象（PyTorch 即需即讲），会 PyTorch 可直接进 M01。默认期望是会 Python 和基本 PyTorch（张量、autograd、nn.Module）；LLM 零经验可以，每个概念都会在使用处即需即讲，重推导折叠可跳。</div>
         </details>
         <details>
           <summary>没有 GPU 能学完吗？</summary>
@@ -110,7 +131,7 @@
         </details>
         <details>
           <summary>后续模块什么时候更新？</summary>
-          <div class="faq-body">全部 22 个模块已发布（2026-10-01）。课程结构与写作规范见仓库内 <code>DESIGN.md</code>；写作约定见 <code>ANALYSIS.md</code>。</div>
+          <div class="faq-body">全部 23 个模块已发布（22 个主线模块 + M00 Week-0 准备页，2026-10-06）。课程结构与写作规范见仓库内 <code>DESIGN.md</code>；写作约定见 <code>ANALYSIS.md</code>。</div>
         </details>
       </section>
 
@@ -124,6 +145,6 @@
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=4"></script>
+<script src="assets/course.js?v=5"></script>
 </body>
 </html>

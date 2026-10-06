@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M09 · 组装 ForCausalLM：参数账本与官方权重互通 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=4">
+<link rel="stylesheet" href="assets/course.css?v=5">
 </head>
 <body data-module="m09">
 
@@ -16,7 +16,7 @@
     <span>minimind_reborn 教程<span class="crumb"> · 第二篇 模型：造</span></span>
   </a>
   <div class="progress-wrap">
-    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span>完成 <span id="topbar-progress">0/23</span></span>
     <span class="progress-bar"><i></i></span>
     <a class="map-link" href="index.html#map">课程地图</a>
   </div>
@@ -542,6 +542,10 @@ print("logits 最大偏差:", round(diff, 4))</code></pre></div>
               strict 载入失败几乎一定是结构默认值被动过（transformers 版本、hidden_size），
               <code>load_state_dict</code> 的报错会点名第一个对不上的 key。</li>
           </ul>
+          <p>
+            🏁D（B 轨终点）：T1+T3+T4+T5 拼出你自己的最小 CausalLM，同一份官方权重 strict=True 载入你的实现并生成第一句话——
+            定义见 <a href="btrack.html">B 轨总纲</a>。
+          </p>
         </div>
       </div>
 
@@ -624,6 +628,38 @@ for tag, cfg in [('tiny tied  ', MiniMindConfig(**base)),
         </div>
       </div>
 
+      <div class="btrack-ch">
+        <div class="ch-title">✍️ 自写挑战 · B 轨 <code>T5</code>：手写移位交叉熵</div>
+        <p>
+          任务书：从空白文件 <code>my_impl/loss.py</code> 开始，手写纯函数
+          <code>shifted_cross_entropy(logits, labels, ignore_index=-100) -> torch.Tensor</code>——
+          <code>logits: (b, T, vocab)</code>，<code>labels: (b, T)</code>。行为约束：移位用
+          <code>logits[..., :-1, :]</code> 对 <code>labels[..., 1:]</code>（位置 t 的打分预测 t+1 的 token），
+          展平成 <code>(b·(T-1), vocab)</code> 与 <code>(b·(T-1),)</code> 后交给
+          <code>F.cross_entropy(..., ignore_index=-100)</code>——被标 -100 的位置（padding、非回答区间）不进分母。
+          参照 <code>src/minimind_reborn/models/model.py</code> 的 <code>MiniMindForCausalLM.forward</code> 里 labels 非 None 的分支。
+          注意：这是本课参数账本<b>之外</b>的纯函数任务——不要模型、不要权重，一份 logits 一份 labels 就能开工，
+          <b>八个挑战里门槛最低、收益最高</b>（🏁D 拼装时它原样可用）。
+        </p>
+        <details>
+          <summary>提示 1 · 方向</summary>
+          <p>移位的本质是"各去一位再配对"：logits 去掉最后一位（位置 T-1 的目标不存在），labels 去掉第一位
+            （BOS 没人预测它）——两边各剩 T-1 个，按位对齐就是训练对。</p>
+        </details>
+        <details>
+          <summary>提示 2 · 表达式级</summary>
+          <p>核心三行：<code>sl = logits[..., :-1, :].contiguous(); tl = labels[..., 1:].contiguous()</code>；
+            <code>return F.cross_entropy(sl.view(-1, sl.size(-1)), tl.view(-1), ignore_index=ignore_index)</code>。</p>
+        </details>
+        <p>
+          对拍：脚本模板见 <a href="btrack.html">B 轨总纲</a>——取 tiny 模型一次前向的 logits 与含 -100 的
+          labels，你的返回值 vs <code>model(x, labels=labels).loss</code>，<code>allclose</code> 必须成立；
+          再构造 labels 全 -100 的批次确认抛错/为 nan 的边界行为与 reborn 一致。裁判测试
+          <code>tests/test_models/test_model.py::test_forward_shapes_and_loss</code>（先跑一遍看参考行为：
+          <code>uv run pytest tests/test_models/test_model.py -q</code>——它锁定的正是"带 labels 的前向产出有限 loss"）。
+        </p>
+      </div>
+
       <div class="accept" id="accept">
         <div class="acc-head">✅ M09 验收（= 里程碑 A 核心两条）</div>
         <div class="acc-body">
@@ -699,6 +735,6 @@ print("参数量：%.2fM" % (sum(p.numel() for p in model.parameters()) / 1e6))<
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=4"></script>
+<script src="assets/course.js?v=5"></script>
 </body>
 </html>

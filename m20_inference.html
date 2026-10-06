@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M20 · 推理栈深潜：采样、停止与引擎 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=4">
+<link rel="stylesheet" href="assets/course.css?v=5">
 </head>
 <body data-module="m20">
 
@@ -16,7 +16,7 @@
     <span>minimind_reborn 教程<span class="crumb"> · 第五篇 推理与评测</span></span>
   </a>
   <div class="progress-wrap">
-    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span>完成 <span id="topbar-progress">0/23</span></span>
     <span class="progress-bar"><i></i></span>
     <a class="map-link" href="index.html#map">课程地图</a>
   </div>
@@ -582,6 +582,40 @@ for rp in (1.0, 1.5):
         </div>
       </div>
 
+      <div class="btrack-ch">
+        <div class="ch-title">✍️ 自写挑战 · B 轨 <code>T8</code>：手写采样三连</div>
+        <p>
+          任务书：从空白文件 <code>my_impl/sampling.py</code> 开始，手写三个纯函数——
+          <code>apply_temperature(logits: torch.Tensor, temperature: float) -&gt; torch.Tensor</code>、
+          <code>apply_top_k(logits: torch.Tensor, top_k: int) -&gt; torch.Tensor</code>、
+          <code>apply_top_p(logits: torch.Tensor, top_p: float) -&gt; torch.Tensor</code>，<code>logits: (b, vocab)</code>。
+          行为约束（<b>顺序即契约</b>，与 <code>sample_token</code> 内的调用序一致：temperature → top_k → top_p → 采样）：
+          temperature ≤ 0 是"贪心"信号，<b>原样返回</b>不除（贪心分支由调用方走 argmax）；top_k 取第 k 大的值做阈值、
+          更小的全置 −∞，0 表示关闭；top_p 按概率降序累积、保留质量恰 ≤ p 的前缀（含跨过 p 的那一个 token），≥1 关闭。
+          参照 <code>src/minimind_reborn/inference/sampling.py</code>。
+        </p>
+        <details>
+          <summary>提示 1 · 方向</summary>
+          <p>top_k 与 top_p 的"关闭值"语义相反（0 关 / ≥1 关），写参数校验时最容易记反；
+            top_p 的坑在边界——累积<b>恰好跨过</b> p 的那个 token 必须保留，否则保留质量永远到不了 p。</p>
+        </details>
+        <details>
+          <summary>提示 2 · 表达式级</summary>
+          <p>top_k 阈值：<code>threshold = torch.topk(logits, top_k)[0][..., -1, None]</code> 再
+            <code>logits[logits &lt; threshold] = -float("inf")</code>；top_p 边界：<code>mask = cumulative &gt; top_p</code> 后
+            <code>mask[..., 1:] = mask[..., :-1].clone(); mask[..., 0] = False</code>——右移一位就是"跨过 p 也保留"。</p>
+        </details>
+        <p>
+          对拍：脚本模板见 <a href="btrack.html">B 轨总纲</a>——随机 logits 网格（关/开、极端 p、k &gt; vocab）逐点对照
+          <code>from minimind_reborn.inference.sampling import apply_temperature, apply_top_k, apply_top_p</code>；
+          串联后可再对 <code>sample_token(logits, GenerateConfig(...), generator=seed)</code> 的分布做统计对拍。
+          裁判测试 <code>tests/test_inference/test_generator.py</code>（先跑一遍看参考行为：
+          <code>uv run pytest tests/test_inference/test_generator.py -q</code>——
+          <code>test_top_k_keeps_exactly_k</code> 断言恰好留 k 个、
+          <code>test_top_p_keeps_prefix_crossing_p</code> 断言保留质量恰过 p）。
+        </p>
+      </div>
+
       <div class="accept" id="accept">
         <div class="acc-head">✅ M20 验收</div>
         <div class="acc-body">
@@ -658,6 +692,6 @@ for rp in (1.0, 1.5):
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=4"></script>
+<script src="assets/course.js?v=5"></script>
 </body>
 </html>

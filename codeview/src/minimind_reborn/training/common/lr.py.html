@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>lr.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../../../assets/course.css?v=4">
+<link rel="stylesheet" href="../../../../../assets/course.css?v=5">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -37,6 +37,6 @@ def get_lr(
     progress = min((step - warmup_steps) / max(total_steps - warmup_steps, 1), 1.0)
     return base_lr * (min_ratio + (1 - min_ratio) * 0.5 * (1 + math.cos(math.pi * progress)))</code></pre></div>
 </main>
-<script src="../../../../../assets/course.js?v=4"></script>
+<script src="../../../../../assets/course.js?v=5"></script>
 </body>
 </html>

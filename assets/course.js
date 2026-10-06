@@ -10,6 +10,7 @@
    status: done=已成文 | planned=待成文
    milestone: 'A'|'B'|'C'（可选）  minutes: 预计学习分钟数 */
 const PARTS = [
+  { id: 0, name: "第 0 篇 · 准备" },
   { id: 1, name: "第一篇 · 开箱：用" },
   { id: 2, name: "第二篇 · 模型：造" },
   { id: 3, name: "第三篇 · 数据" },
@@ -19,6 +20,7 @@ const PARTS = [
 ];
 
 const COURSE = [
+  { id: "m00", file: "m00_week0.html", part: 0, title: "Week-0 准备：环境与前置自测", minutes: 40, status: "done" },
   { id: "m01", file: "m01_get_started.html", part: 1, title: "课程导览与第一个绿灯", minutes: 45, status: "done" },
   { id: "m02", file: "m02_chat.html", part: 1, title: "与 64M 模型对话", minutes: 45, status: "done" },
   { id: "m03", file: "m03_pipeline.html", part: 1, title: "全链路地图：一次请求的一生", minutes: 50, status: "done" },
@@ -273,12 +275,13 @@ function renderIndexGrid() {
       const card = document.createElement("div");
       card.className = "part-card";
       const desc = {
+        0: "正式开学前的 Week-0：三档受众自测、最小工具箱清点与三盏版本绿灯——零门槛入口，40 分钟决定你从哪一档进入正课。",
         1: "先把 64M 模型跑起来、玩起来，画出全链路黑箱地图——后面每一课都在解剖其中一站。",
         2: "自底向上读模型源码：配置 → 地基件 → KV Cache → 注意力 → FFN/MoE → 整机组装，终点是官方权重 strict 互通。",
         3: "语料如何变成样本：tokenizer 与 chat 模板、字节偏移索引、五类数据集与全系统最脆的 loss_mask。",
         4: "从最小训练循环到八种范式：Trainer 基座、断点续训、DDP，然后 pretrain→SFT→DPO→蒸馏/LoRA→RL 一路走完。",
         5: "白箱拆开推理栈：采样纯函数链、三重停止、引擎门面；再用评测给模型打分、与官方对照。",
-        6: "一条命令跑通全链路，做一个有数据支撑的小实验，拿走你自己的 64M 模型。",
+        6: "一条命令跑通全链路，做一个有数据支撑的小实验，拿走你自己训出的模型——硬件档位决定它是 tiny 还是 64M，见下表。",
       }[part.id] || "";
       const items = mods.map((m) => {
         const num = m.id.replace("m", "M").toUpperCase();

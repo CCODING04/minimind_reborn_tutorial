@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M13 · 训练基座：Trainer 生命周期与可观测 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=4">
+<link rel="stylesheet" href="assets/course.css?v=5">
 </head>
 <body data-module="m13">
 
@@ -16,7 +16,7 @@
     <span>minimind_reborn 教程<span class="crumb"> · 第四篇 训练</span></span>
   </a>
   <div class="progress-wrap">
-    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span>完成 <span id="topbar-progress">0/23</span></span>
     <span class="progress-bar"><i></i></span>
     <a class="map-link" href="index.html#map">课程地图</a>
   </div>
@@ -666,6 +666,38 @@ for step in range(6):
         </div>
       </div>
 
+      <div class="btrack-ch">
+        <div class="ch-title">✍️ 自写挑战 · B 轨 <code>T7</code>：手写 LR 余弦退火纯函数</div>
+        <p>
+          任务书：从空白文件 <code>my_impl/lr.py</code> 开始，手写纯函数
+          <code>get_lr(step: int, total_steps: int, base_lr: float, *, warmup_steps: int = 0, min_ratio: float = 0.1) -&gt; float</code>——
+          纯 Python，无张量、无 scheduler 对象状态（<b>八个挑战里最易起步</b>，一个 <code>import math</code> 就能开工）。
+          行为约束：warmup 段线性爬升 <code>base_lr × (step+1) / warmup_steps</code>；之后余弦衰减到地板
+          <code>base_lr × min_ratio</code>；越界（step &gt; total_steps）钳在地板。参照
+          <code>src/minimind_reborn/training/common/lr.py</code> 的 <code>get_lr</code>。
+          <b>per_rank 折算口径</b>：余弦分母的 total_steps 必须是"本 rank 实际步数 × epochs"——
+          双卡 DDP 下每 rank 步数减半（<code>per_rank_full_iters(n_samples, batch_size, world_size)</code>，
+          见 <code>training/common/trainer.py</code>），不折算的话 2 epochs 跑完 LR 停在 75% 进度而非地板（reborn 修过的真 bug）。
+        </p>
+        <details>
+          <summary>提示 1 · 方向</summary>
+          <p>三段式：step &lt; warmup → 线性爬升；warmup ≤ step ≤ total → 余弦从 base 滑向地板；
+            step &gt; total → 钳在地板。progress 用 <code>min((step - warmup) / max(total - warmup, 1), 1.0)</code> 归一到 [0,1]。</p>
+        </details>
+        <details>
+          <summary>提示 2 · 表达式级</summary>
+          <p>余弦段一行：<code>return base_lr * (min_ratio + (1 - min_ratio) * 0.5 * (1 + math.cos(math.pi * progress)))</code>——
+            progress=0 时恰为 base_lr，progress=1 时恰为地板，warmup 末步与余弦首步无缝交接。</p>
+        </details>
+        <p>
+          对拍：脚本模板见 <a href="btrack.html">B 轨总纲</a>——网格步数 ×（有无 warmup）×（越界）逐点对照
+          <code>from minimind_reborn.training.common.lr import get_lr</code>，再自检单调性与地板钳制。裁判测试
+          <code>tests/test_training/test_common.py</code> 与 <code>tests/test_training/test_lr_schedule.py</code>
+          （先跑一遍看参考行为：<code>uv run pytest tests/test_training/test_common.py tests/test_training/test_lr_schedule.py -q</code>——
+          官方地板公式逐点锁值、warmup 首末步、DDP per_rank 折算后 2ep 末必落地板）。
+        </p>
+      </div>
+
       <div class="accept" id="accept">
         <div class="acc-head">✅ M13 验收：12 个测试 + 一个真实的 runs 目录</div>
         <div class="acc-body">
@@ -747,6 +779,6 @@ for step in range(6):
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=4"></script>
+<script src="assets/course.js?v=5"></script>
 </body>
 </html>

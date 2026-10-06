@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M06 · KV Cache：预分配设计 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=4">
+<link rel="stylesheet" href="assets/course.css?v=5">
 </head>
 <body data-module="m06">
 
@@ -16,7 +16,7 @@
     <span>minimind_reborn 教程<span class="crumb"> · 第二篇 模型：造</span></span>
   </a>
   <div class="progress-wrap">
-    <span>完成 <span id="topbar-progress">0/22</span></span>
+    <span>完成 <span id="topbar-progress">0/23</span></span>
     <span class="progress-bar"><i></i></span>
     <a class="map-link" href="index.html#map">课程地图</a>
   </div>
@@ -481,6 +481,39 @@ for cap in (2048, 4096):
         </div>
       </div>
 
+      <div class="btrack-ch">
+        <div class="ch-title">✍️ 自写挑战 · B 轨 <code>T2</code>：手写 KVCache</div>
+        <p>
+          任务书：从空白文件 <code>my_impl/kv_cache.py</code> 开始，手写 <code>class KVCache</code>——构造签名
+          <code>__init__(self, num_layers, max_batch_size, max_seq_len, num_kv_heads, head_dim, dtype, device)</code>，
+          k/v 各一张 <code>(num_layers, max_batch_size, max_seq_len, num_kv_heads, head_dim)</code> 的零张量，外加游标
+          <code>cur_len = 0</code>。四件事各一行约束：<b>预分配</b>（构造时一次 <code>torch.zeros</code>，此后全程零再分配）、
+          <b>原地写</b>（<code>write(layer_idx, k, v, start)</code> 用 <code>self.k[layer_idx, :, start:start+new_len].copy_(k)</code>
+          切片写入，k/v 形状 <code>(batch, new_len, kv_heads, head_dim)</code>）、<b>游标推进</b>
+          （<code>advance(length)</code> 只做 <code>self.cur_len += length</code>，不搬数据）、<b>前缀零拷贝读</b>
+          （<code>read(layer_idx)</code> 返回 <code>self.k[layer_idx, :, :self.cur_len]</code> 视图，不 clone）。
+          溢出守门：<code>start + new_len &gt; max_seq_len</code> 时抛 <code>ValueError</code>（fail-fast，参照
+          <code>src/minimind_reborn/models/kv_cache.py</code> 的 <code>KVCache</code>）。
+        </p>
+        <details>
+          <summary>提示 1 · 方向</summary>
+          <p>所有层共享一对张量、<code>layer_idx</code> 索引第 0 维——这是"容量按层打包"的关键；
+            游标是全局的（各层写同一 start），所以 advance 放在一个 forward 步结束处统一推进，不在 write 里顺手加。</p>
+        </details>
+        <details>
+          <summary>提示 2 · 表达式级</summary>
+          <p>写：<code>self.k[layer_idx, :, start : start + new_len].copy_(k)</code>；
+            读：<code>return self.k[layer_idx, :, : self.cur_len], self.v[layer_idx, :, : self.cur_len]</code>——
+            切片本身返回视图，只要不调 <code>.clone()</code>/<code>.contiguous()</code> 就是零拷贝。</p>
+        </details>
+        <p>
+          对拍：脚本模板见 <a href="btrack.html">B 轨总纲</a>——用你的 cache 跑"prefill + 逐步 decode"，与全量单次
+          forward 的输出逐位对照；再验证写入前后 <code>c.k.data_ptr()</code> 不变（零再分配的直接证据）。
+          裁判测试 <code>tests/test_models/test_kv_cache.py</code>（先跑一遍看参考行为：
+          <code>uv run pytest tests/test_models/test_kv_cache.py -q</code>，5 passed——零再分配/溢出硬错/逐步 vs 全量一致等五条不变量）。
+        </p>
+      </div>
+
       <div class="accept" id="accept">
         <div class="acc-head">✅ M06 验收</div>
         <div class="acc-body">
@@ -537,6 +570,6 @@ for cap in (2048, 4096):
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=4"></script>
+<script src="assets/course.js?v=5"></script>
 </body>
 </html>
