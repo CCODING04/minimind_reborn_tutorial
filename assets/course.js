@@ -49,6 +49,7 @@ const COURSE = [
 const APPENDIX = [
   { id: "btrack", file: "btrack.html", title: "B 轨 · 自写挑战总纲（🏁D）" },
   { id: "pytorch-guide", file: "pytorch_guide.html", title: "PyTorch 特殊用法指南" },
+  { id: "eng-glossary", file: "eng_glossary.html", title: "工程工具速查（CI · lint · mypy）" },
 ];
 
 /* —— 进度（localStorage）—— */
@@ -379,7 +380,7 @@ function renderIndexGrid() {
     ).join("");
     card.innerHTML = `<div class="pc-head"><span class="pc-num">附</span>` +
       `<span class="pc-name">附录</span></div>` +
-      `<p class="pc-desc">主线之外的两份常备参考：八站自写挑战轨道（终点 🏁D 自己的模型说话）与课程用到的 PyTorch 特殊用法即查手册。</p>` +
+      `<p class="pc-desc">主线之外的三份常备参考：八站自写挑战轨道（终点 🏁D 自己的模型说话）、PyTorch 特殊用法即查手册，以及 CI/lint/mypy 等工程通用词速查。</p>` +
       `<ul class="pc-mods">${items}</ul>`;
     frag.appendChild(card);
   }

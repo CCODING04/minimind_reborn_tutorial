@@ -213,6 +213,8 @@ a:hover{text-decoration:underline}
   display:grid;grid-template-columns:280px minmax(0,1fr);
   max-width:1440px;margin:0 auto;
 }
+/* TOC 为第三列组件：按设计仅 ≥1440px 显示（原 1023 断点是笔误，导致 1024-1439 落到侧栏下方） */
+@media(max-width:1439px){.toc{display:none}}
 @media(min-width:1440px){.layout{grid-template-columns:280px minmax(0,1fr) 232px}}
 /* index 落地页无页内目录：不保留第三列 */
 @media(min-width:1440px){body[data-page="index"] .layout{grid-template-columns:280px minmax(0,1fr)}}
@@ -305,7 +307,6 @@ a:hover{text-decoration:underline}
   body.nav-open .nav-overlay{
     display:block;position:fixed;inset:56px 0 0 0;z-index:140;background:var(--overlay);
   }
-  .toc{display:none}
 }
 .nav-overlay{display:none}
 /* codeview 顶栏窄屏：隐藏行数元信息、收窄面包屑 */
