@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工程工具速查 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=11">
+</head>
+<body data-page="eng-glossary">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 附录</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/23</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
+        <div class="kicker"><span class="badge-m">附录</span><span>工程工具速查 · Engineering Glossary</span></div>
+        <h1>工程工具速查：CI、门禁与代码质量那些词</h1>
+        <p class="lede">
+          课程正文会顺口提到一些<b>工程开发常用词</b>——CI、pre-merge job、lint、mypy……它们不是 LLM 知识，
+          而是"代码怎么被工程化地写、验、发"的行业通用语。本页按"是什么 / 为什么需要 / 在 reborn 哪里"
+          三栏速查，供首次撞见时回来翻。
+        </p>
+        <div class="meta">
+          <span class="chip">受众：<b>工程经验不限（与课程 FAQ 一致）</b></span>
+          <span class="chip">用法：<b>字典式，随查随走</b></span>
+          <span class="chip">姊妹篇：<b><a href="pytorch_guide.html">PyTorch 特殊用法指南</a></b></span>
+        </div>
+      </header>
+</section>
+
+<section class="panel">
+<h2 id="what">怎么用这一页</h2>
+      <p>
+        三种读法：① 正文撞见生词 → 回本页查那一行；② 通读一遍（约 15 分钟），
+        建立"工程化 = 让机器替你验证"的世界观；③ 学完 M22 后回来对照——
+        毕业实验里的"改数据→重训→复测"循环，本质就是一套手动 CI。
+      </p>
+      <p>
+        每个词只给三句话：是什么、为什么工业界离不开它、它在 reborn 或本课程里的对应物。
+        想深入的主题词都给了官方文档链接。
+      </p>
+</section>
+
+<section class="panel">
+<h2 id="auto">一、自动化验证：让机器替你说"没改坏"</h2>
+      <div class="table-scroll"><table>
+        <thead><tr><th class="u-w120">术语</th><th>是什么</th><th>为什么需要</th><th>在 reborn / 课程哪里</th></tr></thead>
+        <tbody>
+          <tr><td><b>CI</b><br>持续集成<br>Continuous Integration</td>
+              <td>代码一提交（push / PR），机器自动跑一遍构建 + 测试，红了立刻报警。</td>
+              <td>把"我以为没改坏"变成"机器证明没改坏"；越小的改动越容易定位是谁改坏的。</td>
+              <td>M01 工业卡里 <code>make smoke</code> 的定位就是"手动版 CI"；93 个单测是它的弹药库。</td></tr>
+          <tr><td><b>GitHub Actions</b><br>workflow</td>
+              <td>GitHub 内置的 CI 引擎，用 <code>.github/workflows/*.yml</code> 声明"什么事件触发、跑哪些步骤"。</td>
+              <td>不用自建服务器，仓库在哪 CI 就在哪；YAML 即文档。</td>
+              <td><b>活例子：你正在看的这个课程站</b>——每次 push 由 <code>deploy-pages.yml</code> 自动部署到 GitHub Pages（见本页最后一节）。</td></tr>
+          <tr><td><b>pre-merge job</b><br>合并门禁 / gate</td>
+              <td>PR（拉取请求）合并进主分支之前必须通过的检查项；红了就拦下。</td>
+              <td>主分支永远可用——任何人的改动没过门禁就进不来。</td>
+              <td>M01 工业卡："改完代码跑冒烟"在工业界常挂进 CI 的 pre-merge job。</td></tr>
+          <tr><td><b>CD</b><br>持续部署<br>Continuous Deployment</td>
+              <td>测试全绿后自动发布产物（部署站点、发包、推镜像）。</td>
+              <td>发布不再依赖"某个人的笔记本和手速"，过程可复现。</td>
+              <td>课程站的 Pages 自动部署就是最小编纂版 CD。</td></tr>
+          <tr><td><b>pytest marker</b><br><code>-m "not slow"</code></td>
+              <td>给测试打标签（如 <code>@pytest.mark.slow</code>），运行时按标签挑子集。</td>
+              <td>冒烟要快（秒级）、全量要全（过夜），同一套测试两种吃法。</td>
+              <td>M01 工业卡：reborn 的冒烟等价于 CI 里跑 <code>pytest -m "not slow"</code> + 冒烟链路。</td></tr>
+          <tr><td><b>smoke test</b><br>冒烟测试</td>
+              <td>用最小代价验证"整条链路能通"，而非"每一步都对"。</td>
+              <td>秒级可重复，所以你敢在每次改动后都跑。</td>
+              <td>M01 有完整概念卡（词源：电路板第一次通电先看冒不冒烟）；<code>make smoke</code> 全课要跑几十次。</td></tr>
+          <tr><td><b>回归测试</b><br>regression test</td>
+              <td>每个 bug 修完，补一个"专门锁住它"的测试，防止将来复发。</td>
+              <td>修过的 bug 再犯是最贵的浪费；测试让修复永久生效。</td>
+              <td>bug 猎场的固定第四幕"回归锁定"；<code>test_lr_schedule.py</code> 就是一次真实回归（双卡余弦分母 bug）。</td></tr>
+        </tbody>
+      </table></div>
+</section>
+
+<section class="panel">
+<h2 id="quality">二、代码质量：机器审代码的三个层次</h2>
+      <div class="table-scroll"><table>
+        <thead><tr><th class="u-w120">术语</th><th>是什么</th><th>为什么需要</th><th>在 reborn / 课程哪里</th></tr></thead>
+        <tbody>
+          <tr><td><b>Make / Makefile</b></td>
+              <td>把长命令固化成短目标（<code>make smoke</code>、<code>make test</code>）的任务编排器。</td>
+              <td>可记忆、可发现（敲 <code>make</code> 列出全部目标）、自文档化。</td>
+              <td>reborn 的 <code>Makefile</code>——M01 第一盏绿灯就是 <code>make smoke</code>。</td></tr>
+          <tr><td><b>lint / 风格检查</b><br>（reborn 用 ruff）</td>
+              <td>不运行代码，机器审查格式与低级错误（未用变量、可疑写法）。</td>
+              <td>把" reviewers 反复挑格式"的人力解放出来，风格零争议。</td>
+              <td>reborn 的 <code>ruff</code> 全绿是 CI 口径之一；M20 的 cf46125 提交信息里可见"ruff 清零"。</td></tr>
+          <tr><td><b>类型检查</b><br>mypy</td>
+              <td>不运行代码，静态证明"类型对不上"（把 int 传给了要 str 的地方）。</td>
+              <td>测试覆盖<b>行为</b>，静态检查覆盖<b>名字存在性</b>——测不到的分支它管。</td>
+              <td>M19 猎场：多卡分支测试进不去，<code>mypy</code> 静态揪出 PPO <code>all_reduce</code> 透传 bug。</td></tr>
+          <tr><td><b>pre-commit / git hooks</b></td>
+              <td>提交（commit）动作触发的本地自动检查钩子，常用来跑 lint。</td>
+              <td>问题在提交前就拦下，而不是等 CI 红了才返工。</td>
+              <td>reborn 未启用（规模还小）；工业仓库标配，值得知道。</td></tr>
+          <tr><td><b>PR / code review</b><br>拉取请求 / 代码评审</td>
+              <td>改动先开一个 PR，别人看 diff、留意见、通过后合并。</td>
+              <td>机器门禁（CI）+ 人审（review）双保险；知识在团队里流动。</td>
+              <td>本课程仓库自身的修改周期就是按 PR/commit 组织的；bug 猎场里的 <code>git show</code> 正是在读评审素材。</td></tr>
+        </tbody>
+      </table></div>
+</section>
+
+<section class="panel">
+<h2 id="infra">三、工程基础：让"在我机器上能跑"变成"哪都能跑"</h2>
+      <div class="table-scroll"><table>
+        <thead><tr><th class="u-w120">术语</th><th>是什么</th><th>为什么需要</th><th>在 reborn / 课程哪里</th></tr></thead>
+        <tbody>
+          <tr><td><b>依赖锁定</b><br>uv.lock / lockfile</td>
+              <td>把"精确到补丁号的依赖版本清单"锁进一个文件，随仓库分发。</td>
+              <td>三个月后、别人机器上，<code>uv sync</code> 还原出一模一样的环境。</td>
+              <td>M01 的 <code>uv sync</code> + <code>uv.lock</code>；日志里的"环境指纹"是它的运行时镜像。</td></tr>
+          <tr><td><b>git 工作流</b><br>clone / commit / push</td>
+              <td>分布式版本控制的最小集：取代码、存快照、传远端。</td>
+              <td>改动可回溯、可归因（谁在哪改了什么）、可并行。</td>
+              <td>M00 教最小集；M01 第 0 步的 <code>git clone</code>；bug 猎场的 <code>git show &lt;commit&gt;</code>。</td></tr>
+          <tr><td><b>版本号 / tag</b></td>
+              <td>给"某个确定的状态"起名字（v1.2.0 或权重文件名）。</td>
+              <td>"复现实验 X"的前提是能指认 X 到底是哪个状态。</td>
+              <td>reborn 权重命名 <code>{name}_{hidden}.pth</code> 就是朴素版本思想：模型、规模、来源一眼可辨。</td></tr>
+          <tr><td><b>可观测性</b><br>observability</td>
+              <td>把系统内部状态（loss、吞吐、指纹）持续写出来，供事后回答"发生了什么"。</td>
+              <td>训练是黑盒长跑，没有日志就没有归因——出问题只能重炼。</td>
+              <td>课程主线内容本身：M13 可追溯四件套（config 快照 + 环境指纹 + train.log + metrics.jsonl）。</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout industry">
+        <div class="co-title">🏭 活例子：你正在看的这个课程站，就是一套最小 CI/CD</div>
+        <p>
+          每次有人 <code>git push</code> 到课程仓库，GitHub 被 push 事件唤醒（GitHub Actions），
+          按 <code>.github/workflows/deploy-pages.yml</code> 里声明的步骤构建站点并发布到 GitHub Pages（CD）。
+          全程无人值守——"人只负责写，机器负责验和发"。等学完 M22，
+          你会认出这正是课程反复训练的那套循环的自动化形态：<b>改动 → 验证 → 发布</b>。
+        </p>
+      </div>
+
+      <div class="callout tip">
+        <div class="co-title">💡 与课程纪律的关系</div>
+        <p>
+          课程的"术语首现必解释或桥接"纪律覆盖 LLM 术语；本附录把同一纪律延伸到<b>工程术语</b>——
+          正文首现处会给一行括注并链到这里。它不要求你预先通读：撞见再回来，三行讲清一个词。
+        </p>
+      </div>
+
+      <p class="prov">[编者注 · 2026-10-07 · 本页为 B9 批次新增附录；由 M01（CI）/M19（mypy）首现处链接到达]</p>
+</section>
+
+<section class="panel">
+<footer class="course-footer">
+        <p><a href="m01_get_started.html">← 返回 M01</a> · <a href="btrack.html">B 轨总纲</a> · <a href="pytorch_guide.html">PyTorch 特殊用法指南</a> · <a href="index.html">课程地图</a></p>
+        <p>跟着 minimind_reborn 造一个大模型 · 附录页 · 断网时 MathJax 公式显示为 LaTeX 原文</p>
+      </footer>
+</section>
+      </div>
+  </main>
+</div>
+
+<script src="assets/course.js?v=11"></script>
+</body>
+</html>

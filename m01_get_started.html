@@ -303,7 +303,7 @@ uv run python tools/download_data.py --name dpo_mini</code></pre></div>
       <div class="callout industry">
         <div class="co-title">🏭 工业对照：make smoke 之外</div>
         <p>
-          "改完代码跑一遍冒烟"在工业界是提交前的标准动作（常挂进 CI 的 pre-merge job）。
+          "改完代码跑一遍冒烟"在工业界是提交前的标准动作（常挂进 CI 的 pre-merge job——CI（持续集成）等工程术语的一分钟速查见 <a href="eng_glossary.html">附录 · 工程工具速查</a>）。
           reborn 的 <code>Makefile</code> 把它固化成一条命令，等价于 CI 里跑
           <code>pytest -m "not slow"</code> + 冒烟链路。你在本课程里会重复执行它几十次——每次大改动后，
           11 秒换一个"管线没断"的确认，极其划算。

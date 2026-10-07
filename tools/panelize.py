@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 COURSE_DIR = Path(__file__).resolve().parent.parent
-DEFAULT_GLOB = ["m*.html", "btrack.html", "pytorch_guide.html"]
+DEFAULT_GLOB = ["m*.html", "btrack.html", "pytorch_guide.html", "eng_glossary.html"]
 
 CONTENT_OPEN = re.compile(r'<div class="content(?:\s[^"]*)?">')
 BOUNDARY = re.compile(r'(<h2(?![^>]*class="[^"]*glossary)|<div class="glossary"|<nav class="pager"|<footer)', re.S)

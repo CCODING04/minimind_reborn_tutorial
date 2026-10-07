@@ -644,7 +644,7 @@ response_old_logps.extend([0.0] * len(obs_delta))</code></pre></div>
         <summary>测验 4 · PPO 的 KL 早停为什么必须先跨卡 all_reduce 再比较？f8af44d 修的是什么？</summary>
         <div class="quiz-body">
           <div class="quiz-ans">
-            <p><b>答案：</b>早停是个"分支决定"：若一张卡 KL 超阈值停了、另一张继续更新，两边 backward 的集合通信次数不一致 → DDP 死锁。所以先 all_reduce 求全卡平均 KL，让所有卡拿到同一个数、做同一个决定。f8af44d 修的是：这行调用的 dist.all_reduce / dist.ReduceOp 在 utils/dist 封装里根本不存在（只有 all_reduce_mean），双卡一跑到就 AttributeError——但因为所有测试和冒烟都是单卡（分支不进），一直没被发现，由 mypy 静态查出。教训：测试覆盖行为，静态检查覆盖名字存在性；多卡/外部服务分支是测试盲区。</p>
+            <p><b>答案：</b>早停是个"分支决定"：若一张卡 KL 超阈值停了、另一张继续更新，两边 backward 的集合通信次数不一致 → DDP 死锁。所以先 all_reduce 求全卡平均 KL，让所有卡拿到同一个数、做同一个决定。f8af44d 修的是：这行调用的 dist.all_reduce / dist.ReduceOp 在 utils/dist 封装里根本不存在（只有 all_reduce_mean），双卡一跑到就 AttributeError——但因为所有测试和冒烟都是单卡（分支不进），一直没被发现，由 mypy 静态查出。教训：测试覆盖行为，静态检查（<a href="eng_glossary.html">mypy 等工程工具速查见附录</a>）覆盖名字存在性；多卡/外部服务分支是测试盲区。</p>
             <p class="back">答错回看：<a href="#hunt">猎场：mypy 揪出两个真 bug</a>。</p>
           </div>
         </div>
