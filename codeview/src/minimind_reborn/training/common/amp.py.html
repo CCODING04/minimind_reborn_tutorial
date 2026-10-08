@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>amp.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="../../../../../assets/favicon.svg">
-<link rel="stylesheet" href="../../../../../assets/course.css?v=12">
+<link rel="stylesheet" href="../../../../../assets/course.css?v=15">
 </head>
 <body data-page="codeview">
 <header class="cv-topbar">
@@ -58,6 +58,6 @@ def build_scaler(dtype: torch.dtype) -&gt; torch.amp.GradScaler:
     &quot;&quot;&quot;scaler 恒创建，enabled 只认 fp16——scaler 的 step/update 调用次数与 optimizer 对齐。&quot;&quot;&quot;
     return torch.amp.GradScaler(enabled=(dtype == torch.float16))</code></pre></div>
 </main>
-<script src="../../../../../assets/course.js?v=12"></script>
+<script src="../../../../../assets/course.js?v=15"></script>
 </body>
 </html>

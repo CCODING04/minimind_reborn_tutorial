@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M02 · 与 64M 模型对话 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=12">
+<link rel="stylesheet" href="assets/course.css?v=15">
 </head>
 <body data-module="m02">
 
@@ -113,7 +113,7 @@ llm = MiniMindLLM(model.to(dev).to(torch.float32), _load_tokenizer(), dev, torch
 
       <p>三个值得停下来的观察：</p>
       <ol>
-        <li><b>身份随温度漂移</b>：Qwen → 通义千问 → 小明。"我是谁"不是写死的元数据，而是<b>一个个被采样出来的 token</b>——低温锁死高概率答案，高温把长尾身份词拉进候选池。</li>
+        <li><b>身份随温度漂移</b>：Qwen → 通义千问 → 小明。"我是谁"不是写死的元数据，而是<b>一个个被采样出来的 token</b>——低温锁死高概率答案，高温把<a href="glossary.html#long-tail">长尾</a>身份词拉进候选池。</li>
         <li><b>低温 ≠ 高质量</b>：0.1 档最稳也最啰嗦——沿最高概率的模板滑行，撞 128 token 上限（<code>finish=length</code>）才停。</li>
         <li><b>高温提前停</b>：1.5 档 95 token 即 <code>finish=stop</code>——eos 的概率也被温度抬高，模型"自己决定"说完了；三档 latency 差异主要来自生成长度（95 vs 128）与首 token 开销，温度本身没有快慢。</li>
       </ol>
@@ -329,7 +329,7 @@ out = self.generate_fn(inputs["input_ids"], inputs["attention_mask"], self.gen)
         <div class="quiz-body">
           <p>提示：想想 SFT 训练数据是谁生成的，「自我认知」这几个字对模型意味着什么。</p>
           <div class="quiz-ans">
-            <p><b>答案：</b>SFT 数据是从 Qwen 蒸馏来的，语料里充满教师模型的自我介绍，模型连"门牌号"一起学了进来——自报家门暴露了数据来源。而 1.5 档自称小明说明：身份不是存储的元数据，而是<b>每步被采样出来的 token</b>，温度一高，长尾身份词就进了候选池。</p>
+            <p><b>答案：</b>SFT 数据是从 Qwen 蒸馏来的，语料里充满教师模型的自我介绍，模型连"门牌号"一起学了进来——自报家门暴露了数据来源。而 1.5 档自称小明说明：身份不是存储的元数据，而是<b>每步被采样出来的 token</b>，温度一高，<a href="glossary.html#long-tail">长尾</a>身份词就进了候选池。</p>
             <p><b>机制：</b>「我是___」的下一个 token 分布里，「Qwen」在 SFT 语料加持下是高概率峰——温度缩放改变的正是这个分布的形状。</p>
             <p class="back">答错回看：<a href="#temps">三档温度，三种性格</a> 的观察 1 与其后"自称 Qwen 的真相"段。</p>
           </div>
@@ -475,6 +475,6 @@ print('[finish=%s tokens=%d latency=%sms]' % (out['finish_reason'], out['generat
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=12"></script>
+<script src="assets/course.js?v=15"></script>
 </body>
 </html>

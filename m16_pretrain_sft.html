@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M16 · pretrain / SFT 实战：点火，走完两棒 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=12">
+<link rel="stylesheet" href="assets/course.css?v=15">
 </head>
 <body data-module="m16">
 
@@ -371,7 +371,7 @@ val：ep1 末 1.6850 → ep2 末 1.5276（best）；tok/s ≈ 253k，mfu ≈ 29%
           <tbody>
             <tr><td><b>① 垂直下跌</b></td><td>8.13 → 6.1（前 500 步）</td><td><b>词频</b>：哪些 token 高频。梯度最大、学得最快——unigram 统计（单字频率表）几步就能拟合，tiny 的 200 步全程都在这一段</td></tr>
             <tr><td><b>② 快速变缓</b></td><td>6.1 → 2.4（500 → 8000 步）</td><td><b>局部结构</b>：固定搭配与相邻依赖（"北京"后面常是"市"）。信息量比词频大一个量级，但仍是局部统计</td></tr>
-            <tr><td><b>③ 长平台</b></td><td>2.4 → 1.66（8000 步 → 26 万步）</td><td><b>长尾</b>：句法、语义、事实——每降 0.1 nat 都要海量数据与参数。这段占了总时长 95%，也是"大模型为什么贵"的曲线形态</td></tr>
+            <tr><td><b>③ 长平台</b></td><td>2.4 → 1.66（8000 步 → 26 万步）</td><td><b><a href="glossary.html#long-tail">长尾</a></b>：句法、语义、事实——每降 0.1 nat 都要海量数据与参数。这段占了总时长 95%，也是"大模型为什么贵"的曲线形态</td></tr>
           </tbody>
         </table>
       </div>
@@ -706,6 +706,6 @@ print("生成:", out["content"], "| finish:", out["finish_reason"], "| tokens:",
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=12"></script>
+<script src="assets/course.js?v=15"></script>
 </body>
 </html>

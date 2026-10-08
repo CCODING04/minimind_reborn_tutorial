@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>术语解释 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=15">
+</head>
+<body data-page="glossary">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 附录</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/23</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
+        <div class="kicker"><span class="badge-m">附录</span><span>术语解释 · Glossary</span></div>
+        <h1>术语解释：课程里的 LLM 概念词</h1>
+        <p class="lede">
+          课程正文会顺口用到一些<b>LLM / 模型概念词</b>——长尾、候选池……有些在各课「本课词汇」里一句话带过，
+          有些值得多讲几段。本页收录它们的展开版解释：正文首现处会链到这里，
+          词条按主题分组、随课程生长。工程开发类词（CI、lint、mypy……）归姊妹篇
+          <a href="eng_glossary.html">工程工具速查</a>，本页只管模型与采样世界的词。
+        </p>
+        <div class="meta">
+          <span class="chip">受众：<b>全程适用，撞见生词再回来</b></span>
+          <span class="chip">用法：<b>字典式，随查随走</b></span>
+          <span class="chip">姊妹篇：<b><a href="eng_glossary.html">工程工具速查</a> · <a href="pytorch_guide.html">PyTorch 指南</a></b></span>
+        </div>
+      </header>
+</section>
+
+<section class="panel">
+<h2 id="what">怎么用这一页</h2>
+      <p>
+        两种读法：① 正文撞见术语链接 → 跳过来读那一条，读完点「返回」或锚点回去；
+        ② 复习时按主题通读一组词条，把散在各课的概念串成网。
+        每个词条给「是什么 + 在 reborn / 课程哪里 + 与哪些旋钮相关」，并互链回首现场景。
+      </p>
+      <p>
+        与各课课末「本课词汇」的关系：那是一课之内的一句话速记，本页是跨课程的展开解释——
+        同一个词，两处纵深不同。
+      </p>
+</section>
+
+<section class="panel">
+<h2 id="sampling-dist">一、采样与分布</h2>
+      <p>
+        生成模型每一步都在跟「整个词表上的概率分布」打交道——这一组的词，
+        都在描述这条分布的<b>形状</b>，以及它被<b>采样</b>的方式。
+      </p>
+
+      <h3 id="long-tail">长尾 · long tail</h3>
+      <p>
+        把一批候选按概率从高到低排成柱状图，形状永远是<b>几根高柱 + 一条又细又长的尾巴</b>：
+        极少数候选占走大部分概率（<b>头部</b>），剩下大量候选各占一点点、连起来拖得很长（<b>长尾</b>）。
+        这个名字来自统计学的<b>长尾分布</b>；商业圈的同名说法（Chris Anderson《长尾理论》，2004——
+        畅销书是头部，无数冷门书各卖一点、总量可观）讲的是同一个形状。
+      </p>
+      <p>
+        在生成模型里，这条分布就是<b>每一步在整个词表上的概率分布</b>（reborn 词表 6400 个 token）。
+        看「我是___」这个位置：头部是 <b>Qwen、通义</b>——SFT 语料反复强化出的高概率峰（60%、20% 量级）；
+        长尾是<b>小明、小红、小助手</b>以及一切「像名字」的词（0.3%、0.1%、0.05%……）。
+        它们不是零概率——「小明」是中文课本高频人名，预训练语料里大量出现——只是低温下轮不到被抽中。
+        所谓<b>长尾身份词</b>，就是落在这条尾巴里、能填进「我是___」的身份 / 人名词。
+      </p>
+      <p>
+        温度一高，尾巴就翘起来：$T &gt; 1$ 做的是 $p_i \propto \exp(z_i/T)$ 再归一化——分布被<b>压平</b>，
+        头部相对压低、长尾相对抬高。原本 0.3% 的「小明」可能被抬到几个百分点，一次采样就真的命中；
+        命中后自回归顺着写下去，模型就「自称小明」了。<b>候选池</b>指实际有机会被采样命中的那批 token——
+        温度决定分布的<b>形状</b>（尾巴翘多高），top_p 决定候选池的<b>大小</b>
+        （按概率降序累积到 p 就截断，尾巴整体出局）。1.5 的温度配 0.95 的 top_p，
+        就是「允许乱，但只乱到前 95% 概率质量以内」。
+      </p>
+      <p>
+        在课程里：<a href="m02_chat.html#temps">M02 三档温度实验</a>展示了长尾身份词现身的那一刻；
+        <a href="m16_pretrain_sft.html#loss-reading">M16 的 loss 三段</a>借同一个词形容
+        「每项各占一点、合起来很长」的难学知识（句法、语义、事实）——同一形状，两处风景。
+      </p>
+
+      <p class="prov">[编者注 · 2026-10-08 · 术语解释附录首版；首条「长尾」由 M02（首现 + 测验 1）与 M16（首现）链接到达]</p>
+</section>
+
+<section class="panel">
+<footer class="course-footer">
+        <p><a href="m02_chat.html">← 返回 M02</a> · <a href="eng_glossary.html">工程工具速查</a> · <a href="pytorch_guide.html">PyTorch 特殊用法指南</a> · <a href="index.html">课程地图</a></p>
+        <p>跟着 minimind_reborn 造一个大模型 · 附录页 · 断网时 MathJax 公式显示为 LaTeX 原文</p>
+      </footer>
+</section>
+      </div>
+  </main>
+  <aside class="toc" id="toc" aria-label="页内目录"></aside>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+    options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+  };
+</script>
+<script async src="assets/vendor/tex-svg.js"></script>
+<script src="assets/course.js?v=15"></script>
+</body>
+</html>

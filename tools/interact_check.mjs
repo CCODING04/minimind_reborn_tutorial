@@ -231,16 +231,20 @@ async function interactions(browser) {
     if (first >= 1) ok("m00 上一课为禁用占位"); else bad("m00 pager", "无 disabled 占位");
     await pg.locator(".pager a.pg.next").click();
     await pg.waitForLoadState("domcontentloaded");
+    // SPA 局部刷新下 loadstate 不再变化：等页面身份（body data-module）就位再继续
+    await pg.waitForFunction(() => document.body.dataset.module === "m01", null, { timeout: 5000 }).catch(() => {});
     let hops = 1;
     for (let i = 2; i <= 22; i++) {
       const next = pg.locator(".pager a.pg.next");
       if (!(await next.count())) { bad("pager 链", `第 ${i - 1} 课缺下一课链接`); break; }
       await next.click();
       await pg.waitForLoadState("domcontentloaded");
+      await pg.waitForFunction((k) => document.body.dataset.module === "m" + String(k).padStart(2, "0"), i, { timeout: 5000 }).catch(() => {});
       hops++;
       if (!pg.url().includes(`m${String(i).padStart(2, "0")}`)) { bad("pager 链", `跳到了 ${pg.url()}`); break; }
     }
     if (hops === 22) ok("pager 下一课链 m00→m22 全通（22 跳）");
+    await pg.waitForFunction(() => document.body.dataset.module === "m22", null, { timeout: 5000 }).catch(() => {});
     const last = await pg.locator(".pager .pg.disabled").count();
     if (pg.url().includes("m22") && last >= 1) ok("m22 下一课为禁用占位（课程终点）");
     await ctx.close();

@@ -50,6 +50,7 @@ const APPENDIX = [
   { id: "btrack", file: "btrack.html", title: "B 轨 · 自写挑战总纲（🏁D）" },
   { id: "pytorch-guide", file: "pytorch_guide.html", title: "PyTorch 特殊用法指南" },
   { id: "eng-glossary", file: "eng_glossary.html", title: "工程工具速查（CI · lint · mypy）" },
+  { id: "glossary", file: "glossary.html", title: "术语解释（LLM 概念词）" },
 ];
 
 /* —— 进度（localStorage）—— */
@@ -130,22 +131,34 @@ function mountThemeToggle() {
 }
 
 const byId = Object.fromEntries(COURSE.map((m) => [m.id, m]));
-const currentId = document.body.dataset.module || "";
-const currentPage = document.body.dataset.page || "";
+let currentId = document.body.dataset.module || "";   // SPA 导航时同步更新（renderPager/renderSidebar 依赖）
+let currentPage = document.body.dataset.page || "";
 
 /* —— 侧栏课程树 —— */
+let sidebarScrollRestored = false; // 跨页恢复每页只做一次；同页重渲染保当前位
+const SIDEBAR_SCROLL_KEY = "mrt-sidebar-scroll";
+
 function renderSidebar() {
   const mount = document.getElementById("sidebar");
   if (!mount) return;
+  const keepScroll = mount.scrollTop; // syncProgressUI 重渲染侧栏时不丢滚动位置
+  /* 重建前记下各分组折叠态：重渲染（如进度切换）沿用现态，不按新页重新折叠 */
+  const prevCollapsed = new Map();
+  for (const p of mount.querySelectorAll(".part[data-part-id]")) {
+    prevCollapsed.set(p.dataset.partId, p.classList.contains("collapsed"));
+  }
   const frag = document.createDocumentFragment();
   for (const part of PARTS) {
     const mods = COURSE.filter((m) => m.part === part.id);
     const doneCount = mods.filter((m) => progress.has(m.id)).length;
     const wrap = document.createElement("div");
+    wrap.dataset.partId = part.id;
     wrap.className = "part" + (currentId && byId[currentId] && byId[currentId].part !== part.id ? " collapsed" : "");
     const collapsedPref = localStorage.getItem("mrt-part-" + part.id);
     if (collapsedPref === "1") wrap.classList.add("collapsed");
     if (collapsedPref === "0") wrap.classList.remove("collapsed");
+    /* dataset 键是字符串而 part.id 是数字：统一 String 再查，否则 Map 永远 miss */
+    if (prevCollapsed.has(String(part.id))) wrap.classList.toggle("collapsed", prevCollapsed.get(String(part.id)));
 
     const head = document.createElement("button");
     head.className = "part-head";
@@ -210,6 +223,32 @@ function renderSidebar() {
   }
   mount.innerHTML = "";
   mount.appendChild(frag);
+  if (!sidebarScrollRestored) {
+    const saved = sessionStorage.getItem(SIDEBAR_SCROLL_KEY);
+    if (saved !== null) mount.scrollTop = +saved;
+    /* 兜底：跨页分组的展开状态不同，像素位置可能对不上（或被钳位）——
+       只要当前页的条目不在侧栏视口内，就把整个侧栏滚到能看见它的位置 */
+    const cur = mount.querySelector("a.mod.current");
+    if (cur) {
+      const r = cur.getBoundingClientRect();
+      const box = mount.getBoundingClientRect();
+      if (r.top < box.top || r.bottom > box.bottom) {
+        mount.scrollTop += r.top - box.top - (mount.clientHeight - r.height) / 2;
+      }
+    }
+    sidebarScrollRestored = true;
+  } else {
+    mount.scrollTop = keepScroll;
+  }
+}
+
+/* —— 侧栏滚动记忆：离开页面时存档（含返回/前进），进新页恢复——点目录不弹回顶部 —— */
+function initSidebarScrollMemory() {
+  const mount = document.getElementById("sidebar");
+  if (!mount) return;
+  window.addEventListener("pagehide", () => {
+    sessionStorage.setItem(SIDEBAR_SCROLL_KEY, String(mount.scrollTop));
+  });
 }
 
 /* —— 顶栏进度 —— */
@@ -229,12 +268,17 @@ function syncProgressUI() {
   renderIndexGrid();
 }
 
-/* —— 页内目录（≥1440px 显示）—— */
+/* —— 页内目录（≥1440px 显示；SPA 换页会重复调用，需可重入）—— */
+let tocSpy = null;
 function renderToc() {
   const mount = document.getElementById("toc");
   if (!mount) return;
+  mount.replaceChildren(); // 先清空：重复调用不叠目录
+  if (tocSpy) document.removeEventListener("scroll", tocSpy);
+  tocSpy = null;
   const heads = [...document.querySelectorAll("main .content h2[id], main .content h3[id]")];
-  if (!heads.length) { mount.remove(); return; }
+  mount.hidden = !heads.length; // 无标题页隐藏而非移除：换到有标题页可复活
+  if (!heads.length) return;
   const box = document.createElement("div");
   box.className = "toc-title";
   box.textContent = "本页目录";
@@ -255,6 +299,7 @@ function renderToc() {
     }
     for (const a of links) a.classList.toggle("current", a.dataset.target === current);
   };
+  tocSpy = spy;
   document.addEventListener("scroll", spy, { passive: true });
   spy();
 }
@@ -380,7 +425,7 @@ function renderIndexGrid() {
     ).join("");
     card.innerHTML = `<div class="pc-head"><span class="pc-num">附</span>` +
       `<span class="pc-name">附录</span></div>` +
-      `<p class="pc-desc">主线之外的三份常备参考：八站自写挑战轨道（终点 🏁D 自己的模型说话）、PyTorch 特殊用法即查手册，以及 CI/lint/mypy 等工程通用词速查。</p>` +
+      `<p class="pc-desc">主线之外的四份常备参考：八站自写挑战轨道（终点 🏁D 自己的模型说话）、PyTorch 特殊用法即查手册、CI/lint/mypy 等工程通用词速查，以及长尾等 LLM 概念词的展开解释。</p>` +
       `<ul class="pc-mods">${items}</ul>`;
     frag.appendChild(card);
   }
@@ -514,12 +559,147 @@ function initCopyButtons() {
   }
 }
 
+/* —— SPA 式局部刷新：站内点课只换 main .content，顶栏/侧栏 DOM 原样保留 ——
+   拦截范围 = 课程页 + 附录 + index；同页 #锚点、codeview/（独立布局）、外链、
+   修饰键点按（保留新标签页）不拦截走整页。fetch 失败回退整页跳转。 */
+const SPA_FILES = new Set(["index.html", ...COURSE.map((m) => m.file), ...APPENDIX.map((m) => m.file)]);
+const spaCache = new Map(); // pathname → Document；用前 clone，返回/前进瞬时回放
+let spaSeq = 0;
+let mathjaxReady = null;    // Promise：tex-svg.js 就绪（整站只加载一次）
+let spaCurrentPath = location.pathname; // SPA 当前展示页：popstate 时 location 已是目标页，不能拿它判同页
+
+function spaGoto(url, push = true) {
+  if (url.pathname === spaCurrentPath) { // 同页：只滚不换血，保住测验展开态等页面状态
+    if (push) { history.pushState({}, "", url); scrollToHash(url.hash); }
+    else if (url.hash) scrollToHash(url.hash); // 返回到 #：交给浏览器恢复，不强改
+    return;
+  }
+  const seq = ++spaSeq;
+  if (push) history.pushState({}, "", url);
+  const cached = spaCache.get(url.pathname);
+  const p = cached ? Promise.resolve(cached)
+    : fetch(url.pathname)
+        .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+        .then((html) => {
+          const doc = new DOMParser().parseFromString(html, "text/html");
+          spaCache.set(url.pathname, doc);
+          return doc;
+        });
+  p.then((doc) => {
+    if (seq !== spaSeq) return; // 连点竞态：只认最后一次
+    spaSwap(doc, url);
+  }).catch(() => { location.href = url.href; });
+}
+
+function scrollToHash(hash) {
+  const id = hash && hash.slice(1);
+  const t = id ? document.getElementById(id) : null;
+  if (t) t.scrollIntoView(); else window.scrollTo(0, 0);
+}
+
+function spaSwap(doc, url) {
+  const mount = document.querySelector("main .content");
+  const fresh = doc.querySelector("main .content");
+  if (!mount || !fresh) { location.href = url.href; return; }
+  mount.replaceChildren(...fresh.cloneNode(true).childNodes);
+  spaCurrentPath = url.pathname;
+  /* 页面身份同步：module 页有 data-module，附录/index 有 data-page，互斥 */
+  currentId = doc.body.dataset.module || "";
+  currentPage = doc.body.dataset.page || "";
+  if (currentId) { document.body.dataset.module = currentId; delete document.body.dataset.page; }
+  else {
+    delete document.body.dataset.module;
+    if (currentPage) document.body.dataset.page = currentPage; else delete document.body.dataset.page;
+  }
+  document.title = doc.title;
+  const brandHost = document.querySelector(".topbar .brand > span:not(.logo)");
+  if (brandHost) { // 面包屑「 · 附录」随目标页增减
+    const src = doc.querySelector(".topbar .brand .crumb");
+    let crumb = brandHost.querySelector(".crumb");
+    if (src) {
+      if (!crumb) { crumb = document.createElement("span"); crumb.className = "crumb"; brandHost.appendChild(crumb); }
+      crumb.textContent = src.textContent;
+    } else if (crumb) crumb.textContent = "";
+  }
+  /* 侧栏只挪 current 高亮：不重建、不动折叠分组、滚动天然不动 */
+  const sidebar = document.getElementById("sidebar");
+  if (sidebar) {
+    const old = sidebar.querySelector("a.mod.current");
+    if (old) old.classList.remove("current");
+    const file = url.pathname.split("/").pop();
+    const next = sidebar.querySelector('a.mod[href="' + file + '"]');
+    if (next) next.classList.add("current");
+  }
+  document.body.classList.remove("nav-open"); // 移动端抽屉收起
+  const navToggle = document.querySelector(".topbar .nav-toggle");
+  if (navToggle) navToggle.setAttribute("aria-expanded", "false");
+  /* 正文换血后的重建 */
+  renderToc();
+  renderPager();
+  renderIndexGrid();
+  initHeadingAnchors();
+  highlightCode();
+  initCopyButtons();
+  ensureMathJax(mount);
+  scrollToHash(url.hash);
+}
+
+function ensureMathJax(scope) {
+  const text = scope.textContent;
+  if (!text.includes("$") && !text.includes("\\(")) return; // 无公式记号不加载
+  const typeset = () => {
+    if (window.MathJax && MathJax.typesetPromise) MathJax.typesetPromise([scope]).catch(() => {});
+  };
+  if (window.MathJax && MathJax.typesetPromise) { typeset(); return; } // 入口页已带 MathJax
+  if (!mathjaxReady) {
+    let s = document.querySelector('script[src*="tex-svg.js"]');
+    if (!s) {
+      if (!window.MathJax) { // 与各页内联配置保持一致
+        window.MathJax = {
+          tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"]] },
+          options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+        };
+      }
+      s = document.createElement("script");
+      s.src = "assets/vendor/tex-svg.js";
+      document.head.appendChild(s);
+    }
+    mathjaxReady = new Promise((resolve) => {
+      s.addEventListener("load", resolve);
+      s.addEventListener("error", resolve);
+    });
+  }
+  mathjaxReady.then(typeset);
+}
+
+function initSpaNav() {
+  if ("scrollRestoration" in history) history.scrollRestoration = "manual"; // 滚动完全自管：换血后统一回顶/到锚点
+  document.addEventListener("click", (ev) => {
+    if (ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    const a = ev.target.closest("a[href]");
+    if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+    const url = new URL(a.href, location.href);
+    if (url.origin !== location.origin) return;
+    const file = url.pathname.split("/").pop();
+    if (!file || !SPA_FILES.has(file)) return;
+    ev.preventDefault();
+    spaGoto(url);
+  });
+  window.addEventListener("popstate", () => {
+    const url = new URL(location.href);
+    const file = url.pathname.split("/").pop();
+    if (file && SPA_FILES.has(file)) spaGoto(url, false);
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   applyTheme();
   applyStyle();
   mountThemeToggle();
   mountStyleToggle();
   initDrawer();
+  initSidebarScrollMemory();
+  initSpaNav();
   renderSidebar();
   renderPager();        // 先创建按钮，再同步状态（syncProgressUI 会设置按钮文字）
   syncProgressUI();
