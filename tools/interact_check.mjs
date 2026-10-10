@@ -106,7 +106,7 @@ async function interactions(browser) {
     await pg.goto(BASE + "/m05_layers.html", { waitUntil: "domcontentloaded" });
     const pre = pg.locator("pre.code").first();
     await pre.hover();
-    const btn = pre.locator(".copy-btn");
+    const btn = pre.locator("xpath=../button[contains(@class,'copy-btn')]"); // 按钮挂在 pre 外的 .copy-wrap 上
     if (await btn.count()) {
       await btn.click();
       await pg.waitForTimeout(200);
@@ -117,11 +117,11 @@ async function interactions(browser) {
       else ok("复制按钮：触发成功（剪贴板读权限不可用，按文本变化判定）");
       const label = await btn.textContent();
       if (label === "已复制") ok("复制按钮反馈文字"); else bad("复制反馈", label || "(空)");
-    } else bad("复制按钮注入", "pre.code 上无 .copy-btn");
+    } else bad("复制按钮注入", "pre.code 外层 .copy-wrap 上无 .copy-btn");
     await pg.goto(BASE + "/m01_get_started.html", { waitUntil: "domcontentloaded" });
     const term = pg.locator("pre.term").first();
     await term.hover();
-    await term.locator(".copy-btn").click();
+    await term.locator("xpath=../button[contains(@class,'copy-btn')]").click();
     await pg.waitForTimeout(200);
     const t2 = await pg.evaluate(() => navigator.clipboard.readText().catch(() => null));
     if (t2 !== null) {

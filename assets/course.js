@@ -527,7 +527,13 @@ function copyTextFallback(text, done) {
 }
 function initCopyButtons() {
   for (const pre of document.querySelectorAll("pre.code, pre.term, pre.ascii")) {
-    if (pre.querySelector(".copy-btn")) continue;
+    if (pre.parentElement && pre.parentElement.classList.contains("copy-wrap")) continue;
+    /* 按钮不能挂 pre 内：pre 是横向滚动容器，绝对定位子元素会随滚动条一起走。
+       包一层不滚动的 .copy-wrap 做定位锚，按钮相对代码框恒定不动。 */
+    const wrap = document.createElement("div");
+    wrap.className = "copy-wrap" + (pre.classList.contains("term") ? " wrap-term" : "");
+    pre.before(wrap);
+    wrap.appendChild(pre);
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "copy-btn";
@@ -555,7 +561,7 @@ function initCopyButtons() {
         copyTextFallback(text, done);
       }
     });
-    pre.appendChild(btn);
+    wrap.appendChild(btn);
   }
 }
 

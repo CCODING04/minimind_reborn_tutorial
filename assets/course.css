@@ -443,7 +443,9 @@ pre.code .fb-blank{                       /* 填空占位 ____ */
   background:var(--attention-subtle);border-bottom:2px solid var(--attention-border);
   color:var(--attention);border-radius:3px;padding:0 4px;font-weight:700;
 }
-/* 复制按钮：悬停浮现（浅色代码块与深色终端两个变体） */
+/* 复制按钮：悬停浮现（浅色代码块与深色终端两个变体）。
+   锚在 .copy-wrap（不滚动的包裹层）上，拖 pre 横向滚动条时按钮不动 */
+.copy-wrap{position:relative}
 .copy-btn{
   position:absolute;top:8px;right:8px;z-index:5;
   font:11.5px/1 var(--sans);color:var(--fg-muted);
@@ -451,12 +453,12 @@ pre.code .fb-blank{                       /* 填空占位 ____ */
   padding:4px 10px;cursor:pointer;opacity:0;transition:opacity .15s;
 }
 pre{position:relative}
-pre:hover .copy-btn{opacity:1}
+.copy-wrap:hover .copy-btn{opacity:1}
 .copy-btn:hover{border-color:var(--accent);color:var(--accent)}
-pre.term .copy-btn{
+.copy-wrap.wrap-term .copy-btn{
   background:#21262d;border-color:#3d444d;color:#adbac7;
 }
-pre.term .copy-btn:hover{border-color:var(--term-blue);color:var(--term-blue)}
+.copy-wrap.wrap-term .copy-btn:hover{border-color:var(--term-blue);color:var(--term-blue)}
 
 /* 终端块（GitHub dark，课程的"第二主角"） */
 pre.term{
