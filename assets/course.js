@@ -541,12 +541,22 @@ function initCopyButtons() {
     btn.addEventListener("click", () => {
       const codeEl = pre.querySelector("code");
       // $ 提示符标记了 user-select:none，但 innerText/textContent 仍会包含它——
-      // 克隆后剔除 .p 再取文本，保证"所见（可选中）即所复制"
+      // 克隆后剔除 .p 再取文本，保证"所见（可选中）即所复制"。
+      // 行模式（codeview 的 .cl 块）换行藏在 display:block 里，textContent 无 \n——逐行重组
       let text;
       if (codeEl) {
-        const clone = codeEl.cloneNode(true);
-        clone.querySelectorAll(".p").forEach((n) => n.remove());
-        text = clone.textContent;
+        const rows = codeEl.querySelectorAll(".cl");
+        if (rows.length) {
+          text = [...rows].map((r) => {
+            const c = r.cloneNode(true);
+            c.querySelectorAll(".p").forEach((n) => n.remove());
+            return c.textContent;
+          }).join("\n");
+        } else {
+          const clone = codeEl.cloneNode(true);
+          clone.querySelectorAll(".p").forEach((n) => n.remove());
+          text = clone.textContent;
+        }
       } else {
         text = pre.innerText;
       }

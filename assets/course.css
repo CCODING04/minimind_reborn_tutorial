@@ -718,9 +718,12 @@ mjx-container[jax="SVG"][display="true"]{display:block;margin:6px 0}
   background:var(--attention-subtle);color:var(--attention);
   padding:10px 16px;margin:0 0 14px;font-size:13.5px;
 }
-/* 逐行渲染：行号列 + #Ln 锚点高亮（GitHub blob 式） */
-.code-lines{counter-reset:line}
+/* 逐行渲染：行号列 + #Ln 锚点高亮（GitHub blob 式）。
+   counter 重置挂在 code[data-lines] 上——build_codeview 只发 data-lines 属性，
+   不带类名；此前重置选择器 (.code-lines) 从未命中，行号恒显示 1 */
+.code-lines,code[data-lines]{counter-reset:line}
 .cl{display:block;scroll-margin-top:70px}
+.cl:hover{background:var(--subtle-deep)}
 .cl:empty{min-height:1.75em}
 .cl::before{
   counter-increment:line;content:counter(line);

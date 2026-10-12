@@ -130,7 +130,7 @@ def gen_page(rel: str) -> str:
 
     ext = src.suffix.lower()
     lang = LANG_BY_EXT.get(ext, "text")
-    n_lines = len(lines)
+    n_lines = body.count("\n") + 1  # 按 GitHub 口径数渲染行：尾换行不产生幻影行
     kb = max(1, len(raw) // 1024)
     ver = page_version()
     title = src.name
