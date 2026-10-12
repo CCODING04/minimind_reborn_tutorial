@@ -193,7 +193,7 @@ print("scale 因子误差: bf16 %.4f%%  fp32 %.4f%%" % (
         先把各自的指针转到位再比对夹角——<b>夹角只取决于两针各转了多少的"差"</b>，与从几点开始转无关。
         "我打他"里（我，他）距离 2 与"他打我"里（他，我）距离 −2 撞出两种不同夹角图案，词序就这样进了打分。
         早期 GPT 的做法是把位置 id 变成向量<b>加进</b> embedding（绝对位置编码）；RoPE 不加参数、
-        只在 attention 内部旋转，长文本外推也更从容（见 YaRN 折叠深读）。
+        只在 attention 内部旋转，长文本外推也更从容（见 <a href="#yarn">YaRN 折叠深读</a>）。
       </p>
 
       <h3 id="rope-freqs">精读 precompute_freqs_cis：把"位置×角度"提前算成表</h3>
@@ -201,7 +201,7 @@ print("scale 因子误差: bf16 %.4f%%  fp32 %.4f%%" % (
         旋转需要的 cos/sin 只依赖配置（维度、位置数、base），与输入无关——所以<b>预计算成表，前向只查表</b>
         （M03 ⑤站见过的 <code>self.freqs_cos[cache_start : cache_start+seq]</code> 切片就是它）。核心骨架：
       </p>
-      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/layers.py.html">src/minimind_reborn/models/layers.py</a> · precompute_freqs_cis（YaRN 分支见折叠深读）</span><span class="lang">python</span></div><pre class="code"><code>def precompute_freqs_cis(dim, end=32768, rope_base=1e6, rope_scaling=None):
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/models/layers.py.html">src/minimind_reborn/models/layers.py</a> · precompute_freqs_cis（YaRN 分支见<a href="#yarn">折叠深读</a>）</span><span class="lang">python</span></div><pre class="code"><code>def precompute_freqs_cis(dim, end=32768, rope_base=1e6, rope_scaling=None):
     """预计算 RoPE 的 cos/sin 表，形状 (end, dim)，sin/cos 各重复一半以对齐 rotate_half。"""
     # dim//2 个步进角 θ_i = base^(-2i/dim)：i=0 → 1 弧度/步，i 越大转得越慢
     freqs = 1.0 / (rope_base ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
@@ -321,7 +321,7 @@ for m, n in [(2, 6), (30, 34), (57, 61)]:
         </p>
       </details>
 
-      <details>
+      <details id="yarn">
         <summary>📐 折叠深读：YaRN——380 窗的模型，服务 2280 长的输入（可跳过，不影响主线）</summary>
         <p>
           64M 模型训练时的上下文窗口只有 380（config.py 注释原文："模型实际训练窗口"），
