@@ -39,7 +39,7 @@
           <span class="chip">前置：<b>M20</b>（推理栈全通，本课给它装上仪表盘）</span>
           <span class="chip">时长：<b>约 65 分钟</b></span>
           <span class="chip">新概念：<b>评测指标（困惑度 / 固定题集）· 对照实验</b></span>
-          <span class="chip">对照：<code>tools/eval_llm.py</code> · <code>tools/eval_multiturn.py</code> · <code>tools/compare_official.py</code> · <code>tools/convert_model.py</code> · <a href="codeview/out/official_compare.md.html"><code>out/official_compare.md</code></a></span>
+          <span class="chip">对照：<a href="codeview/tools/eval_llm.py.html"><code>tools/eval_llm.py</code></a> · <a href="codeview/tools/eval_multiturn.py.html"><code>tools/eval_multiturn.py</code></a> · <a href="codeview/tools/compare_official.py.html"><code>tools/compare_official.py</code></a> · <a href="codeview/tools/convert_model.py.html"><code>tools/convert_model.py</code></a> · <a href="codeview/out/official_compare.md.html"><code>out/official_compare.md</code></a></span>
         </div>
       </header>
 </section>
@@ -211,7 +211,7 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
 <section class="panel">
 <h2 id="multiturn">多轮与长上下文：读档四套件</h2>
       <p>
-        第三把尺由 <code>tools/eval_multiturn.py</code> 扛着，四个套件各有明确靶子——
+        第三把尺由 <a href="codeview/tools/eval_multiturn.py.html"><code>tools/eval_multiturn.py</code></a> 扛着，四个套件各有明确靶子——
         多轮记忆与长上下文是单轮评测的盲区，也是 M02 对话实验里你多半已经隐约感到的短板：
       </p>
       <div class="table-scroll">
@@ -277,7 +277,7 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
         但 1536 tok 重复率 <b>0.842</b>、2048 tok <b>0.980</b>（192 token 跑满纯复读）。
         结论很干净：<b>位置编码外推能买到"不报错"，买不到"会处理"</b>——长上下文能力的根在预训练
         底座见过多长的序列，这正是当前 sft_full_mt 之后还有长上下文底座续训计划的原因
-        （<code>tools/eval_cont_train.py</code> 给续训定了双指标验收门：短文档劣化 ≤5% 且长文档显著更低，防遗忘与目标兼得）。
+        （<a href="codeview/tools/eval_cont_train.py.html"><code>tools/eval_cont_train.py</code></a> 给续训定了双指标验收门：短文档劣化 ≤5% 且长文档显著更低，防遗忘与目标兼得）。
       </p>
       <p>
         🎮 <b>有 GPU 可以自跑简版</b>（单权重、只跑 Suite A，几分钟）：注意把 <code>--out</code> 指到
@@ -293,7 +293,7 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
       <p>
         本课的高潮：和官方 minimind 面对面。<b>本课第二个新概念：对照实验</b>——比较两个对象时，
         用控制变量法把"不关心的差异"全部冻结，只留要研究的那一个。官方对照
-        （<code>tools/compare_official.py</code> + <code>tools/eval_compare.py</code>）的冻结清单：
+        （<a href="codeview/tools/compare_official.py.html"><code>tools/compare_official.py</code></a> + <code>tools/eval_compare.py</code>）的冻结清单：
       </p>
       <div class="table-scroll">
         <table>
@@ -348,7 +348,7 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
       <div class="callout warn">
         <div class="co-title">⚠️ 坑卡（2026-10-06 审查发现）：这张表的"贪心"只有官方一侧在贪心——工具 bug，已修复</div>
         <ul class="pit-stages">
-          <li class="sym">复查 <code>tools/compare_official.py</code> 发现：<code>our_generate</code> 的 <code>greedy</code> 形参<b>从未被使用</b>——我方恒以 <code>GenerateConfig(temperature=0.85)</code> 采样；官方侧 <code>do_sample=not greedy</code> 是对的。</li>
+          <li class="sym">复查 <a href="codeview/tools/compare_official.py.html"><code>tools/compare_official.py</code></a> 发现：<code>our_generate</code> 的 <code>greedy</code> 形参<b>从未被使用</b>——我方恒以 <code>GenerateConfig(temperature=0.85)</code> 采样；官方侧 <code>do_sample=not greedy</code> 是对的。</li>
           <li class="cause">上表（及 §9.2 的 fp32 复跑）由修复前的工具产出：<b>我方=采样、官方=贪心</b>——47.3% 这类"一致率"实为采样输出撞上贪心输出的比例，本质是噪声样本，不能作为"双实现数学一致"的证据；"浮点路径差异属预期"的解释也就失去了这份背书。</li>
           <li class="fix">已于 2026-10-06 修复（commit <code>f9f511e</code>：greedy=True 时 temperature 取 0.0 走 argmax）。<b>干净的贪心对贪心一致率需要重跑 compare 才有</b>——这是比"读表"更好的毕业实验候选：重跑后若低一致率样例在 fp32 下逐位一致，§9.2 的浮点解释才算真正闭环。上表保留为存档 + 本坑卡的案发现场。</li>
         </ul>
@@ -423,7 +423,7 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
 <section class="panel">
 <h2 id="export">convert_model：实验室通往生态的桥</h2>
       <p>
-        对照做完，最后一步是让成果走出实验室。<code>tools/convert_model.py</code> 的
+        对照做完，最后一步是让成果走出实验室。<a href="codeview/tools/convert_model.py.html"><code>tools/convert_model.py</code></a> 的
         <code>to-qwen</code> 子命令把 .pth 转成 HF transformers 的 Qwen3 结构目录（safetensors 权重——
         HF 生态的安全序列化格式，取代 pickle 的 .bin——加 config 与 tokenizer 一件套），
         结构参数逐项搬运，键名恰好对齐（M09 保真移植的红利）：

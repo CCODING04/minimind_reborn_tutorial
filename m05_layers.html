@@ -39,7 +39,7 @@
           <span class="chip">前置：<b>M04</b>（M03 的⑤站图建议在手边）</span>
           <span class="chip">时长：<b>约 75 分钟</b></span>
           <span class="chip">新概念：<b>RMSNorm · 旋转位置编码（RoPE）</b></span>
-          <span class="chip">对照：<code>models/layers.py</code> · <code>tests/test_models/test_rope_scaling.py</code> · <code>models/config.py</code></span>
+          <span class="chip">对照：<a href="codeview/src/minimind_reborn/models/layers.py.html"><code>models/layers.py</code></a> · <a href="codeview/tests/test_models/test_rope_scaling.py.html"><code>tests/test_models/test_rope_scaling.py</code></a> · <a href="codeview/src/minimind_reborn/models/config.py.html"><code>models/config.py</code></a></span>
         </div>
       </header>
 </section>
@@ -533,8 +533,8 @@ print('eps=0   :', RMSNorm(768, eps=0.0)(x).abs().sum().item())"</span></code></
           对拍：脚本模板见 <a href="btrack.html">B 轨总纲</a>——同一份随机权重灌进你的实现与
           <code>from minimind_reborn.models.layers import RMSNorm</code>，fp32/bf16 两种输入下逐位对照。
           RMSNorm 在 reborn 里没有专属单测，数值行为由模型级测试间接锁定，参考行为先跑一遍：
-          <code>uv run pytest tests/test_models/test_model.py -q</code>（<code>test_forward_shapes_and_loss</code>、
-          <code>test_sdpa_vs_manual_attention_equivalence</code> 都会踩过它）。
+          <code>uv run pytest tests/test_models/test_model.py -q</code>（<a href="codeview/tests/test_models/test_model.py.html#L11"><code>test_forward_shapes_and_loss</code></a>、
+          <a href="codeview/tests/test_models/test_model.py.html#L34"><code>test_sdpa_vs_manual_attention_equivalence</code></a> 都会踩过它）。
         </p>
       </div>
 
@@ -560,7 +560,7 @@ print('eps=0   :', RMSNorm(768, eps=0.0)(x).abs().sum().item())"</span></code></
           <details>
             <summary>失败了怎么办？（按症状分流）</summary>
             <p>
-              <b>有 failed</b> → 读失败用例名定位：<code>test_yarn_no_interpolation_below_train_window</code> 失败多半是改动过
+              <b>有 failed</b> → 读失败用例名定位：<a href="codeview/tests/test_models/test_rope_scaling.py.html#L61"><code>test_yarn_no_interpolation_below_train_window</code></a> 失败多半是改动过
               <code>YARN_ORIGINAL_MAX_POSITION_EMBEDDINGS</code> 或 <code>end/orig_max</code> 分支；<code>ModuleNotFoundError</code> →
               在仓库根目录执行且 <code>uv sync --extra dev</code> 已跑；<b>三行内积不相等</b> → 检查是否把
               <code>cos[m:m+1]</code> 写成了 <code>cos[m]</code>（少一维，广播语义就变了）；<b>出现 NaN</b> → 回看变式 2。

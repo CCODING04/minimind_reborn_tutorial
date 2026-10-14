@@ -123,6 +123,11 @@ def check_html(page: Path, body: str, module_ids: set[str]) -> None:
             continue
         if anchor and path.suffix == ".html":
             txt = path.read_text(encoding="utf-8", errors="ignore")
+            # codeview 行锚 #Ln 由客户端逐行渲染生成，源文件无字面 id——按烘焙文本行数校验
+            if target.startswith("codeview/") and anchor.startswith("L") and anchor[1:].isdigit():
+                m2 = re.search(r'<code data-lines="1">(.*?)</code></pre>', txt, re.S)
+                if m2 and int(anchor[1:]) <= m2.group(1).count("\n") + 1:
+                    continue
             if f'id="{anchor}"' not in txt:
                 err(f"{rel}: 跨页锚点不存在 {href}")
 

@@ -40,7 +40,7 @@
           <span class="chip">前置：<b>M01</b>（M02/M03 建议完成——正文引用其细节）</span>
           <span class="chip">时长：<b>约 60 分钟</b></span>
           <span class="chip">新概念：<b>分域配置 schema · 守门人校验</b></span>
-          <span class="chip">对照：<code>configuration/{schemas,loader}.py</code> · <code>configs/</code> · <code>tests/test_configuration/test_loader.py</code></span>
+          <span class="chip">对照：<code>configuration/{schemas,loader}.py</code> · <code>configs/</code> · <a href="codeview/tests/test_configuration/test_loader.py.html"><code>tests/test_configuration/test_loader.py</code></a></span>
         </div>
       </header>
 </section>
@@ -185,7 +185,7 @@ m.moe_intermediate_size = m.moe_intermediate_size or m.intermediate_size
       </p>
       <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python -c "import math; print(math.ceil(768*math.pi/64)*64)"</span>
 <span class="out">2432</span></code></pre>
-      <p class="prov"><b>[作者实测 · 2026-09-29]</b> 同法核对三档：64→256、512→1664、768→2432；与 <code>models/config.py</code> 的 <code>MiniMindConfig</code>（同一公式独立实现）一致，512→1664 是 <code>test_derived_fields</code> 的断言值——公式、双实现、测试三方对得上。</p>
+      <p class="prov"><b>[作者实测 · 2026-09-29]</b> 同法核对三档：64→256、512→1664、768→2432；与 <code>models/config.py</code> 的 <code>MiniMindConfig</code>（同一公式独立实现）一致，512→1664 是 <a href="codeview/tests/test_configuration/test_loader.py.html#L39"><code>test_derived_fields</code></a> 的断言值——公式、双实现、测试三方对得上。</p>
       <p>
         <b>派生参数为什么不写进 YAML？</b>因为它是冗余信息：写进去就可能与其他超参<b>自相矛盾</b>
         （hidden 改 512 而 intermediate 还是 2432——形状对不上，要拖到模型构建才爆，晚了好几拍）。
@@ -240,7 +240,7 @@ m.moe_intermediate_size = m.moe_intermediate_size or m.intermediate_size
         用 <code>importlib</code> 分发到 8 个 workflow（每个 stage 一个薄入口，M16 读 pretrain/SFT 两个母版）。<code>--set</code> 用 <code>action="append"</code> 收集，可重复出现。
       </p>
       <p>
-        优先级谁来验证？<code>test_yaml_then_cli_priority</code>：YAML 写 <code>batch_size: 16</code>，CLI 再
+        优先级谁来验证？<a href="codeview/tests/test_configuration/test_loader.py.html#L51"><code>test_yaml_then_cli_priority</code></a>：YAML 写 <code>batch_size: 16</code>，CLI 再
         <code>--set train.batch_size=32</code>，断言最终 32——<b>CLI 胜</b>；未被覆盖的 <code>learning_rate</code>
         保持 YAML 的 1.0e-5。配置最后经 <code>snapshot()</code>（<code>dataclasses.asdict</code>）随 checkpoint 与
         <code>run_dir/config.json</code> 落盘——只拿输出目录就能唯一重建实验，含派生值。
@@ -333,7 +333,7 @@ m.moe_intermediate_size = m.moe_intermediate_size or m.intermediate_size
         <summary>测验 3 · YAML 写 batch_size: 16，CLI 又 --set train.batch_size=32，最终生效几？还有哪层能再赢它们？</summary>
         <div class="quiz-body">
           <div class="quiz-ans">
-            <p><b>答案：</b>32——CLI 后到胜 YAML，YAML 胜 dataclass 默认：顺序固定为 <b>dataclass 默认 → YAML 配方 → CLI --set，后到者胜</b>，由 <code>test_yaml_then_cli_priority</code> 锁定。另有两个"局外胜利者"不在覆盖链里：resume 时模型结构以 checkpoint 快照为准，run_dir 时间戳由守门人派生。</p>
+            <p><b>答案：</b>32——CLI 后到胜 YAML，YAML 胜 dataclass 默认：顺序固定为 <b>dataclass 默认 → YAML 配方 → CLI --set，后到者胜</b>，由 <a href="codeview/tests/test_configuration/test_loader.py.html#L51"><code>test_yaml_then_cli_priority</code></a> 锁定。另有两个"局外胜利者"不在覆盖链里：resume 时模型结构以 checkpoint 快照为准，run_dir 时间戳由守门人派生。</p>
             <p class="back">答错回看：<a href="#loader">loader 精读</a> 的三步代码与数据流图。</p>
           </div>
         </div>
@@ -418,7 +418,7 @@ m.moe_intermediate_size = m.moe_intermediate_size or m.intermediate_size
             <p>
               <b><code>FileNotFoundError: 配方文件不存在</code></b> → 确认在仓库根目录执行，或用 <code>configs/</code> 现成配方；
               <b>pytest 报 collected 0 items</b> → 同上检查目录，<code>uv sync --extra dev</code> 补装 pytest；
-              <b>有 failed</b> → 读第一个失败用例名（如 <code>test_gqa_constraint_validated</code>），回对应小节对照源码；
+              <b>有 failed</b> → 读第一个失败用例名（如 <a href="codeview/tests/test_configuration/test_loader.py.html#L46"><code>test_gqa_constraint_validated</code></a>），回对应小节对照源码；
               <b>未知 key 报错没出现</b> → 检查 <code>--set</code> 是否被写成位置参数（不能省）。
             </p>
           </details>
@@ -439,7 +439,7 @@ m.moe_intermediate_size = m.moe_intermediate_size or m.intermediate_size
           <dt>守门人 <span class="en">validator</span></dt><dd>唯一闸口 <code>validate_and_derive</code>：全部配置必经此处做合法性检查与派生推导。</dd>
           <dt>fail-fast <span class="en">快速失败</span></dt><dd>非法状态在装配期立刻硬错，而非带病运行后由症状倒查；错误越早暴露越便宜。</dd>
           <dt>派生参数 <span class="en">derived parameter</span></dt><dd>由其他超参按公式计算的值（head_dim、intermediate_size、输出目录），不进配方、守门人统一推导；占位用 None/""/-1 哨兵。</dd>
-          <dt>覆盖顺序 <span class="en">override precedence</span></dt><dd>dataclass 默认 → YAML 配方 → CLI --set，后到者胜；由 <code>test_yaml_then_cli_priority</code> 锁定。</dd>
+          <dt>覆盖顺序 <span class="en">override precedence</span></dt><dd>dataclass 默认 → YAML 配方 → CLI --set，后到者胜；由 <a href="codeview/tests/test_configuration/test_loader.py.html#L51"><code>test_yaml_then_cli_priority</code></a> 锁定。</dd>
           <dt>配置快照 <span class="en">config snapshot</span></dt><dd><code>snapshot()</code> 把装配后的完整配置随 checkpoint 与 run_dir/config.json 落盘——只拿输出目录即可复现实验。</dd>
         </dl>
       </section>

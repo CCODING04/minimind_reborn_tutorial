@@ -65,58 +65,58 @@
         <table>
           <thead><tr><th>#</th><th>用法</th><th>章</th><th>位置</th><th>课程模块</th></tr></thead>
           <tbody>
-            <tr><td>1</td><td><code>tensor.mean(-1, keepdim=True)</code></td><td>一</td><td><code>src/minimind_reborn/models/layers.py:25</code></td><td>M05</td></tr>
-            <tr><td>2</td><td><code>expand</code> + <code>reshape</code> 实现 repeat_kv</td><td>一</td><td><code>src/minimind_reborn/models/layers.py:94-98</code></td><td>M07</td></tr>
+            <tr><td>1</td><td><code>tensor.mean(-1, keepdim=True)</code></td><td>一</td><td><a href="codeview/src/minimind_reborn/models/layers.py.html#L25"><code>src/minimind_reborn/models/layers.py:25</code></a></td><td>M05</td></tr>
+            <tr><td>2</td><td><code>expand</code> + <code>reshape</code> 实现 repeat_kv</td><td>一</td><td><a href="codeview/src/minimind_reborn/models/layers.py.html#L94"><code>src/minimind_reborn/models/layers.py:94-98</code></a></td><td>M07</td></tr>
             <tr><td>3</td><td><code>view</code> vs <code>reshape</code></td><td>一</td><td><code>src/minimind_reborn/models/attention.py:63 / 126</code></td><td>M07</td></tr>
-            <tr><td>4</td><td><code>transpose(1, 2)</code> 头维换轴</td><td>一</td><td><code>src/minimind_reborn/models/attention.py:78-80</code></td><td>M07</td></tr>
-            <tr><td>5</td><td>切片即零拷贝视图</td><td>一</td><td><code>src/minimind_reborn/models/model.py:106</code> 等</td><td>M06/M09/M20</td></tr>
-            <tr><td>6</td><td>三层 <code>unsqueeze</code> 加性 mask 广播</td><td>二</td><td><code>src/minimind_reborn/models/attention.py:121-123</code></td><td>M07</td></tr>
-            <tr><td>7</td><td><code>(x*mask).sum(1)/mask.sum(1).clamp(min=1)</code></td><td>二</td><td><code>src/minimind_reborn/training/grpo/workflow.py:193-194</code></td><td>M19</td></tr>
-            <tr><td>8</td><td><code>argmax</code> 找首个 eos + <code>arange().expand()</code> 截断</td><td>二</td><td><code>src/minimind_reborn/training/grpo/workflow.py:153-158</code></td><td>M19</td></tr>
-            <tr><td>9</td><td><code>std(unbiased=False)</code> + <code>repeat_interleave</code></td><td>二</td><td><code>src/minimind_reborn/training/grpo/workflow.py:146-149</code></td><td>M19</td></tr>
-            <tr><td>10</td><td><code>x.float()</code> 升 fp32 + <code>rsqrt</code> + <code>type_as</code> 回落</td><td>三</td><td><code>src/minimind_reborn/models/layers.py:23-28</code></td><td>M05</td></tr>
-            <tr><td>11</td><td>dtype 回退链 bf16→fp16→fp32</td><td>三</td><td><code>src/minimind_reborn/inference/engine.py:206-212</code></td><td>M13/M20</td></tr>
-            <tr><td>12</td><td><code>finfo.min</code> 覆盖式 additive mask</td><td>三</td><td><code>src/minimind_reborn/models/attention.py:95-106</code></td><td>M07</td></tr>
-            <tr><td>13</td><td><code>isfinite</code> 过滤 NaN 评估</td><td>三</td><td><code>src/minimind_reborn/training/common/trainer.py:353-357</code></td><td>M13</td></tr>
-            <tr><td>14</td><td><code>@torch.inference_mode</code> + <code>is_inference()</code> 防御</td><td>四</td><td><code>src/minimind_reborn/inference/generator.py:29</code></td><td>M19/M20</td></tr>
+            <tr><td>4</td><td><code>transpose(1, 2)</code> 头维换轴</td><td>一</td><td><a href="codeview/src/minimind_reborn/models/attention.py.html#L78"><code>src/minimind_reborn/models/attention.py:78-80</code></a></td><td>M07</td></tr>
+            <tr><td>5</td><td>切片即零拷贝视图</td><td>一</td><td><a href="codeview/src/minimind_reborn/models/model.py.html#L106"><code>src/minimind_reborn/models/model.py:106</code></a> 等</td><td>M06/M09/M20</td></tr>
+            <tr><td>6</td><td>三层 <code>unsqueeze</code> 加性 mask 广播</td><td>二</td><td><a href="codeview/src/minimind_reborn/models/attention.py.html#L121"><code>src/minimind_reborn/models/attention.py:121-123</code></a></td><td>M07</td></tr>
+            <tr><td>7</td><td><code>(x*mask).sum(1)/mask.sum(1).clamp(min=1)</code></td><td>二</td><td><a href="codeview/src/minimind_reborn/training/grpo/workflow.py.html#L193"><code>src/minimind_reborn/training/grpo/workflow.py:193-194</code></a></td><td>M19</td></tr>
+            <tr><td>8</td><td><code>argmax</code> 找首个 eos + <code>arange().expand()</code> 截断</td><td>二</td><td><a href="codeview/src/minimind_reborn/training/grpo/workflow.py.html#L153"><code>src/minimind_reborn/training/grpo/workflow.py:153-158</code></a></td><td>M19</td></tr>
+            <tr><td>9</td><td><code>std(unbiased=False)</code> + <code>repeat_interleave</code></td><td>二</td><td><a href="codeview/src/minimind_reborn/training/grpo/workflow.py.html#L146"><code>src/minimind_reborn/training/grpo/workflow.py:146-149</code></a></td><td>M19</td></tr>
+            <tr><td>10</td><td><code>x.float()</code> 升 fp32 + <code>rsqrt</code> + <code>type_as</code> 回落</td><td>三</td><td><a href="codeview/src/minimind_reborn/models/layers.py.html#L23"><code>src/minimind_reborn/models/layers.py:23-28</code></a></td><td>M05</td></tr>
+            <tr><td>11</td><td>dtype 回退链 bf16→fp16→fp32</td><td>三</td><td><a href="codeview/src/minimind_reborn/inference/engine.py.html#L206"><code>src/minimind_reborn/inference/engine.py:206-212</code></a></td><td>M13/M20</td></tr>
+            <tr><td>12</td><td><code>finfo.min</code> 覆盖式 additive mask</td><td>三</td><td><a href="codeview/src/minimind_reborn/models/attention.py.html#L95"><code>src/minimind_reborn/models/attention.py:95-106</code></a></td><td>M07</td></tr>
+            <tr><td>13</td><td><code>isfinite</code> 过滤 NaN 评估</td><td>三</td><td><a href="codeview/src/minimind_reborn/training/common/trainer.py.html#L353"><code>src/minimind_reborn/training/common/trainer.py:353-357</code></a></td><td>M13</td></tr>
+            <tr><td>14</td><td><code>@torch.inference_mode</code> + <code>is_inference()</code> 防御</td><td>四</td><td><a href="codeview/src/minimind_reborn/inference/generator.py.html#L29"><code>src/minimind_reborn/inference/generator.py:29</code></a></td><td>M19/M20</td></tr>
             <tr><td>15</td><td><code>no_grad</code> 冻结 + <code>eval().requires_grad_(False)</code> 链</td><td>四</td><td><code>src/minimind_reborn/training/dpo/workflow.py:28,39-40</code></td><td>M17/M18</td></tr>
-            <tr><td>16</td><td>STE 直通 <code>top1 - top1.detach() + 1.0</code></td><td>四</td><td><code>src/minimind_reborn/models/feedforward.py:54-56</code></td><td>M08</td></tr>
-            <tr><td>17</td><td>monkey-patch forward 注入 LoRA</td><td>四</td><td><code>src/minimind_reborn/models/lora.py:43-48</code></td><td>M15</td></tr>
-            <tr><td>18</td><td>DDP 挂图三板斧（0 乘挂图 + 0 权重 backward）</td><td>四</td><td><code>src/minimind_reborn/models/feedforward.py:64-65</code></td><td>M08/M19</td></tr>
-            <tr><td>19</td><td><code>register_buffer(persistent=False)</code> + 重建 workaround</td><td>五</td><td><code>src/minimind_reborn/models/model.py:70-90</code></td><td>M05/M09</td></tr>
+            <tr><td>16</td><td>STE 直通 <code>top1 - top1.detach() + 1.0</code></td><td>四</td><td><a href="codeview/src/minimind_reborn/models/feedforward.py.html#L54"><code>src/minimind_reborn/models/feedforward.py:54-56</code></a></td><td>M08</td></tr>
+            <tr><td>17</td><td>monkey-patch forward 注入 LoRA</td><td>四</td><td><a href="codeview/src/minimind_reborn/models/lora.py.html#L43"><code>src/minimind_reborn/models/lora.py:43-48</code></a></td><td>M15</td></tr>
+            <tr><td>18</td><td>DDP 挂图三板斧（0 乘挂图 + 0 权重 backward）</td><td>四</td><td><a href="codeview/src/minimind_reborn/models/feedforward.py.html#L64"><code>src/minimind_reborn/models/feedforward.py:64-65</code></a></td><td>M08/M19</td></tr>
+            <tr><td>19</td><td><code>register_buffer(persistent=False)</code> + 重建 workaround</td><td>五</td><td><a href="codeview/src/minimind_reborn/models/model.py.html#L70"><code>src/minimind_reborn/models/model.py:70-90</code></a></td><td>M05/M09</td></tr>
             <tr><td>20</td><td>weight tying 权重共享</td><td>五</td><td><code>src/minimind_reborn/models/model.py:136,143-144</code></td><td>M09</td></tr>
-            <tr><td>21</td><td><code>load_state_dict</code> strict 三态语义</td><td>五</td><td><code>src/minimind_reborn/models/weights.py:50-70</code></td><td>M13</td></tr>
-            <tr><td>22</td><td>decay/no_decay 按 <code>p.dim()&gt;=2</code> 分组 + fused 探测</td><td>五</td><td><code>src/minimind_reborn/training/common/optim.py:16-25</code></td><td>M13</td></tr>
-            <tr><td>23</td><td><code>next(model.parameters()).dtype</code> 惰性取 dtype</td><td>五</td><td><code>src/minimind_reborn/inference/generator.py:57</code></td><td>M20</td></tr>
-            <tr><td>24</td><td>SDPA 三路径选择</td><td>六</td><td><code>src/minimind_reborn/models/attention.py:82-124</code></td><td>M07</td></tr>
-            <tr><td>25</td><td><code>triu(1)</code> 因果块 + <code>[-seq_len:]</code> 切片</td><td>六</td><td><code>src/minimind_reborn/models/attention.py:99-120</code></td><td>M07</td></tr>
-            <tr><td>26</td><td><code>masked_fill</code> vs <code>masked_fill_</code></td><td>六</td><td><code>src/minimind_reborn/models/attention.py:106</code></td><td>M07</td></tr>
-            <tr><td>27</td><td>top_k 第 k 大值作阈值 + 布尔赋 <code>-inf</code></td><td>七</td><td><code>src/minimind_reborn/inference/sampling.py:34-40</code></td><td>M20</td></tr>
-            <tr><td>28</td><td>top_p 的 sort+cumsum+右移+scatter</td><td>七</td><td><code>src/minimind_reborn/inference/sampling.py:43-55</code></td><td>M20</td></tr>
-            <tr><td>29</td><td><code>multinomial</code>+Generator / <code>argmax(keepdim=True)</code></td><td>七</td><td><code>src/minimind_reborn/inference/sampling.py:58-70</code></td><td>M20</td></tr>
-            <tr><td>30</td><td><code>unique</code>+<code>where</code> 重复惩罚原地索引</td><td>七</td><td><code>src/minimind_reborn/inference/sampling.py:20-31</code></td><td>M20</td></tr>
-            <tr><td>31</td><td>生成循环 finished 掩码三连</td><td>七</td><td><code>src/minimind_reborn/inference/generator.py:86-99</code></td><td>M20</td></tr>
-            <tr><td>32</td><td>autocast 集中构造 + <code>nullcontext</code> 分支</td><td>八</td><td><code>src/minimind_reborn/training/common/amp.py:34-38</code></td><td>M13</td></tr>
-            <tr><td>33</td><td>GradScaler 恒建 + unscale_→clip→step→update 顺序</td><td>八</td><td><code>src/minimind_reborn/training/common/trainer.py:265-273</code></td><td>M13</td></tr>
-            <tr><td>34</td><td>梯度累积 + DDP <code>no_sync</code></td><td>八</td><td><code>src/minimind_reborn/training/common/trainer.py:252-263</code></td><td>M13</td></tr>
-            <tr><td>35</td><td>手写 LR 写 <code>param_groups</code> vs <code>CosineAnnealingLR</code></td><td>八</td><td><code>src/minimind_reborn/training/common/trainer.py:245-249</code></td><td>M13/M19</td></tr>
-            <tr><td>36</td><td>CUDA Stream 预取器 <code>wait_stream</code></td><td>八</td><td><code>src/minimind_reborn/training/common/prefetch.py:15-48</code></td><td>M13</td></tr>
+            <tr><td>21</td><td><code>load_state_dict</code> strict 三态语义</td><td>五</td><td><a href="codeview/src/minimind_reborn/models/weights.py.html#L50"><code>src/minimind_reborn/models/weights.py:50-70</code></a></td><td>M13</td></tr>
+            <tr><td>22</td><td>decay/no_decay 按 <code>p.dim()&gt;=2</code> 分组 + fused 探测</td><td>五</td><td><a href="codeview/src/minimind_reborn/training/common/optim.py.html#L16"><code>src/minimind_reborn/training/common/optim.py:16-25</code></a></td><td>M13</td></tr>
+            <tr><td>23</td><td><code>next(model.parameters()).dtype</code> 惰性取 dtype</td><td>五</td><td><a href="codeview/src/minimind_reborn/inference/generator.py.html#L57"><code>src/minimind_reborn/inference/generator.py:57</code></a></td><td>M20</td></tr>
+            <tr><td>24</td><td>SDPA 三路径选择</td><td>六</td><td><a href="codeview/src/minimind_reborn/models/attention.py.html#L82"><code>src/minimind_reborn/models/attention.py:82-124</code></a></td><td>M07</td></tr>
+            <tr><td>25</td><td><code>triu(1)</code> 因果块 + <code>[-seq_len:]</code> 切片</td><td>六</td><td><a href="codeview/src/minimind_reborn/models/attention.py.html#L99"><code>src/minimind_reborn/models/attention.py:99-120</code></a></td><td>M07</td></tr>
+            <tr><td>26</td><td><code>masked_fill</code> vs <code>masked_fill_</code></td><td>六</td><td><a href="codeview/src/minimind_reborn/models/attention.py.html#L106"><code>src/minimind_reborn/models/attention.py:106</code></a></td><td>M07</td></tr>
+            <tr><td>27</td><td>top_k 第 k 大值作阈值 + 布尔赋 <code>-inf</code></td><td>七</td><td><a href="codeview/src/minimind_reborn/inference/sampling.py.html#L34"><code>src/minimind_reborn/inference/sampling.py:34-40</code></a></td><td>M20</td></tr>
+            <tr><td>28</td><td>top_p 的 sort+cumsum+右移+scatter</td><td>七</td><td><a href="codeview/src/minimind_reborn/inference/sampling.py.html#L43"><code>src/minimind_reborn/inference/sampling.py:43-55</code></a></td><td>M20</td></tr>
+            <tr><td>29</td><td><code>multinomial</code>+Generator / <code>argmax(keepdim=True)</code></td><td>七</td><td><a href="codeview/src/minimind_reborn/inference/sampling.py.html#L58"><code>src/minimind_reborn/inference/sampling.py:58-70</code></a></td><td>M20</td></tr>
+            <tr><td>30</td><td><code>unique</code>+<code>where</code> 重复惩罚原地索引</td><td>七</td><td><a href="codeview/src/minimind_reborn/inference/sampling.py.html#L20"><code>src/minimind_reborn/inference/sampling.py:20-31</code></a></td><td>M20</td></tr>
+            <tr><td>31</td><td>生成循环 finished 掩码三连</td><td>七</td><td><a href="codeview/src/minimind_reborn/inference/generator.py.html#L86"><code>src/minimind_reborn/inference/generator.py:86-99</code></a></td><td>M20</td></tr>
+            <tr><td>32</td><td>autocast 集中构造 + <code>nullcontext</code> 分支</td><td>八</td><td><a href="codeview/src/minimind_reborn/training/common/amp.py.html#L34"><code>src/minimind_reborn/training/common/amp.py:34-38</code></a></td><td>M13</td></tr>
+            <tr><td>33</td><td>GradScaler 恒建 + unscale_→clip→step→update 顺序</td><td>八</td><td><a href="codeview/src/minimind_reborn/training/common/trainer.py.html#L265"><code>src/minimind_reborn/training/common/trainer.py:265-273</code></a></td><td>M13</td></tr>
+            <tr><td>34</td><td>梯度累积 + DDP <code>no_sync</code></td><td>八</td><td><a href="codeview/src/minimind_reborn/training/common/trainer.py.html#L252"><code>src/minimind_reborn/training/common/trainer.py:252-263</code></a></td><td>M13</td></tr>
+            <tr><td>35</td><td>手写 LR 写 <code>param_groups</code> vs <code>CosineAnnealingLR</code></td><td>八</td><td><a href="codeview/src/minimind_reborn/training/common/trainer.py.html#L245"><code>src/minimind_reborn/training/common/trainer.py:245-249</code></a></td><td>M13/M19</td></tr>
+            <tr><td>36</td><td>CUDA Stream 预取器 <code>wait_stream</code></td><td>八</td><td><a href="codeview/src/minimind_reborn/training/common/prefetch.py.html#L15"><code>src/minimind_reborn/training/common/prefetch.py:15-48</code></a></td><td>M13</td></tr>
             <tr><td>37</td><td><code>item()</code>/<code>float()</code>/<code>bool()</code> 标量提取</td><td>八</td><td><code>src/minimind_reborn/training/common/trainer.py:275,295</code></td><td>M13</td></tr>
-            <tr><td>38</td><td>DDP <code>broadcast_buffers=False</code></td><td>九</td><td><code>src/minimind_reborn/training/common/trainer.py:175-179</code></td><td>M13</td></tr>
-            <tr><td>39</td><td>rank0 门控</td><td>九</td><td><code>src/minimind_reborn/training/common/trainer.py:365-367</code></td><td>M13</td></tr>
-            <tr><td>40</td><td><code>all_reduce</code> AVG 聚合 + KL 早停防死锁</td><td>九</td><td><code>src/minimind_reborn/utils/dist.py:65-71</code></td><td>M13/M19</td></tr>
-            <tr><td>41</td><td><code>broadcast_object_list</code> 同步 run_dir</td><td>九</td><td><code>src/minimind_reborn/utils/dist.py:79-85</code></td><td>M13</td></tr>
-            <tr><td>42</td><td><code>map_location="cpu"</code> + <code>weights_only</code> 双态</td><td>十</td><td><code>src/minimind_reborn/models/weights.py:52</code></td><td>M13</td></tr>
-            <tr><td>43</td><td>unwrap DDP / <code>_orig_mod</code> 壳</td><td>十</td><td><code>src/minimind_reborn/models/weights.py:33-40</code></td><td>M13</td></tr>
+            <tr><td>38</td><td>DDP <code>broadcast_buffers=False</code></td><td>九</td><td><a href="codeview/src/minimind_reborn/training/common/trainer.py.html#L175"><code>src/minimind_reborn/training/common/trainer.py:175-179</code></a></td><td>M13</td></tr>
+            <tr><td>39</td><td>rank0 门控</td><td>九</td><td><a href="codeview/src/minimind_reborn/training/common/trainer.py.html#L365"><code>src/minimind_reborn/training/common/trainer.py:365-367</code></a></td><td>M13</td></tr>
+            <tr><td>40</td><td><code>all_reduce</code> AVG 聚合 + KL 早停防死锁</td><td>九</td><td><a href="codeview/src/minimind_reborn/utils/dist.py.html#L65"><code>src/minimind_reborn/utils/dist.py:65-71</code></a></td><td>M13/M19</td></tr>
+            <tr><td>41</td><td><code>broadcast_object_list</code> 同步 run_dir</td><td>九</td><td><a href="codeview/src/minimind_reborn/utils/dist.py.html#L79"><code>src/minimind_reborn/utils/dist.py:79-85</code></a></td><td>M13</td></tr>
+            <tr><td>42</td><td><code>map_location="cpu"</code> + <code>weights_only</code> 双态</td><td>十</td><td><a href="codeview/src/minimind_reborn/models/weights.py.html#L52"><code>src/minimind_reborn/models/weights.py:52</code></a></td><td>M13</td></tr>
+            <tr><td>43</td><td>unwrap DDP / <code>_orig_mod</code> 壳</td><td>十</td><td><a href="codeview/src/minimind_reborn/models/weights.py.html#L33"><code>src/minimind_reborn/models/weights.py:33-40</code></a></td><td>M13</td></tr>
             <tr><td>44</td><td><code>.half().eval().to()</code> 链 + 显存三件套</td><td>十</td><td><code>tools/compare_official.py:48,80-95</code></td><td>M21</td></tr>
-            <tr><td>45</td><td>SkipBatchSampler + <code>randperm</code>+<code>Generator(epoch)</code></td><td>十</td><td><code>src/minimind_reborn/training/common/trainer.py:39-68</code></td><td>M13</td></tr>
-            <tr><td>46</td><td>worker 种子 + RNG 六件套位精确续训</td><td>十</td><td><code>src/minimind_reborn/utils/seed.py:37-45</code></td><td>M13</td></tr>
-            <tr><td>47</td><td>移位 CE 切片 + <code>ignore_index=-100</code></td><td>十一</td><td><code>src/minimind_reborn/models/model.py:162-168</code></td><td>M09</td></tr>
-            <tr><td>48</td><td><code>reduction="none"</code> 手动 token 加权</td><td>十一</td><td><code>src/minimind_reborn/training/distill/workflow.py:49-55</code></td><td>M18</td></tr>
-            <tr><td>49</td><td><code>log_softmax</code>+<code>gather</code>+<code>squeeze</code> 取指定 logp</td><td>十一</td><td><code>src/minimind_reborn/training/dpo/loss.py:9-12</code></td><td>M17/M19</td></tr>
-            <tr><td>50</td><td><code>F.kl_div</code> 方向坑</td><td>十一</td><td><code>src/minimind_reborn/training/distill/loss.py:9-16</code></td><td>M18</td></tr>
-            <tr><td>51</td><td>GAE 反序循环 + 高级索引挂奖励</td><td>十一</td><td><code>src/minimind_reborn/training/ppo/workflow.py:210-227</code></td><td>M19</td></tr>
-            <tr><td>52</td><td><code>F.logsigmoid</code></td><td>十一</td><td><code>src/minimind_reborn/training/dpo/loss.py:30</code></td><td>M17</td></tr>
+            <tr><td>45</td><td>SkipBatchSampler + <code>randperm</code>+<code>Generator(epoch)</code></td><td>十</td><td><a href="codeview/src/minimind_reborn/training/common/trainer.py.html#L39"><code>src/minimind_reborn/training/common/trainer.py:39-68</code></a></td><td>M13</td></tr>
+            <tr><td>46</td><td>worker 种子 + RNG 六件套位精确续训</td><td>十</td><td><a href="codeview/src/minimind_reborn/utils/seed.py.html#L37"><code>src/minimind_reborn/utils/seed.py:37-45</code></a></td><td>M13</td></tr>
+            <tr><td>47</td><td>移位 CE 切片 + <code>ignore_index=-100</code></td><td>十一</td><td><a href="codeview/src/minimind_reborn/models/model.py.html#L162"><code>src/minimind_reborn/models/model.py:162-168</code></a></td><td>M09</td></tr>
+            <tr><td>48</td><td><code>reduction="none"</code> 手动 token 加权</td><td>十一</td><td><a href="codeview/src/minimind_reborn/training/distill/workflow.py.html#L49"><code>src/minimind_reborn/training/distill/workflow.py:49-55</code></a></td><td>M18</td></tr>
+            <tr><td>49</td><td><code>log_softmax</code>+<code>gather</code>+<code>squeeze</code> 取指定 logp</td><td>十一</td><td><a href="codeview/src/minimind_reborn/training/dpo/loss.py.html#L9"><code>src/minimind_reborn/training/dpo/loss.py:9-12</code></a></td><td>M17/M19</td></tr>
+            <tr><td>50</td><td><code>F.kl_div</code> 方向坑</td><td>十一</td><td><a href="codeview/src/minimind_reborn/training/distill/loss.py.html#L9"><code>src/minimind_reborn/training/distill/loss.py:9-16</code></a></td><td>M18</td></tr>
+            <tr><td>51</td><td>GAE 反序循环 + 高级索引挂奖励</td><td>十一</td><td><a href="codeview/src/minimind_reborn/training/ppo/workflow.py.html#L210"><code>src/minimind_reborn/training/ppo/workflow.py:210-227</code></a></td><td>M19</td></tr>
+            <tr><td>52</td><td><code>F.logsigmoid</code></td><td>十一</td><td><a href="codeview/src/minimind_reborn/training/dpo/loss.py.html#L30"><code>src/minimind_reborn/training/dpo/loss.py:30</code></a></td><td>M17</td></tr>
           </tbody>
         </table>
       </div>
@@ -127,7 +127,7 @@
       <p>PyTorch 张量的"形状操作"几乎都不搬数据，只是换一种"看同一块内存"的方式。本章 5 条是全书的地基。</p>
 
       <h3 id="u1">1. <code>tensor.mean(-1, keepdim=True)</code></h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/layers.py:25</code>——RMSNorm 归一化时对最后一维（hidden 维）求均值。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/layers.py.html#L25"><code>src/minimind_reborn/models/layers.py:25</code></a>——RMSNorm 归一化时对最后一维（hidden 维）求均值。</p>
       <p>
         <b>直觉：</b><code>mean(-1)</code> 表示沿最后一维求平均；<code>keepdim=True</code> 的意思是"求完平均后别把这一维删掉，
         留着且长度为 1"。<code>(2, 3, 4)</code> 的张量沿 <code>-1</code> 求均值：不带 keepdim 得 <code>(2, 3)</code>，
@@ -144,7 +144,7 @@ print((x / m).shape)                     # (1, 3) 广播除法
 # 对比：x.mean(-1) 形状是 (1,)，x / x.mean(-1) 会报 size mismatch</code></pre></div>
 
       <h3 id="u2">2. <code>expand</code> + <code>reshape</code> 实现 repeat_kv（GQA 复制 KV 头）</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/layers.py:94-98</code>——GQA（Grouped-Query Attention）把 kv 头复制 n_rep 份以对齐 q 头数。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/layers.py.html#L94"><code>src/minimind_reborn/models/layers.py:94-98</code></a>——GQA（Grouped-Query Attention）把 kv 头复制 n_rep 份以对齐 q 头数。</p>
       <p>
         <b>直觉：</b>小组注意力里 8 个 q 头共享 2 个 kv 头，每个 kv 头要"当作 4 个用"。做法：先在第 4 维插一个长度为 1 的轴
         <code>x[:, :, :, None, :]</code>，再 <code>expand</code> 把这个 1 拉伸成 4，最后 <code>reshape</code> 把相邻两维合并：
@@ -161,7 +161,7 @@ print(y.shape)                                      # (1, 1, 6, 2)：头数×3
 print(y[0, 0, 0].equal(y[0, 0, 2]))                 # True：同源数据，值一致</code></pre></div>
 
       <h3 id="u3">3. <code>view</code> vs <code>reshape</code>（transpose 后 view 会炸）</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/attention.py:63</code> 投影后用 view 拆头；<code>attention.py:126</code> 输出端 <code>transpose(1, 2).reshape(...)</code> 合头——前者内存连续、后者经过 transpose 不连续，故一个用 view 一个用 reshape。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/attention.py.html#L63"><code>src/minimind_reborn/models/attention.py:63</code></a> 投影后用 view 拆头；<a href="codeview/src/minimind_reborn/models/attention.py.html#L126"><code>attention.py:126</code></a> 输出端 <code>transpose(1, 2).reshape(...)</code> 合头——前者内存连续、后者经过 transpose 不连续，故一个用 view 一个用 reshape。</p>
       <p>
         <b>直觉：</b><code>view</code> 是"纯视角"：不搬数据，要求张量内存连续（contiguous，元素在内存里按行优先一整条排着）；
         <code>reshape</code> 更宽容：连续时等价 view，不连续时自动复制一份再变形状。<code>(6,)</code> 的
@@ -178,7 +178,7 @@ print(t.reshape(6).shape)                        # (6,)：reshape 兜底成功
 t.view(6)   # 直接炸：RuntimeError: view size is not compatible...</code></pre></div>
 
       <h3 id="u4">4. <code>transpose(1, 2)</code> 头维换轴</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/attention.py:78-80</code>——把 <code>(b, seq, heads, hd)</code> 换成 <code>(b, heads, seq, hd)</code>，让"头"成为批内的独立维度。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/attention.py.html#L78"><code>src/minimind_reborn/models/attention.py:78-80</code></a>——把 <code>(b, seq, heads, hd)</code> 换成 <code>(b, heads, seq, hd)</code>，让"头"成为批内的独立维度。</p>
       <p>
         <b>直觉：</b>注意力要每个头独立做"seq×seq"打分。<code>(b, seq, heads, hd)</code> 里 seq 在第 1 维，矩阵乘法不方便；
         <code>transpose(1, 2)</code> 交换 seq 和 heads 两根轴（只换元信息、不搬数据），变成 <code>(b, heads, seq, hd)</code> 后
@@ -194,7 +194,7 @@ print(y.shape)                 # (2, 8, 5, 64) → (b, heads, seq, hd)
 print(x.shape)                 # (2, 5, 8, 64)：注意原 x 不变</code></pre></div>
 
       <h3 id="u5">5. 切片即零拷贝视图</h3>
-      <p><b>在 reborn：</b>三处同款——<code>src/minimind_reborn/models/model.py:106</code>（RoPE 表按当前位置区间切片）、<code>src/minimind_reborn/models/kv_cache.py:49</code>（读全部有效历史的前缀视图）、<code>src/minimind_reborn/inference/generator.py:77</code>（步进生成时只喂新增 token）。</p>
+      <p><b>在 reborn：</b>三处同款——<a href="codeview/src/minimind_reborn/models/model.py.html#L106"><code>src/minimind_reborn/models/model.py:106</code></a>（RoPE 表按当前位置区间切片）、<a href="codeview/src/minimind_reborn/models/kv_cache.py.html#L49"><code>src/minimind_reborn/models/kv_cache.py:49</code></a>（读全部有效历史的前缀视图）、<a href="codeview/src/minimind_reborn/inference/generator.py.html#L77"><code>src/minimind_reborn/inference/generator.py:77</code></a>（步进生成时只喂新增 token）。</p>
       <p>
         <b>直觉：</b><code>t[a:b]</code> 不复制数据，只造一个"共享内存、改了起始指针"的新张量。RoPE 表
         <code>(32768, 64)</code> 预计算一次后，第 100 步生成只需 <code>freqs_cos[100:101]</code>——拿一个 1 行的视图，
@@ -215,7 +215,7 @@ print(rope[7, 0].item())                    # 999.0——同一块内存</code><
       <p>广播（broadcasting）是小形状自动"拉伸"对齐大形状的机制；归约（reduction）是 mean/sum 这类"多变少"的运算。两者组合是掩码运算的通用语言。</p>
 
       <h3 id="u6">6. 三层 <code>unsqueeze</code> 加性 mask 广播</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/attention.py:121-123</code>——manual 注意力路径把 padding 抑制项加到打分矩阵上。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/attention.py.html#L121"><code>src/minimind_reborn/models/attention.py:121-123</code></a>——manual 注意力路径把 padding 抑制项加到打分矩阵上。</p>
       <p>
         <b>直觉：</b>注意力打分形状是 <code>(b, heads, seq, total)</code>，而 padding 掩码只有 <code>(b, total)</code>。
         <code>(1.0 - mask.unsqueeze(1).unsqueeze(2)) * -1e9</code> 先把掩码变成 <code>(b, 1, 1, total)</code>，
@@ -233,7 +233,7 @@ scores = torch.zeros(1, 8, 5, 3)                 # (b, heads, seq, total)
 print((scores + additive)[0, 0, 0].tolist())     # [0.0, 0.0, -1e+09]</code></pre></div>
 
       <h3 id="u7">7. masked sum/mean 通式 <code>(x*mask).sum(1)/mask.sum(1).clamp(min=1)</code></h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/grpo/workflow.py:193-194</code>——GRPO 策略损失按每条序列的有效生成位求平均；同款通式在 ppo/workflow.py 出现 8 次以上。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/grpo/workflow.py.html#L193"><code>src/minimind_reborn/training/grpo/workflow.py:193-194</code></a>——GRPO 策略损失按每条序列的有效生成位求平均；同款通式在 ppo/workflow.py 出现 8 次以上。</p>
       <p>
         <b>直觉：</b>变长序列 batch 里，padding 位置不该计入平均。通式分两半：分子 <code>(x * mask).sum(dim=1)</code>
         把无效位置乘 0 后求和；分母 <code>mask.sum(dim=1).clamp(min=1)</code> 是每行有效位个数，clamp 兜底"全 padding
@@ -248,7 +248,7 @@ mean = (x * mask).sum(1) / mask.sum(1).clamp(min=1)
 print(mean.tolist())   # [1.5, 4.0]：只平均有效位</code></pre></div>
 
       <h3 id="u8">8. <code>argmax</code> 找首个 eos + <code>arange().expand()</code> 截断掩码</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/grpo/workflow.py:153-158</code>——把生成位掩码截到首个 eos（含）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/grpo/workflow.py.html#L153"><code>src/minimind_reborn/training/grpo/workflow.py:153-158</code></a>——把生成位掩码截到首个 eos（含）。</p>
       <p>
         <b>直觉：</b>序列 <code>[a, b, eos, c, d]</code> 里 eos 后面的 token 是采样完才补的 padding，训练时要裁掉。三步：
         ① <code>is_eos.any(dim=1)</code> 找哪些行有 eos；② <code>is_eos.int().argmax(dim=1)</code> 找每行<b>第一个</b> True
@@ -269,7 +269,7 @@ print(eos_idx.tolist())   # [2, 4]：第 1 行首个 eos 在 2，第 2 行取默
 print(mask.tolist())      # [[1,1,1,0,0],[1,1,1,1,1]]：截到首个 eos（含）</code></pre></div>
 
       <h3 id="u9">9. <code>std(unbiased=False)</code> + <code>repeat_interleave</code> 组相对优势</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/grpo/workflow.py:146-149</code>——GRPO 同组奖励做 z-score 归一化。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/grpo/workflow.py.html#L146"><code>src/minimind_reborn/training/grpo/workflow.py:146-149</code></a>——GRPO 同组奖励做 z-score 归一化。</p>
       <p>
         <b>直觉：</b>GRPO 给同一个 prompt 采 8 条回复，组内减均值除标准差得到优势。
         <code>grouped.std(dim=1, unbiased=False)</code> 用<b>总体标准差</b>（分母 n）而非样本标准差（分母 n-1）；
@@ -294,7 +294,7 @@ print(torch.tensor([1., 2.]).repeat(3).tolist())             # [1,2,1,2,1,2] 记
       <p>半精度（fp16/bf16）训练的世界里，"顺序"和"类型"就是数值纪律。本章 4 条是 reborn 数值不变量的落点。</p>
 
       <h3 id="u10">10. <code>x.float()</code> 升 fp32 计算 + <code>torch.rsqrt</code> + <code>type_as</code> 回落</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/layers.py:23-28</code>——RMSNorm 整个 <code>_norm</code> 过程先 <code>.float()</code> 升 fp32，算完 <code>type_as(x)</code> 回落原精度；同款 rsqrt 归一化在 <code>training/ppo/workflow.py:227</code>（优势归一化）复用。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/layers.py.html#L23"><code>src/minimind_reborn/models/layers.py:23-28</code></a>——RMSNorm 整个 <code>_norm</code> 过程先 <code>.float()</code> 升 fp32，算完 <code>type_as(x)</code> 回落原精度；同款 rsqrt 归一化在 <a href="codeview/src/minimind_reborn/training/ppo/workflow.py.html#L227"><code>training/ppo/workflow.py:227</code></a>（优势归一化）复用。</p>
       <p>
         <b>直觉：</b>fp16 只有 10 位尾数，<code>x.pow(2)</code> 平方后小数值叠加容易精度耗尽。写法固定为
         "敏感算子升 fp32 算完再回落"：<code>self.weight * self._norm(x.float())).type_as(x)</code>；
@@ -311,7 +311,7 @@ print(normed.type_as(x).dtype)   # torch.float16：升 fp32 算完回落
 print(normed.tolist())           # 约等于 x / rms(x)</code></pre></div>
 
       <h3 id="u11">11. dtype 回退链 bf16→fp16→fp32</h3>
-      <p><b>在 reborn：</b>推理侧 <code>src/minimind_reborn/inference/engine.py:206-212</code>（<code>_resolve_dtype</code>：CPU 上 bf16 回退 fp32 并警告）；训练侧 <code>src/minimind_reborn/training/common/amp.py:20-31</code>（<code>resolve_dtype</code>：GPU 不支持 bf16 回退 fp16 并警告）。</p>
+      <p><b>在 reborn：</b>推理侧 <a href="codeview/src/minimind_reborn/inference/engine.py.html#L206"><code>src/minimind_reborn/inference/engine.py:206-212</code></a>（<code>_resolve_dtype</code>：CPU 上 bf16 回退 fp32 并警告）；训练侧 <a href="codeview/src/minimind_reborn/training/common/amp.py.html#L20"><code>src/minimind_reborn/training/common/amp.py:20-31</code></a>（<code>resolve_dtype</code>：GPU 不支持 bf16 回退 fp16 并警告）。</p>
       <p>
         <b>直觉：</b>用户配置说"用 bf16"，但硬件不一定答应——CPU 对 bf16 支持差、老 GPU（如 V100）没有 bf16 单元。
         回退链就是"逐级降级 + 每次降级打一条警告日志"：配置 bf16 → 设备不行 → 换 fp16（或 fp32）→ 继续跑。
@@ -331,7 +331,7 @@ print(resolve_dtype("bf16", "cpu"))    # torch.float32
 print(resolve_dtype("bf16", "cuda"))   # torch.bfloat16</code></pre></div>
 
       <h3 id="u12">12. <code>finfo.min</code> 覆盖式而非累加式 additive mask 防 fp16 下溢</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/attention.py:95-106</code>——SDPA 融合路径构造 additive mask。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/attention.py.html#L95"><code>src/minimind_reborn/models/attention.py:95-106</code></a>——SDPA 融合路径构造 additive mask。</p>
       <p>
         <b>直觉：</b>抑制某个位置的注意力可以往打分上加一个大负数。加多少？fp16 能表示的最小值是约 -65504，
         <code>torch.finfo(dtype).min</code> 取这个极限。关键细节：padding 列用 <code>masked_fill</code>
@@ -351,7 +351,7 @@ print(mask.masked_fill(torch.tensor([False, True, False, False]), neg_min))
 # tensor([[0., -65504., 0., 0.]])：覆盖式写入，安全</code></pre></div>
 
       <h3 id="u13">13. <code>isfinite</code> 过滤 NaN 评估</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/common/trainer.py:353-357</code>——<code>evaluate()</code> 里过滤掉非有限的 loss 再平均。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/common/trainer.py.html#L353"><code>src/minimind_reborn/training/common/trainer.py:353-357</code></a>——<code>evaluate()</code> 里过滤掉非有限的 loss 再平均。</p>
       <p>
         <b>直觉：</b>评估 batch 若全部 token 都是 ignore_index（如 SFT 尾段全是 padding），<code>cross_entropy</code>
         返回 NaN。NaN 的传染性极强：<code>sum([1.0, nan])</code> = nan，一个坏 batch 毁掉整轮评估均值。
@@ -372,7 +372,7 @@ print(sum(finite) / len(finite))  # 2.2：NaN 被挡在平均之外</code></pre>
       <p>autograd（自动微分）记录每个运算以便反向传播。本章 5 条覆盖"什么时候<b>不要</b>记梯度"以及"怎么骗过 autograd"两类高级用法。</p>
 
       <h3 id="u14">14. <code>@torch.inference_mode</code> + <code>is_inference()</code> 张量防御</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/inference/generator.py:29</code>（整个生成函数套 <code>@torch.inference_mode()</code>）；<code>src/minimind_reborn/training/rollout.py:40</code>（rollout 输出的 inference 张量进入训练路径前防御性 <code>detach().clone()</code>）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/inference/generator.py.html#L29"><code>src/minimind_reborn/inference/generator.py:29</code></a>（整个生成函数套 <code>@torch.inference_mode()</code>）；<a href="codeview/src/minimind_reborn/training/rollout.py.html#L40"><code>src/minimind_reborn/training/rollout.py:40</code></a>（rollout 输出的 inference 张量进入训练路径前防御性 <code>detach().clone()</code>）。</p>
       <p>
         <b>直觉：</b><code>inference_mode</code> 是 <code>no_grad</code> 的强化版——里面创建的张量标记为
         "inference tensor"，连梯度追踪的元数据都不带，省内存又提速。但副作用是：这种张量一旦流出该上下文、
@@ -393,7 +393,7 @@ t2 = t.detach().clone()      # 洗白
 print(t2.is_inference())     # False，可正常参与训练</code></pre></div>
 
       <h3 id="u15">15. <code>no_grad</code> 冻结 ref/teacher + <code>eval().requires_grad_(False)</code> 链式冻结</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/dpo/workflow.py:28</code>（<code>ref_model.eval().requires_grad_(False).to(device)</code> 一行三连）与 <code>:39-40</code>（前向套 <code>with torch.no_grad()</code>）；<code>src/minimind_reborn/training/distill/loss.py:13-14</code>（teacher logits 计算套 no_grad + detach）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/dpo/workflow.py.html#L28"><code>src/minimind_reborn/training/dpo/workflow.py:28</code></a>（<code>ref_model.eval().requires_grad_(False).to(device)</code> 一行三连）与 <code>:39-40</code>（前向套 <code>with torch.no_grad()</code>）；<a href="codeview/src/minimind_reborn/training/distill/loss.py.html#L13"><code>src/minimind_reborn/training/distill/loss.py:13-14</code></a>（teacher logits 计算套 no_grad + detach）。</p>
       <p>
         <b>直觉：</b>DPO/蒸馏都要一个"锚"——参考模型只出数字、不学不动。冻结有两层：① 模块级
         <code>requires_grad_(False)</code> 让参数不收梯度（优化器也不喂它）；② 前向级 <code>with torch.no_grad()</code>
@@ -414,7 +414,7 @@ print(out.requires_grad)                  # False
 print(any(p.requires_grad for p in ref.parameters()))  # False</code></pre></div>
 
       <h3 id="u16">16. STE 直通估计器 <code>top1 - top1.detach() + 1.0</code></h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/feedforward.py:54-56</code>——MoE top-1 路由的权重归一化。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/feedforward.py.html#L54"><code>src/minimind_reborn/models/feedforward.py:54-56</code></a>——MoE top-1 路由的权重归一化。</p>
       <p>
         <b>直觉：</b>top-1 MoE 每个 token 只走 1 个专家，权重恒为 1.0，"归一化"是恒等——但梯度还想流回路由 softmax。
         直通估计器（Straight-Through Estimator, STE）写法：<code>topk_weight = top1 - top1.detach() + 1.0</code>。
@@ -433,7 +433,7 @@ w.backward()                      # 梯度穿过常数回到 scores
 print(scores.grad.tolist())       # [1.0, 0.0]：max 的梯度原样传回</code></pre></div>
 
       <h3 id="u17">17. monkey-patch forward 注入 LoRA（闭包默认参数防迟到绑定）</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/lora.py:43-48</code>——给方阵 Linear 挂 LoRA 旁路并接管其 forward。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/lora.py.html#L43"><code>src/minimind_reborn/models/lora.py:43-48</code></a>——给方阵 Linear 挂 LoRA 旁路并接管其 forward。</p>
       <p>
         <b>直觉：</b>LoRA 不改模型类定义，运行时把 <code>module.forward</code> 换成新函数。关键细节是
         <code>def forward_with_lora(x, layer1=original_forward, layer2=lora)</code> 用<b>默认参数</b>把当时的对象
@@ -458,7 +458,7 @@ x = torch.randn(1, 2)
 print(torch.allclose(lin(x), orig(x)))    # True：旁路零初始化，起点等价</code></pre></div>
 
       <h3 id="u18">18. DDP 挂图三板斧：0 乘挂图 + 0 权重 backward</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/feedforward.py:64-65</code>（未被路由的专家 <code>y[0,0] += 0 * sum(p.sum() for p in expert.parameters())</code>）；<code>src/minimind_reborn/training/ppo/workflow.py:291-293</code>（KL 早停后 <code>scale = 0.0</code> 仍执行 <code>loss.backward()</code>）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/feedforward.py.html#L64"><code>src/minimind_reborn/models/feedforward.py:64-65</code></a>（未被路由的专家 <code>y[0,0] += 0 * sum(p.sum() for p in expert.parameters())</code>）；<a href="codeview/src/minimind_reborn/training/ppo/workflow.py.html#L291"><code>src/minimind_reborn/training/ppo/workflow.py:291-293</code></a>（KL 早停后 <code>scale = 0.0</code> 仍执行 <code>loss.backward()</code>）。</p>
       <p>
         <b>直觉：</b>DDP（DistributedDataParallel）要求每次 backward 时<b>所有</b>参数都参与计算图，否则各 rank
         的梯度通信对不上，报 unused parameters 错。MoE 里没被任何 token 选中的专家就是"失踪人口"——用一个乘 0
@@ -482,7 +482,7 @@ print(w.grad.tolist())                   # [0.0, 0.0, 0.0]：梯度为 0 但已�
       <p>nn.Module 的世界：哪些东西进 state_dict、哪些进优化器、哪些只是常量。本章 5 条决定模型的"记账方式"。</p>
 
       <h3 id="u19">19. <code>register_buffer(persistent=False)</code> + meta-device 丢 buffer 的全 0 判据重建</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/model.py:70-71</code>（RoPE 表注册为非持久 buffer）、<code>:75-90</code>（<code>_rebuild_rope_if_lost</code>：全 0 判据检测 + 重建）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/model.py.html#L70"><code>src/minimind_reborn/models/model.py:70-71</code></a>（RoPE 表注册为非持久 buffer）、<code>:75-90</code>（<code>_rebuild_rope_if_lost</code>：全 0 判据检测 + 重建）。</p>
       <p>
         <b>直觉：</b>模型里有三类数据——Parameter（可训练）、buffer（随模型走 <code>.to(device)</code> 但不训练）、
         普通属性（什么都不跟）。RoPE 的 cos/sin 表只依赖 config，不需要存盘，于是
@@ -508,7 +508,7 @@ print("table" in dict(m.named_buffers()))   # True：随 .to() 搬运
 print("table" in m.state_dict())            # False：不进 state_dict</code></pre></div>
 
       <h3 id="u20">20. weight tying 权重共享</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/model.py:136</code>（声明 <code>_tied_weights_keys</code>）与 <code>:143-144</code>（<code>self.model.embed_tokens.weight = self.lm_head.weight</code>）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/model.py.html#L136"><code>src/minimind_reborn/models/model.py:136</code></a>（声明 <code>_tied_weights_keys</code>）与 <code>:143-144</code>（<code>self.model.embed_tokens.weight = self.lm_head.weight</code>）。</p>
       <p>
         <b>直觉：</b>输入端 Embedding 把 token id 变向量，输出端 lm_head 把向量变回词表打分——数学上互为转置，
         实践中直接<b>共用同一个权重矩阵</b>。赋值后两者是同一个张量的两个名字，改一个另一个跟着变。
@@ -533,7 +533,7 @@ print(t.embed.weight[0].tolist())   # [1.5, 1.5]：同一块内存，同步变�
 print(sum(p.numel() for p in t.parameters()))  # 8 而不是 16：只算一份参数</code></pre></div>
 
       <h3 id="u21">21. <code>load_state_dict</code> strict 三态语义与反"静默吞键"</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/weights.py:50-70</code>——<code>load_inference_weights</code>（严格模式）与 <code>load_finetune_weights</code>（宽松 + 逐 key warning）双语义。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/weights.py.html#L50"><code>src/minimind_reborn/models/weights.py:50-70</code></a>——<code>load_inference_weights</code>（严格模式）与 <code>load_finetune_weights</code>（宽松 + 逐 key warning）双语义。</p>
       <p>
         <b>直觉：</b><code>load_state_dict(sd, strict=False)</code> 永远返回 <code>(missing_keys, unexpected_keys)</code>
         两个列表——模型缺的键、文件多出的键。它<b>不抛错</b>！于是有三态策略：① strict=True：有任何差异直接抛错
@@ -554,7 +554,7 @@ print(missing, unexpected)                    # ['bias'] []
 # RuntimeError: Error(s) in loading state_dict: Missing key(s)...</code></pre></div>
 
       <h3 id="u22">22. decay/no_decay 按 <code>p.dim()&gt;=2</code> 分组 + fused 签名探测</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/common/optim.py:16-25</code>——<code>configure_optimizers</code> 构造 AdamW 权重衰减分组。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/common/optim.py.html#L16"><code>src/minimind_reborn/training/common/optim.py:16-25</code></a>——<code>configure_optimizers</code> 构造 AdamW 权重衰减分组。</p>
       <p>
         <b>直觉：</b>weight decay（权重衰减）把权重往 0 拉，防过拟合——但 bias 和 LayerNorm 的 scale 这类一维参数
         不该被拉向 0。分组规则简单粗暴：<code>p.dim() &gt;= 2</code>（矩阵）进 decay 组，一维（bias/norm）进 no_decay 组。
@@ -578,7 +578,7 @@ opt = torch.optim.AdamW(
     lr=1e-3, **({"fused": True} if fused_ok and torch.cuda.is_available() else {}))</code></pre></div>
 
       <h3 id="u23">23. <code>next(model.parameters()).dtype</code> 惰性取 dtype</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/inference/generator.py:57</code>——KVCache 构造时对齐模型当前精度。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/inference/generator.py.html#L57"><code>src/minimind_reborn/inference/generator.py:57</code></a>——KVCache 构造时对齐模型当前精度。</p>
       <p>
         <b>直觉：</b>nn.Module 没有 <code>model.dtype</code> 这个属性，但 <code>model.parameters()</code> 是生成器，
         <code>next()</code> 取第一个参数（几乎必然是第一个 Linear/Embedding 的 weight），它的 dtype 就是模型当前精度。
@@ -601,7 +601,7 @@ print(cache.dtype)                  # torch.float16：cache 与权重同精度</
       <p>注意力掩码是"因果性"与"padding"两大语义的交汇处，也是 off-by-one（差一）错误的高发区。</p>
 
       <h3 id="u24">24. SDPA 三路径选择（is_causal / additive attn_mask / manual）</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/attention.py:82-124</code>——按序判定走哪条路径：① 无 cache 且 mask 全 1 → <code>is_causal=True</code> 内建因果；② 带 cache 步进 → 自构 additive <code>attn_mask</code>；③ 无 SDPA → manual 打分。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/attention.py.html#L82"><code>src/minimind_reborn/models/attention.py:82-124</code></a>——按序判定走哪条路径：① 无 cache 且 mask 全 1 → <code>is_causal=True</code> 内建因果；② 带 cache 步进 → 自构 additive <code>attn_mask</code>；③ 无 SDPA → manual 打分。</p>
       <p>
         <b>直觉：</b><code>F.scaled_dot_product_attention</code>（SDPA，缩放点积注意力融合算子）自动选
         flash/mem-efficient/math 后端，但它表达掩码的方式有讲究：<code>is_causal=True</code> 只能表达
@@ -623,7 +623,7 @@ out2 = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
 print(out1.shape, out2.shape)                 # 都是 (1, 2, 4, 8)</code></pre></div>
 
       <h3 id="u25">25. <code>triu(1)</code> 因果块 + <code>[-seq_len:]</code> 切片共用论证（off-by-one 详解）</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/attention.py:99-103</code>（SDPA 路径：<code>torch.full((seq, seq), neg_min).triu(1)</code> 填进 <code>causal[:, cache_start:]</code>）与 <code>:113-120</code>（manual 路径：<code>scores[:, :, :, -seq_len:] += full((seq, seq), -inf).triu(1)</code>）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/attention.py.html#L99"><code>src/minimind_reborn/models/attention.py:99-103</code></a>（SDPA 路径：<code>torch.full((seq, seq), neg_min).triu(1)</code> 填进 <code>causal[:, cache_start:]</code>）与 <code>:113-120</code>（manual 路径：<code>scores[:, :, :, -seq_len:] += full((seq, seq), -inf).triu(1)</code>）。</p>
       <p>
         <b>直觉：</b>因果掩码的形状是 <code>(seq, seq)</code> 的上三角——第 i 行（query）只允许看到第 ≤i 列（key）。
         <code>triu(1)</code> 取"主对角线上方第 1 条开始"的部分填 -inf，<b>保留对角线</b>（自己能看自己）。
@@ -642,7 +642,7 @@ print(tri[2].tolist())   # [0.0, 0.0, 0.0, -inf]：第 2 行看到 0..2
 # triu(0) 会把对角线也禁掉——attention 塌掉</code></pre></div>
 
       <h3 id="u26">26. <code>masked_fill</code> vs <code>masked_fill_</code></h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/attention.py:106</code>——<code>mask = mask.masked_fill(attention_mask[:, None, None, :total_len] == 0, neg_min)</code> 用的是非原地版。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/attention.py.html#L106"><code>src/minimind_reborn/models/attention.py:106</code></a>——<code>mask = mask.masked_fill(attention_mask[:, None, None, :total_len] == 0, neg_min)</code> 用的是非原地版。</p>
       <p>
         <b>直觉：</b>PyTorch 函数名末尾的下划线（如 <code>fill_</code>、<code>masked_fill_</code>、<code>zero_</code>）
         是"原地修改"标记——直接改自己，返回值也是自己（可链式）。不带下划线的版本<b>返回新张量</b>，原张量不动；
@@ -664,7 +664,7 @@ print(x.tolist())                 # [-1.0, 0.0, -1.0]</code></pre></div>
       <p>从 logits 到 token id 的每一步都是张量运算。reborn 把采样拆成 ≤10 行的纯函数（sampling.py），本章 5 条覆盖全链。</p>
 
       <h3 id="u27">27. top_k 第 k 大值作阈值 + 布尔赋 <code>-inf</code></h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/inference/sampling.py:34-40</code>——<code>apply_top_k</code>。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/inference/sampling.py.html#L34"><code>src/minimind_reborn/inference/sampling.py:34-40</code></a>——<code>apply_top_k</code>。</p>
       <p>
         <b>直觉：</b>top-k 采样只保留概率最高的 k 个候选。实现不是"排序取前 k 再归一化"，而是更简单的"阈值法"：
         <code>torch.topk(logits, k)[0][..., -1, None]</code> 取<b>第 k 大的值</b>当阈值，然后
@@ -683,7 +683,7 @@ print(logits.tolist())                    # [[-inf, 3.0, 2.0, -inf]]
 print(torch.softmax(logits, -1).tolist())  # [[0.0, 0.731, 0.269, 0.0]]</code></pre></div>
 
       <h3 id="u28">28. top_p 的 sort+cumsum+右移+scatter 回原序（含 <code>.clone()</code> 别名坑）</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/inference/sampling.py:43-55</code>——<code>apply_top_p</code> 核采样。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/inference/sampling.py.html#L43"><code>src/minimind_reborn/inference/sampling.py:43-55</code></a>——<code>apply_top_p</code> 核采样。</p>
       <p>
         <b>直觉：</b>top-p（核采样）保留"累积概率恰超过 p 的最小前缀"。流程：按 logits 降序 sort → softmax →
         cumsum 得累积概率 → <code>cumulative &gt; top_p</code> 标记"已超线"位置 → <b>右移一位</b>
@@ -707,7 +707,7 @@ out[mask.scatter(1, idx, mask)] = -float("inf")
 print(out.tolist())   # 前 2 个保留（softmax≈0.61+0.22=0.83&gt;0.7 恰被右移救回）</code></pre></div>
 
       <h3 id="u29">29. <code>multinomial</code>+Generator / <code>argmax(keepdim=True)</code> 贪心</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/inference/sampling.py:58-70</code>——<code>sample_token</code> 双分支。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/inference/sampling.py.html#L58"><code>src/minimind_reborn/inference/sampling.py:58-70</code></a>——<code>sample_token</code> 双分支。</p>
       <p>
         <b>直觉：</b>从概率分布抽一个 token 用 <code>torch.multinomial(probs, num_samples=1)</code>——按概率抽签；
         贪心（temperature ≤ 0）用 <code>torch.argmax(logits, dim=-1, keepdim=True)</code>——永远拿最大。
@@ -727,7 +727,7 @@ print(torch.argmax(torch.tensor([[2.0, 1.0, 0.1]]), dim=-1,
                    keepdim=True).shape)   # torch.Size([1, 1])：与 multinomial 同形</code></pre></div>
 
       <h3 id="u30">30. <code>torch.unique</code> + <code>where</code> 重复惩罚原地索引</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/inference/sampling.py:20-31</code>——<code>apply_repetition_penalty</code>（官方语义：正数 logits 除以 penalty、负数乘）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/inference/sampling.py.html#L20"><code>src/minimind_reborn/inference/sampling.py:20-31</code></a>——<code>apply_repetition_penalty</code>（官方语义：正数 logits 除以 penalty、负数乘）。</p>
       <p>
         <b>直觉：</b>已出现过的 token 要"降温"。<code>seen = torch.unique(generated_ids[i])</code> 去重拿到已见
         token 集合，<code>score = logits[i, seen]</code> 用<b>高级索引</b>一次取出这些位置的值，
@@ -746,7 +746,7 @@ logits[0, seen] = torch.where(score &gt; 0, score / 2.0, score * 2.0)
 print(logits.tolist())   # [[1.0, -2.0, 0.5]]：正除负乘，未见的 2 号不动</code></pre></div>
 
       <h3 id="u31">31. 生成循环 finished 掩码三连：<code>where</code> + <code>full_like</code>、<code>|=</code>、<code>.eq()</code></h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/inference/generator.py:86-99</code>——batch 生成时已结束序列的冻结与全停检测。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/inference/generator.py.html#L86"><code>src/minimind_reborn/inference/generator.py:86-99</code></a>——batch 生成时已结束序列的冻结与全停检测。</p>
       <p>
         <b>直觉：</b>batch 里长短不一，短的先出 eos 后必须"冻结"（不再采样新词，位置全填 eos），且要检测
         "全都停了才 break"。三连写法：① <code>torch.where(finished.unsqueeze(-1), torch.full_like(next_token, eos),
@@ -772,7 +772,7 @@ print(finished.tolist(), bool(finished.all())) # [True, True] True：全停可 b
       <p>训练循环的顺序就是不变量本身：AMP（自动混合精度）、梯度累积、LR 调度、数据预取，一步错位就是数值错误或性能腰斩。</p>
 
       <h3 id="u32">32. autocast 集中构造 + <code>nullcontext</code> 分支</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/common/amp.py:34-38</code>——<code>autocast_context</code>：CUDA 且半精度返回真 autocast，否则返回 <code>nullcontext()</code>。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/common/amp.py.html#L34"><code>src/minimind_reborn/training/common/amp.py:34-38</code></a>——<code>autocast_context</code>：CUDA 且半精度返回真 autocast，否则返回 <code>nullcontext()</code>。</p>
       <p>
         <b>直觉：</b>autocast（自动混合精度上下文）让区间内的算子自动按各自的最优精度跑（matmul 降 fp16、
         softmax 保 fp32）。但 CPU 训练和 fp32 配置下不需要它——<code>contextlib.nullcontext</code> 是
@@ -796,7 +796,7 @@ with autocast_context(torch.float32, "cpu"):   # CPU 下等于啥都没包
 print(x.tolist())</code></pre></div>
 
       <h3 id="u33">33. GradScaler 恒建 + <code>enabled=</code> + unscale_→clip→step→update 严格顺序</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/common/amp.py:41-43</code>（<code>build_scaler</code>：<code>GradScaler(enabled=(dtype == torch.float16))</code> 恒创建）；<code>src/minimind_reborn/training/common/trainer.py:265-273</code>（顺序落点）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/common/amp.py.html#L41"><code>src/minimind_reborn/training/common/amp.py:41-43</code></a>（<code>build_scaler</code>：<code>GradScaler(enabled=(dtype == torch.float16))</code> 恒创建）；<a href="codeview/src/minimind_reborn/training/common/trainer.py.html#L265"><code>src/minimind_reborn/training/common/trainer.py:265-273</code></a>（顺序落点）。</p>
       <p>
         <b>直觉：</b>fp16 梯度容易下溢（小于 fp16 最小正数就变 0），GradScaler 把 loss 乘个大数放大梯度、
         step 前再缩回来。bf16 不需要这套（动态范围大），但代码结构仍"恒建 scaler、用 enabled 开关"——
@@ -820,7 +820,7 @@ scaler.update()                                # ④ 调整缩放因子
 opt.zero_grad(set_to_none=True)</code></pre></div>
 
       <h3 id="u34">34. 梯度累积 + DDP <code>no_sync</code></h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/common/trainer.py:252-263</code>——<code>is_sync_step</code> 判定 + <code>sync_ctx = nullcontext() if (... or is_sync_step) else no_sync()</code>。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/common/trainer.py.html#L252"><code>src/minimind_reborn/training/common/trainer.py:252-263</code></a>——<code>is_sync_step</code> 判定 + <code>sync_ctx = nullcontext() if (... or is_sync_step) else no_sync()</code>。</p>
       <p>
         <b>直觉：</b>显存不够跑大 batch，就小批多次前向、梯度在 <code>.grad</code> 里自动累加，攒够 N 步 step 一次
         （loss 提前除以 N）。DDP 下每次 backward 都触发 allreduce 梯度同步，但累积中间步的同步纯属浪费——
@@ -843,7 +843,7 @@ for i in range(4):
 print("等效 batch=4，显存只装 batch=2")</code></pre></div>
 
       <h3 id="u35">35. 手写 LR 写 <code>param_groups</code> vs <code>CosineAnnealingLR</code>（附 <code>zero_grad(set_to_none=True)</code>）</h3>
-      <p><b>在 reborn：</b>Trainer 路径 <code>src/minimind_reborn/training/common/trainer.py:245-249</code>（手写 warmup+cosine，每步直接写 <code>for group in self.optimizer.param_groups: group["lr"] = lr</code>）；RL 路径 <code>training/grpo/workflow.py:63</code> 与 <code>training/ppo/workflow.py:64</code>（标准 <code>CosineAnnealingLR</code>，T_max 按总步数预算折算）。<code>zero_grad(set_to_none=True)</code> 在 trainer.py:272。</p>
+      <p><b>在 reborn：</b>Trainer 路径 <a href="codeview/src/minimind_reborn/training/common/trainer.py.html#L245"><code>src/minimind_reborn/training/common/trainer.py:245-249</code></a>（手写 warmup+cosine，每步直接写 <code>for group in self.optimizer.param_groups: group["lr"] = lr</code>）；RL 路径 <a href="codeview/src/minimind_reborn/training/grpo/workflow.py.html#L63"><code>training/grpo/workflow.py:63</code></a> 与 <a href="codeview/src/minimind_reborn/training/ppo/workflow.py.html#L64"><code>training/ppo/workflow.py:64</code></a>（标准 <code>CosineAnnealingLR</code>，T_max 按总步数预算折算）。<code>zero_grad(set_to_none=True)</code> 在 trainer.py:272。</p>
       <p>
         <b>直觉：</b>学习率调度两种流派。① 手写：<code>get_lr(global_step, total_steps, ...)</code> 纯函数算出
         当前 lr，直接改 <code>optimizer.param_groups</code> 里每个组的 <code>["lr"]</code>——param_groups 是
@@ -866,7 +866,7 @@ sched.step()                                   # 流派二：标准调度器
 opt.zero_grad(set_to_none=True)                # .grad 置 None 而非 0 张量</code></pre></div>
 
       <h3 id="u36">36. CUDA Stream 预取器 <code>wait_stream</code></h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/common/prefetch.py:15-48</code>——<code>CUDAPrefetcher</code>（YOLOX 同款模式）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/common/prefetch.py.html#L15"><code>src/minimind_reborn/training/common/prefetch.py:15-48</code></a>——<code>CUDAPrefetcher</code>（YOLOX 同款模式）。</p>
       <p>
         <b>直觉：</b>GPU 算上一步梯度的同时，CPU 可以提前把下一批数据拷到 GPU——用独立的 CUDA stream
         （流，GPU 上的并行任务队列）做 <code>non_blocking</code> 拷贝。训练循环取数据时先
@@ -889,7 +889,7 @@ else:
     print("无 CUDA，预取器自动旁路——CPU 场景零成本")</code></pre></div>
 
       <h3 id="u37">37. <code>item()</code> / <code>float()</code> / <code>bool()</code> 标量提取</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/common/trainer.py:275</code>（<code>running_loss += loss.item()</code>）、<code>:295</code>（<code>float(last_grad_norm)</code>）；<code>generator.py:98</code>（<code>bool(finished.all())</code>）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/common/trainer.py.html#L275"><code>src/minimind_reborn/training/common/trainer.py:275</code></a>（<code>running_loss += loss.item()</code>）、<code>:295</code>（<code>float(last_grad_norm)</code>）；<a href="codeview/src/minimind_reborn/inference/generator.py.html#L98"><code>generator.py:98</code></a>（<code>bool(finished.all())</code>）。</p>
       <p>
         <b>直觉：</b>PyTorch 标量长这样：0 维或单元素 tensor。<code>t.item()</code> 把它变成 Python 数字，
         <code>float(t)</code>/<code>bool(t)</code> 等价且自带类型转换。训练循环里每个 log 一次的
@@ -915,7 +915,7 @@ print(running)                        # 3.0</code></pre></div>
       <p>多卡（DDP）训练的规则只有一条：所有 rank 走完全相同的路。本章 4 条都是这句话的推论。</p>
 
       <h3 id="u38">38. DDP <code>broadcast_buffers=False</code></h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/common/trainer.py:175-179</code>——Trainer 的 DDP 包装；<code>grpo/workflow.py:68</code> 同款。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/common/trainer.py.html#L175"><code>src/minimind_reborn/training/common/trainer.py:175-179</code></a>——Trainer 的 DDP 包装；<a href="codeview/src/minimind_reborn/training/grpo/workflow.py.html#L68"><code>grpo/workflow.py:68</code></a> 同款。</p>
       <p>
         <b>直觉：</b>DDP 默认每次 forward 前把模型的 buffer（如 BatchNorm 的 running_mean）从 rank0 广播到其他卡，
         保证一致。但 reborn 唯一的非权重 buffer 是 RoPE 表——它只依赖 config，每个 rank 用同一个 config 确定性算出，
@@ -933,12 +933,12 @@ model = torch.nn.Linear(4, 4)
 print("关键参数：broadcast_buffers=False——只对确定性 buffer 模型安全")</code></pre></div>
 
       <h3 id="u39">39. rank0 门控</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/common/trainer.py:365-367</code>——<code>_save</code> 开头 <code>if not dist.is_main_process(): return</code>；metrics 落盘、config 快照同款（trainer.py:143）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/common/trainer.py.html#L365"><code>src/minimind_reborn/training/common/trainer.py:365-367</code></a>——<code>_save</code> 开头 <code>if not dist.is_main_process(): return</code>；metrics 落盘、config 快照同款（trainer.py:143）。</p>
       <p>
         <b>直觉：</b>8 卡训练时写盘（权重、日志、checkpoint）只该一个进程做，否则 8 个进程抢写同一文件互相覆盖。
         <code>is_main_process()</code>（rank == 0）就是"我是主进程吗"的门闩，进函数先检查，非主进程立刻 return。
         <b>为什么：</b>对比每个写盘点手写 <code>if dist.get_rank() == 0:</code>——reborn 把它封装进
-        <code>utils/dist.py:50-51</code>，且未初始化分布式时 <code>get_rank()</code> 返回 0，单机代码与多机同构
+        <a href="codeview/src/minimind_reborn/utils/dist.py.html#L50"><code>utils/dist.py:50-51</code></a>，且未初始化分布式时 <code>get_rank()</code> 返回 0，单机代码与多机同构
         （dist.py 模块注释："业务代码不写 if distributed: 分支"）。
       </p>
       <p><b>坑：</b>门控只挡写盘、挡不住目录创建——8 个进程同时 mkdir 是安全的（exist_ok=True），但各自打开同一个 metrics 文件追加写就会交错出乱码；漏门控的典型症状是多卡训练后日志文件内容随机重复 8 份。</p>
@@ -957,7 +957,7 @@ def save(path, obj):
     print(f"rank0 写盘 {path}")</code></pre></div>
 
       <h3 id="u40">40. <code>all_reduce</code> AVG 指标聚合 + KL 早停防死锁</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/utils/dist.py:65-71</code>——<code>all_reduce_mean</code>（单值张量 all_reduce AVG）；<code>src/minimind_reborn/training/ppo/workflow.py:253-255</code>——KL 早停前先跨 rank 平均。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/utils/dist.py.html#L65"><code>src/minimind_reborn/utils/dist.py:65-71</code></a>——<code>all_reduce_mean</code>（单值张量 all_reduce AVG）；<a href="codeview/src/minimind_reborn/training/ppo/workflow.py.html#L253"><code>src/minimind_reborn/training/ppo/workflow.py:253-255</code></a>——KL 早停前先跨 rank 平均。</p>
       <p>
         <b>直觉：</b>all_reduce（全归约）让所有 rank 的同一个张量聚合成一个结果且人人拿到。评估指标各卡算各卡的，
         <code>dist.all_reduce(t, op=ReduceOp.AVG)</code> 后每张卡的 t 都是全局平均。PPO 的 KL 早停更险：
@@ -978,7 +978,7 @@ early_stop = kl_local &gt; 0.1                # 全局一致值上判断 → 所
 print("所有卡对 early_stop 达成一致：", bool(early_stop))</code></pre></div>
 
       <h3 id="u41">41. <code>broadcast_object_list</code> 同步 run_dir</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/utils/dist.py:79-85</code>——<code>broadcast_object</code>：rank0 的任意 Python 对象广播到全部进程。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/utils/dist.py.html#L79"><code>src/minimind_reborn/utils/dist.py:79-85</code></a>——<code>broadcast_object</code>：rank0 的任意 Python 对象广播到全部进程。</p>
       <p>
         <b>直觉：</b>all_reduce 只搬张量，但训练里常有"非张量的一致性需求"——run_dir 目录名由时间戳生成，
         8 个进程各自取时间会得到 8 个微妙不同的目录，日志/checkpoint 写散。<code>dist.broadcast_object_list(container,
@@ -1004,7 +1004,7 @@ print(broadcast_object("runs/20260926-143000"))</code></pre></div>
       <p>保存与加载的世界充满"当时好好的，换台机器就炸"。本章 5 条是不炸的保证。</p>
 
       <h3 id="u42">42. <code>map_location="cpu"</code> + <code>weights_only</code> 双态</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/weights.py:52</code>（权重文件 <code>torch.load(path, map_location="cpu", weights_only=True)</code>）；<code>src/minimind_reborn/training/common/checkpoint.py:81</code>（训练 checkpoint <code>weights_only=False</code>）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/weights.py.html#L52"><code>src/minimind_reborn/models/weights.py:52</code></a>（权重文件 <code>torch.load(path, map_location="cpu", weights_only=True)</code>）；<a href="codeview/src/minimind_reborn/training/common/checkpoint.py.html#L81"><code>src/minimind_reborn/training/common/checkpoint.py:81</code></a>（训练 checkpoint <code>weights_only=False</code>）。</p>
       <p>
         <b>直觉：</b>torch.save 的文件记录着"我当时在哪块 GPU 上"——换到无卡机器或不同卡号加载直接报设备错。
         <code>map_location="cpu"</code> 意思是"先统统落到 CPU，设备的事加载完再说"。<code>weights_only</code>
@@ -1023,7 +1023,7 @@ print(w)   # {'w': tensor([1., 1.])}——纯张量走安全态
 # 且只对可信来源的文件这样做</code></pre></div>
 
       <h3 id="u43">43. unwrap DDP / <code>_orig_mod</code> 壳</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/weights.py:33-40</code>——<code>unwrap_model</code>：DDP 壳剥 <code>.module</code>、torch.compile 壳剥 <code>._orig_mod</code>。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/weights.py.html#L33"><code>src/minimind_reborn/models/weights.py:33-40</code></a>——<code>unwrap_model</code>：DDP 壳剥 <code>.module</code>、torch.compile 壳剥 <code>._orig_mod</code>。</p>
       <p>
         <b>直觉：</b>训练时模型外面套了包装——DDP（分布式壳）让 forward/backward 带通信钩子，torch.compile
         （编译壳）换成优化过的图。但保存/加载/推理要的是<b>裸模型</b>：DDP 壳的 state_dict 键名带
@@ -1047,7 +1047,7 @@ print(list(wrapped.state_dict().keys()))         # ['module.weight', 'module.bia
 print(list(wrapped.module.state_dict().keys()))  # ['weight', 'bias']：剥壳后裸键名</code></pre></div>
 
       <h3 id="u44">44. <code>.half().eval().to(device)</code> 链与显存三件套</h3>
-      <p><b>在 reborn：</b><code>tools/compare_official.py:48</code>（<code>model = model.half().eval().to(device)</code>）与 <code>:80-95</code>（<code>reset_peak_memory_stats()</code> → 生成 → <code>synchronize()</code> → <code>max_memory_allocated()</code>）。</p>
+      <p><b>在 reborn：</b><a href="codeview/tools/compare_official.py.html#L48"><code>tools/compare_official.py:48</code></a>（<code>model = model.half().eval().to(device)</code>）与 <code>:80-95</code>（<code>reset_peak_memory_stats()</code> → 生成 → <code>synchronize()</code> → <code>max_memory_allocated()</code>）。</p>
       <p>
         <b>直觉：</b>推理准备三连——<code>.half()</code> 精度减半（显存减半、速度加快）、<code>.eval()</code>
         关 dropout、<code>.to(device)</code> 搬 GPU。顺序有讲究：先 half 再搬，CPU 上转精度比 GPU 上快
@@ -1069,7 +1069,7 @@ if torch.cuda.is_available():
     print(torch.cuda.max_memory_allocated() / 1e6, "MB 峰值")  # ③ 读峰值</code></pre></div>
 
       <h3 id="u45">45. SkipBatchSampler 续训对齐 + <code>randperm</code>+<code>Generator(epoch)</code></h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/common/trainer.py:39-68</code>（SkipBatchSampler：跳过前 skip_batches 个 batch）与 <code>:406-411</code>（单机路径 <code>torch.randperm(len(ds), generator=g)</code>，g 的种子 = <code>seed + epoch</code>）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/common/trainer.py.html#L39"><code>src/minimind_reborn/training/common/trainer.py:39-68</code></a>（SkipBatchSampler：跳过前 skip_batches 个 batch）与 <code>:406-411</code>（单机路径 <code>torch.randperm(len(ds), generator=g)</code>，g 的种子 = <code>seed + epoch</code>）。</p>
       <p>
         <b>直觉：</b>断点续训时上次停在第 37 个 batch，重启必须从第 38 个开始——但 DataLoader 的随机顺序必须
         <b>先完全一致</b>才谈得上对齐。种子绑定 epoch（<code>manual_seed(seed + epoch)</code>）保证"第 5 个
@@ -1088,7 +1088,7 @@ g.manual_seed(42 + 3)
 print(torch.randperm(10, generator=g).tolist())  # 与上一行完全相同 → 续训可对齐</code></pre></div>
 
       <h3 id="u46">46. worker 种子 <code>torch.initial_seed()%2**32</code> + RNG 六件套位精确续训</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/utils/seed.py:37-45</code>——<code>seed_worker</code>（DataLoader worker_init_fn）；<code>src/minimind_reborn/training/common/checkpoint.py:24-41</code>——<code>_rng_state</code>/<code>_restore_rng</code>（torch/CUDA/python/numpy 四源状态存取）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/utils/seed.py.html#L37"><code>src/minimind_reborn/utils/seed.py:37-45</code></a>——<code>seed_worker</code>（DataLoader worker_init_fn）；<a href="codeview/src/minimind_reborn/training/common/checkpoint.py.html#L24"><code>src/minimind_reborn/training/common/checkpoint.py:24-41</code></a>——<code>_rng_state</code>/<code>_restore_rng</code>（torch/CUDA/python/numpy 四源状态存取）。</p>
       <p>
         <b>直觉：</b>DataLoader 多 worker 时每个子进程继承主进程随机态的<b>副本</b>——8 个 worker 会产出 8 份相同的
         "随机"增强！<code>seed_worker</code> 用 <code>torch.initial_seed() % 2**32</code>（torch 给每个 worker
@@ -1120,7 +1120,7 @@ print(torch.equal(a, b))   # True：同一位随机流，位精确</code></pre><
       <p>损失函数是张量操作的竞技场：移位、加权、取对数、辨方向。本章 6 条覆盖 LLM 全范式的损失写法。</p>
 
       <h3 id="u47">47. 移位 CE：切片 <code>[..., :-1, :]</code> vs <code>[..., 1:]</code> + <code>ignore_index=-100</code></h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/models/model.py:162-168</code>——语言模型头的 labels 分支。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/models/model.py.html#L162"><code>src/minimind_reborn/models/model.py:162-168</code></a>——语言模型头的 labels 分支。</p>
       <p>
         <b>直觉：</b>语言模型的任务是"用位置 i 的状态预测位置 i+1 的 token"，所以算交叉熵（Cross-Entropy, CE）
         前 logits 与 labels 要<b>错开一位</b>：<code>shift_logits = logits[..., :-1, :]</code>（去掉最后一个位置的
@@ -1143,7 +1143,7 @@ loss = F.cross_entropy(shift_logits.view(-1, 2), shift_labels.view(-1),
 print(loss.item())   # 两个位置都预测对了，loss 接近 0</code></pre></div>
 
       <h3 id="u48">48. <code>reduction="none"</code> 手动 token 加权平均</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/distill/workflow.py:49-55</code>——蒸馏的 CE 部分只对回答区间加权。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/distill/workflow.py.html#L49"><code>src/minimind_reborn/training/distill/workflow.py:49-55</code></a>——蒸馏的 CE 部分只对回答区间加权。</p>
       <p>
         <b>直觉：</b><code>F.cross_entropy</code> 默认 <code>reduction="mean"</code>——把所有 token 的 loss
         平均成标量。但蒸馏要"只平均回答区间"（prompt 区间不该有 CE），于是 <code>reduction="none"</code>
@@ -1163,7 +1163,7 @@ print(ce.tolist())                                   # [0.127, 0.127]
 print(((ce * mask).sum() / (mask.sum() + 1e-8)).item())  # 0.127：只平均有效位</code></pre></div>
 
       <h3 id="u49">49. <code>log_softmax</code> + <code>gather</code> + <code>squeeze</code> 取指定 token 的 logp（含双层 gather）</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/dpo/loss.py:9-12</code>（单层：<code>log_softmax</code> 后 gather 标签位）；<code>src/minimind_reborn/training/grpo/workflow.py:163-170</code>（双层：先在第 2 维 gather 词表位、再在第 1 维 gather 生成位）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/dpo/loss.py.html#L9"><code>src/minimind_reborn/training/dpo/loss.py:9-12</code></a>（单层：<code>log_softmax</code> 后 gather 标签位）；<a href="codeview/src/minimind_reborn/training/grpo/workflow.py.html#L163"><code>src/minimind_reborn/training/grpo/workflow.py:163-170</code></a>（双层：先在第 2 维 gather 词表位、再在第 1 维 gather 生成位）。</p>
       <p>
         <b>直觉：</b>RL/偏好训练要"整条序列里特定 token 的 log 概率"。<code>F.log_softmax(logits, dim=-1)</code>
         把打分变成 log 概率（数值稳定的 log(softmax)）；<code>torch.gather(logp, dim=2,
@@ -1185,7 +1185,7 @@ print(picked.tolist())   # 每个位置"标签 token 那一格"的 log 概率
 print(torch.log_softmax(logits, -1)[0, 0, 1] == picked[0, 0])  # True</code></pre></div>
 
       <h3 id="u50">50. <code>F.kl_div</code> 方向坑——代码实算 KL(teacher‖student) 而注释写反</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/distill/loss.py:9-16</code>——蒸馏损失。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/distill/loss.py.html#L9"><code>src/minimind_reborn/training/distill/loss.py:9-16</code></a>——蒸馏损失。</p>
       <p>
         <b>直觉：</b><code>F.kl_div(input, target)</code> 的数学定义是 <code>Σ target·(log(target) − input)</code>
         ——即 <b>KL(target‖input)</b>，注意 input 必须是 <b>log 概率</b>、target 是<b>概率</b>。reborn 的调用
@@ -1208,7 +1208,7 @@ manual = (teacher_p * (teacher_p.log() - student_logp)).sum()
 print(val.item(), manual.item())   # 相等：≈0.082</code></pre></div>
 
       <h3 id="u51">51. GAE 反序循环 + <code>torch.stack(advs_rev[::-1])</code> + 高级索引挂奖励</h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/ppo/workflow.py:210-227</code>——PPO 的广义优势估计（Generalized Advantage Estimation, GAE）。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/ppo/workflow.py.html#L210"><code>src/minimind_reborn/training/ppo/workflow.py:210-227</code></a>——PPO 的广义优势估计（Generalized Advantage Estimation, GAE）。</p>
       <p>
         <b>直觉：</b>优势（advantage）= 这步动作比预期好多少。GAE 从序列<b>末尾往前</b>递推：
         <code>delta_t = r_t + γ·V(t+1) − V(t)</code>，<code>A_t = delta_t + γλ·A_(t+1)</code>——每步依赖
@@ -1235,7 +1235,7 @@ advantages = torch.stack(advs_rev[::-1], dim=1)   # 翻回正序
 print(advantages.tolist())   # 末位的奖励按折扣向前传播</code></pre></div>
 
       <h3 id="u52">52. <code>F.logsigmoid</code></h3>
-      <p><b>在 reborn：</b><code>src/minimind_reborn/training/dpo/loss.py:30</code>——sigmoid-DPO 损失 <code>-F.logsigmoid(beta * (pi_logratios - ref_logratios)).mean()</code>。</p>
+      <p><b>在 reborn：</b><a href="codeview/src/minimind_reborn/training/dpo/loss.py.html#L30"><code>src/minimind_reborn/training/dpo/loss.py:30</code></a>——sigmoid-DPO 损失 <code>-F.logsigmoid(beta * (pi_logratios - ref_logratios)).mean()</code>。</p>
       <p>
         <b>直觉：</b><code>logsigmoid(x)</code> = <code>log(σ(x))</code>，即 <code>−log(1+e^(−x))</code> 的
         fused 单算子。DPO 的损失形状是"负 log 策略比值差的 sigmoid"——策略比值差越大（偏好越对）loss 越小，
@@ -1280,14 +1280,14 @@ print(naive.tolist())                 # 此处尚可；fp16/更负时 naive 会 
 <h2 id="bonus">附录：指南外的工程彩蛋</h2>
       <p>以上 52 条之外，reborn 还有几处"不像 PyTorch 用法但值得知道"的工程细节：</p>
       <ul>
-        <li><b>per_rank_full_iters 余弦分母按 rank 折算</b>（<code>src/minimind_reborn/training/common/trainer.py:82-94</code>）：DDP 下 DistributedSampler 给每 rank 只分 1/world 样本，LR 调度的总步数分母必须按本 rank 口径折算——此前按全量算，双卡时余弦 2 epochs 只退到 75% 进度（2026-09-29 修复，单卡两种口径恰好一致所以 mini 时代未暴露）。</li>
-        <li><b>atomic_save 原子写</b>（<code>src/minimind_reborn/utils/io.py:11-20</code>）：torch.save 先写 <code>.tmp</code> 再 <code>os.replace</code>（同目录保证原子性）——训练中断/被杀时不会留下半个坏文件，权重与 checkpoint 全走这个入口。</li>
-        <li><b>assert 换 raise 因 python -O 剥 assert</b>（<code>src/minimind_reborn/training/common/setup.py:22-31</code>）：<code>python -O</code> 启动时 assert 语句被整体剥离，防线静默消失——业务校验（如 vocab 一致性）必须用 <code>raise ValueError</code>，assert 只留给"内部不变量自检"。</li>
-        <li><b>torch.set_num_threads + RLIMIT_NOFILE</b>（<code>src/minimind_reborn/utils/runtime.py:18-37</code>）：训练入口一次调好运行时环境——torch 线程默认 8（实测数据管道 12× 富余，主进程留 CPU 给 DataLoader）；文件句柄软限制抬到 65536，否则多 worker 分词报 "Too many open files"。</li>
-        <li><b>teacher logits 词表尾部切片</b>（<code>src/minimind_reborn/training/distill/workflow.py:57</code>）：<code>teacher(...).logits[..., :-1, :][..., :vocab_student]</code>——教师词表比学生大时只取前 vocab_student 列对齐，蒸馏兼容异构词表。</li>
-        <li><b>CriticModel 继承复用基座 + squeeze(-1) 价值头</b>（<code>src/minimind_reborn/training/ppo/critic.py:11-21</code>）：继承 MiniMindForCausalLM 复用全部 Transformer 表征，<code>nn.Linear(hidden, 1).squeeze(-1)</code> 把最后一维压掉输出 <code>(b, seq)</code> 逐位置价值；lm_head 不参与 forward 靠 tie 保持 DDP 参数满图（与条目 18 同一哲学）。</li>
-        <li><b>checkpoint 记录 world_size 换算 step</b>（<code>src/minimind_reborn/training/common/checkpoint.py:84-86</code>）：8 卡存的 step 换 2 卡续训时 <code>step * saved_ws // current_ws</code> 换算——卡数变化后 step 语义（全局 micro step）保持等价，不换算会数据量错位。</li>
-        <li><b>SFT pos=index%len 确定性重映射</b>（<code>src/minimind_reborn/data/datasets.py:282-295</code>）：子视图 <code>__getitem__</code> 里 <code>pos = index % len(self._indices)</code> 把任意越界 index 映射回视图内——配合"标签全 -100 时顺序找下一个非零损失样本"的探测循环（probes 上限 = 视图长度，防死循环），保证零损失样本不污染训练。</li>
+        <li><b>per_rank_full_iters 余弦分母按 rank 折算</b>（<a href="codeview/src/minimind_reborn/training/common/trainer.py.html#L82"><code>src/minimind_reborn/training/common/trainer.py:82-94</code></a>）：DDP 下 DistributedSampler 给每 rank 只分 1/world 样本，LR 调度的总步数分母必须按本 rank 口径折算——此前按全量算，双卡时余弦 2 epochs 只退到 75% 进度（2026-09-29 修复，单卡两种口径恰好一致所以 mini 时代未暴露）。</li>
+        <li><b>atomic_save 原子写</b>（<a href="codeview/src/minimind_reborn/utils/io.py.html#L11"><code>src/minimind_reborn/utils/io.py:11-20</code></a>）：torch.save 先写 <code>.tmp</code> 再 <code>os.replace</code>（同目录保证原子性）——训练中断/被杀时不会留下半个坏文件，权重与 checkpoint 全走这个入口。</li>
+        <li><b>assert 换 raise 因 python -O 剥 assert</b>（<a href="codeview/src/minimind_reborn/training/common/setup.py.html#L22"><code>src/minimind_reborn/training/common/setup.py:22-31</code></a>）：<code>python -O</code> 启动时 assert 语句被整体剥离，防线静默消失——业务校验（如 vocab 一致性）必须用 <code>raise ValueError</code>，assert 只留给"内部不变量自检"。</li>
+        <li><b>torch.set_num_threads + RLIMIT_NOFILE</b>（<a href="codeview/src/minimind_reborn/utils/runtime.py.html#L18"><code>src/minimind_reborn/utils/runtime.py:18-37</code></a>）：训练入口一次调好运行时环境——torch 线程默认 8（实测数据管道 12× 富余，主进程留 CPU 给 DataLoader）；文件句柄软限制抬到 65536，否则多 worker 分词报 "Too many open files"。</li>
+        <li><b>teacher logits 词表尾部切片</b>（<a href="codeview/src/minimind_reborn/training/distill/workflow.py.html#L57"><code>src/minimind_reborn/training/distill/workflow.py:57</code></a>）：<code>teacher(...).logits[..., :-1, :][..., :vocab_student]</code>——教师词表比学生大时只取前 vocab_student 列对齐，蒸馏兼容异构词表。</li>
+        <li><b>CriticModel 继承复用基座 + squeeze(-1) 价值头</b>（<a href="codeview/src/minimind_reborn/training/ppo/critic.py.html#L11"><code>src/minimind_reborn/training/ppo/critic.py:11-21</code></a>）：继承 MiniMindForCausalLM 复用全部 Transformer 表征，<code>nn.Linear(hidden, 1).squeeze(-1)</code> 把最后一维压掉输出 <code>(b, seq)</code> 逐位置价值；lm_head 不参与 forward 靠 tie 保持 DDP 参数满图（与条目 18 同一哲学）。</li>
+        <li><b>checkpoint 记录 world_size 换算 step</b>（<a href="codeview/src/minimind_reborn/training/common/checkpoint.py.html#L84"><code>src/minimind_reborn/training/common/checkpoint.py:84-86</code></a>）：8 卡存的 step 换 2 卡续训时 <code>step * saved_ws // current_ws</code> 换算——卡数变化后 step 语义（全局 micro step）保持等价，不换算会数据量错位。</li>
+        <li><b>SFT pos=index%len 确定性重映射</b>（<a href="codeview/src/minimind_reborn/data/datasets.py.html#L282"><code>src/minimind_reborn/data/datasets.py:282-295</code></a>）：子视图 <code>__getitem__</code> 里 <code>pos = index % len(self._indices)</code> 把任意越界 index 映射回视图内——配合"标签全 -100 时顺序找下一个非零损失样本"的探测循环（probes 上限 = 视图长度，防死循环），保证零损失样本不污染训练。</li>
       </ul>
 
       <div class="callout tip">

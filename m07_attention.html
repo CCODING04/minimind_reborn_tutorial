@@ -39,7 +39,7 @@
           <span class="chip">前置：<b>M06 KV Cache 预分配</b></span>
           <span class="chip">时长：<b>约 80 分钟</b></span>
           <span class="chip">新概念：<b>GQA（分组查询注意力）· QK-Norm</b></span>
-          <span class="chip">对照：<code>models/attention.py</code> · <code>models/layers.py</code> · <code>tests/test_models/</code></span>
+          <span class="chip">对照：<a href="codeview/src/minimind_reborn/models/attention.py.html"><code>models/attention.py</code></a> · <a href="codeview/src/minimind_reborn/models/layers.py.html"><code>models/layers.py</code></a> · <code>tests/test_models/</code></span>
         </div>
       </header>
 </section>
@@ -103,7 +103,7 @@
       <div class="callout note">
         <div class="co-title">📐 严谨卡：为什么要除以 $\sqrt{d}$？</div>
         <p>
-          两个各维独立、零均值、单位方差的随机向量点积，期望 0、方差恰为 $d$——维度越高打分越容易跑出 $\pm 3\sqrt{d}$。
+          两个各维独立、零均值、单位方差的随机向量点积，期望 0、方差恰为 $d$——维度越高打分越容易跑出 <a href="glossary.html#three-sigma">$\pm 3\sqrt{d}$</a>。
           $d=96$ 时不缩放打分动辄 $\pm 30$，softmax 里 $e^{30}\approx 10^{13}$，分布直接<b>坍缩成 one-hot</b>
           （训练早期等于随机挑一个 token 全信，梯度近乎为零）。除以 $\sqrt{d}$ 把方差拉回 1，让"softmax 真的在比较"——
           这与 QK-Norm 是同一条纪律的两个层次，后者连范数漂移一起管（见下文）。
@@ -606,7 +606,7 @@ for kv in (4, 8):   # 4 = GQA（n_rep=2），8 = MHA（n_rep=1）
           对拍：脚本模板见 <a href="btrack.html">B 轨总纲</a>——fp32 下你的实现 vs
           <code>F.scaled_dot_product_attention(..., is_causal=True)</code>，<code>allclose(atol=1e-5)</code> 必须成立
           （fp32 下三路径逐位一致是 reborn 的既定事实）。裁判测试
-          <code>tests/test_models/test_model.py::test_sdpa_vs_manual_attention_equivalence</code>（先跑一遍看参考行为：
+          <a href="codeview/tests/test_models/test_model.py.html#L34"><code>tests/test_models/test_model.py::test_sdpa_vs_manual_attention_equivalence</code></a>（先跑一遍看参考行为：
           <code>uv run pytest tests/test_models/test_model.py -q</code>——它关掉 <code>flash</code> 逼走 manual 分支再对拍，
           正是你要复刻的对照结构）。
         </p>

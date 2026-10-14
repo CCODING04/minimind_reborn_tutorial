@@ -38,7 +38,7 @@
           <span class="chip">前置：<b>会 Python 与基本 PyTorch · LLM 零经验（详见 FAQ）</b></span>
           <span class="chip">时长：<b>约 45 分钟</b></span>
           <span class="chip">新概念：<b>冒烟测试 · 配方（recipe）</b></span>
-          <span class="chip">对照：<code>Makefile</code> · <code>tools/verify_env.py</code> · <code>tools/train.py</code> · <code>configs/smoke/</code></span>
+          <span class="chip">对照：<code>Makefile</code> · <a href="codeview/tools/verify_env.py.html"><code>tools/verify_env.py</code></a> · <a href="codeview/tools/train.py.html"><code>tools/train.py</code></a> · <code>configs/smoke/</code></span>
         </div>
       </header>
 </section>
@@ -213,7 +213,7 @@ GPU 可用: True
       <p>
         训练数据不进 git 仓库，reborn 用一个环境变量告诉代码"数据根目录在哪"：
         <code>MINIMIND_REBORN_DATA_ROOT</code>（未设置时默认 <code>~/Code/WorkSpace/minimind-reproduce/dataset</code>，
-        见 <code>src/minimind_reborn/envs.py</code>）。两种就位方式任选：
+        见 <a href="codeview/src/minimind_reborn/envs.py.html"><code>src/minimind_reborn/envs.py</code></a>）。两种就位方式任选：
       </p>
       <div class="codeblock"><div class="code-head"><span>方式 A：已有数据目录 → 指过去（加进 ~/.bashrc 持久化）</span><span class="lang">bash</span></div><pre class="code"><code>export MINIMIND_REBORN_DATA_ROOT=/path/to/dataset
 
@@ -304,7 +304,7 @@ uv run python tools/download_data.py --name dpo_mini</code></pre></div>
         <div class="co-title">🏭 工业对照：make smoke 之外</div>
         <p>
           "改完代码跑一遍冒烟"在工业界是提交前的标准动作（常挂进 CI 的 pre-merge job——CI（持续集成）等工程术语的一分钟速查见 <a href="eng_glossary.html">附录 · 工程工具速查</a>）。
-          reborn 的 <code>Makefile</code> 把它固化成一条命令，等价于 CI 里跑
+          reborn 的 <a href="codeview/Makefile.html"><code>Makefile</code></a> 把它固化成一条命令，等价于 CI 里跑
           <code>pytest -m "not slow"</code> + 冒烟链路。你在本课程里会重复执行它几十次——每次大改动后，
           11 秒换一个"管线没断"的确认，极其划算。
         </p>
@@ -314,7 +314,7 @@ uv run python tools/download_data.py --name dpo_mini</code></pre></div>
         <div class="co-title">📐 概念卡：配方（recipe）</div>
         <p>
           一句话：<b>一个 YAML 文件 = 一个可复现实验</b>，文件名即实验名。
-          <code>configs/smoke/smoke_pretrain.yaml</code> 只有 8 行——它只写与默认值<b>不同</b>的部分
+          <a href="codeview/configs/smoke/smoke_pretrain.yaml.html"><code>configs/smoke/smoke_pretrain.yaml</code></a> 只有 8 行——它只写与默认值<b>不同</b>的部分
           （tiny 模型尺寸、6 步预算、数据集名），其余超参全部来自代码里的分域默认值。
           三条铁律：配方只含差异、CLI <code>--set</code> 可临时覆盖、未知 key 直接报错。
           M04 会带你通读整个配置系统——这是 reborn 与官方版本差异最大的一层。

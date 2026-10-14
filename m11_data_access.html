@@ -39,7 +39,7 @@
           <span class="chip">前置：<b>M10</b>（M06 的"view vs copy"建议在手边）</span>
           <span class="chip">时长：<b>约 60 分钟</b></span>
           <span class="chip">新概念：<b>数据注册表 · 字节偏移索引</b></span>
-          <span class="chip">对照：<code>data/registry.py</code> · <code>datasets.json</code> · <code>data/datasets.py</code> · <code>data/manifest.py</code></span>
+          <span class="chip">对照：<a href="codeview/src/minimind_reborn/data/registry.py.html"><code>data/registry.py</code></a> · <code>datasets.json</code> · <a href="codeview/src/minimind_reborn/data/datasets.py.html"><code>data/datasets.py</code></a> · <a href="codeview/src/minimind_reborn/data/manifest.py.html"><code>data/manifest.py</code></a></span>
         </div>
       </header>
 </section>
@@ -405,8 +405,8 @@ def _fingerprint(path: Path, bucket_take: int) -&gt; str:
           <li class="cause">
             <code>load_or_build</code> 的缓存命中只看指纹 <code>mtime_ns:size</code>，<b>不含构建参数</b>；而
             <code>is_eval</code> 列在建清单时就把"eval_ratio=多少"烘进了数值里。恰好仓库里有两个配方共用同一份数据文件：
-            <code>configs/smoke/smoke_sft.yaml</code>（sft_t2t_mini，eval_ratio 0.001）与
-            <code>configs/sft_64m.yaml</code>（sft_t2t_mini，eval_ratio 0.005）——谁先把旁车建了，另一个就静默沿用它的切分。
+            <a href="codeview/configs/smoke/smoke_sft.yaml.html"><code>configs/smoke/smoke_sft.yaml</code></a>（sft_t2t_mini，eval_ratio 0.001）与
+            <a href="codeview/configs/sft_64m.yaml.html"><code>configs/sft_64m.yaml</code></a>（sft_t2t_mini，eval_ratio 0.005）——谁先把旁车建了，另一个就静默沿用它的切分。
             作者机器上的真实旁车就是 smoke 建的（证据见下方实测）。
           </li>
           <li class="fix">

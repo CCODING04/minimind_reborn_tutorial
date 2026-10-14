@@ -39,7 +39,7 @@
           <span class="chip">前置：<b>M11</b>（M09 移位交叉熵、M10 锚点建议在手边）</span>
           <span class="chip">时长：<b>约 80 分钟</b></span>
           <span class="chip">新概念：<b>loss mask · SFT 样本构造</b></span>
-          <span class="chip">对照：<code>data/datasets.py</code> · <code>data/loss_mask.py</code> · <code>data/manifest.py</code> · <code>tests/test_data/</code></span>
+          <span class="chip">对照：<a href="codeview/src/minimind_reborn/data/datasets.py.html"><code>data/datasets.py</code></a> · <a href="codeview/src/minimind_reborn/data/loss_mask.py.html"><code>data/loss_mask.py</code></a> · <a href="codeview/src/minimind_reborn/data/manifest.py.html"><code>data/manifest.py</code></a> · <code>tests/test_data/</code></span>
         </div>
       </header>
 </section>
@@ -255,7 +255,7 @@ spans.append((start, end + len(SUFFIX)))            # 空③ = end + len(SUFFIX)
         "labels": torch.tensor(out["labels"], dtype=torch.long),
     }</code></pre></div>
       <p>
-        ③~⑦ 住在模块级函数 <code>encode_sft_sample</code> 里——抽出来不是洁癖：画像工具 <code>tools/len_profile.py</code>
+        ③~⑦ 住在模块级函数 <code>encode_sft_sample</code> 里——抽出来不是洁癖：画像工具 <a href="codeview/tools/len_profile.py.html"><code>tools/len_profile.py</code></a>
         与它<b>共享同一实现</b>（源码注释："工具同源约束，保证「测量的」与「训练的」永远是同一语义"）。全流程：
       </p>
       <div class="codeblock"><div class="code-head"><span><a href="codeview/src/minimind_reborn/data/datasets.py.html">src/minimind_reborn/data/datasets.py</a> · encode_sft_sample（节选）</span><span class="lang">python</span></div><pre class="code"><code>full_ids = tokenizer(render(conversations)).input_ids       # ③④ 渲染+编码（含增强B）
@@ -321,7 +321,7 @@ def post_processing_chat(prompt_content, empty_think_ratio=0.2, remove_empty_thi
         随机性还牵出一条工程纪律：增强抽签用的是 Python <code>random</code>，而 DataLoader 的多进程 worker（取数进程，M13 见）
         各有自己的随机态——不治理就会"同一样本在不同 worker 里抽签不一致、复跑结果漂移"。reborn 的修法是
         <code>utils/seed.seed_worker</code> 给每个 worker 播种（datasets.py 模块头注明"这是原版的可复现性缺陷修复点"），
-        <code>test_chat_preprocessing_deterministic_under_seed</code> 锁的正是"同 seed 同结果"。
+        <a href="codeview/tests/test_data/test_loss_mask.py.html#L92"><code>test_chat_preprocessing_deterministic_under_seed</code></a> 锁的正是"同 seed 同结果"。
       </p>
 
       <h3 id="real-sample">逐 token 真跑：语料第一条，哪段 -100</h3>
@@ -450,7 +450,7 @@ return head + body</code></pre></div>
         ChatSession 的滑动窗口<b>同构</b>（历史超预算丢最旧轮、system 恒留——源码注释明说"两侧口径一致"）：训练见过的截断方式，
         推理时用同一种，模型不会"认生"。注释里那句"32 字符保底"是阶段 1 验收时抓到的回归：给 user 内容留固定下限，
         会把"回复 ≈607 字符 + 短提问"的样本挤过预算线落到硬截——白丢整条监督目标，已由
-        <code>test_fit_prefers_completing_big_reply_over_user_floor</code> 锁定。
+        <a href="codeview/tests/test_data/test_sft_pipeline.py.html#L88"><code>test_fit_prefers_completing_big_reply_over_user_floor</code></a> 锁定。
       </p>
 
       <h3 id="c2">C2 悬空段不监督：扫不到完整结尾，整段不算</h3>
@@ -474,7 +474,7 @@ print(out['stats'])
 print('labels 全 -100：', all(l == -100 for l in out['labels']))"</span>
 <span class="out">{'full_len': 549, 'fitted': True, 'hard_truncated': True, 'complete_before': 7, 'complete_after': 0, 'dangling': 1, 'n_messages': 14, 'zero_loss': True}</span>
 <span class="out">labels 全 -100： True</span></code></pre>
-      <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径]</b> C1 先丢轮（fitted=True）仍装不下（末轮回复自身超 30）→ 硬截（hard_truncated=True）→ 末段变残段（dangling=1）→ 区间 0 个、labels 全 -100——C2 的输出正好是 C3 的输入，两条修复在这里咬合。锁定的测试是 <code>test_truncated_response_dangling_not_supervised</code>（残段 spans=[]、dangling=1、labels 全 -100）与 <code>test_dangling_after_complete_spans_partial</code>（完整区间之后的残段：A1 在监督、半截话不在）。</p>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径]</b> C1 先丢轮（fitted=True）仍装不下（末轮回复自身超 30）→ 硬截（hard_truncated=True）→ 末段变残段（dangling=1）→ 区间 0 个、labels 全 -100——C2 的输出正好是 C3 的输入，两条修复在这里咬合。锁定的测试是 <a href="codeview/tests/test_data/test_loss_mask.py.html#L59"><code>test_truncated_response_dangling_not_supervised</code></a>（残段 spans=[]、dangling=1、labels 全 -100）与 <a href="codeview/tests/test_data/test_loss_mask.py.html#L75"><code>test_dangling_after_complete_spans_partial</code></a>（完整区间之后的残段：A1 在监督、半截话不在）。</p>
 
       <h3 id="c3">C3 零损失样本过滤：确定性前向重映射</h3>
       <p>
@@ -500,7 +500,7 @@ print('labels 全 -100：', all(l == -100 for l in out['labels']))"</span>
         两个讲究：<b>确定性</b>——同一视图同一位置恒定映射到同一目标，双卡 DDP（分布式数据并行，M15 详讲）的两个进程才会看到
         一致的数据流，随机跳会导致两卡各喂各的；<b>计数</b>——重映射次数进 <code>data_card()</code>（数据卡：把数据的指纹、
         剔除量、分布统计写进运行配置快照，供事后审计，存档 D5 项）。视图长度不变（len 恒 2，只是位置 0 实际吐出位置 1 的样本），
-        <code>test_sft_dataset_filters_zero_loss_with_remap</code> 把这条口径连同"直接索引不过滤"一起锁定。
+        <a href="codeview/tests/test_data/test_sft_pipeline.py.html#L200"><code>test_sft_dataset_filters_zero_loss_with_remap</code></a> 把这条口径连同"直接索引不过滤"一起锁定。
       </p>
 
       <h3 id="c45">C4 回复去重 + C5 哈希分桶：manifest 旁车清单</h3>
@@ -574,7 +574,7 @@ for i, h in enumerate(reply_hashes):
           </tbody>
         </table>
       </div>
-      <p class="prov"><b>[事实核对]</b> 17 个用例名逐一对着 <code>tests/test_data/test_sft_pipeline.py</code> 抄录；末三行 D1（多轮上采样，存档档二：治"多轮占比 19.4% 过低"）与 D5（数据卡）超出 C1–C5 编号但同在这份文件里——重复上限 3、验证视图不展开的语义都写在测试与源码注释里。</p>
+      <p class="prov"><b>[事实核对]</b> 17 个用例名逐一对着 <a href="codeview/tests/test_data/test_sft_pipeline.py.html"><code>tests/test_data/test_sft_pipeline.py</code></a> 抄录；末三行 D1（多轮上采样，存档档二：治"多轮占比 19.4% 过低"）与 D5（数据卡）超出 C1–C5 编号但同在这份文件里——重复上限 3、验证视图不展开的语义都写在测试与源码注释里。</p>
 </section>
 
 <section class="panel">
@@ -853,7 +853,7 @@ print(f"渲染变体 {len(texts)} 种；全长 {len(ids)} token；监督 {sum(1 
         <p>
           对拍：脚本模板见 <a href="btrack.html">B 轨总纲</a>——合成小序列（含多轮、含截断残段）逐 case 对照
           <code>from minimind_reborn.data.loss_mask import find_response_spans</code>。裁判测试
-          <code>tests/test_data/test_loss_mask.py</code>（先跑一遍看参考行为：
+          <a href="codeview/tests/test_data/test_loss_mask.py.html"><code>tests/test_data/test_loss_mask.py</code></a>（先跑一遍看参考行为：
           <code>uv run pytest tests/test_data/test_loss_mask.py -q</code>——单轮/多轮/残段三组用例用真实
           tokenizer 逐 token 断言，正是你要对齐的三种形态）。
         </p>

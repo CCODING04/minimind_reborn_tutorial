@@ -39,7 +39,7 @@
           <span class="chip">前置：<b>M19</b>（M02/M03 的两处伏笔本课回收）</span>
           <span class="chip">时长：<b>约 85 分钟</b></span>
           <span class="chip">新概念：<b>采样纯函数链契约 · 停止条件体系</b></span>
-          <span class="chip">对照：<code>inference/{sampling,generator,chat,engine}.py</code> · <code>tools/serve.py</code> · <code>tests/test_inference/</code></span>
+          <span class="chip">对照：<code>inference/{sampling,generator,chat,engine}.py</code> · <a href="codeview/tools/serve.py.html"><code>tools/serve.py</code></a> · <code>tests/test_inference/</code></span>
         </div>
       </header>
 </section>
@@ -637,10 +637,10 @@ for rp in (1.0, 1.5):
           对拍：脚本模板见 <a href="btrack.html">B 轨总纲</a>——随机 logits 网格（关/开、极端 p、k &gt; vocab）逐点对照
           <code>from minimind_reborn.inference.sampling import apply_temperature, apply_top_k, apply_top_p</code>；
           串联后可再对 <code>sample_token(logits, GenerateConfig(...), generator=seed)</code> 的分布做统计对拍。
-          裁判测试 <code>tests/test_inference/test_generator.py</code>（先跑一遍看参考行为：
+          裁判测试 <a href="codeview/tests/test_inference/test_generator.py.html"><code>tests/test_inference/test_generator.py</code></a>（先跑一遍看参考行为：
           <code>uv run pytest tests/test_inference/test_generator.py -q</code>——
-          <code>test_top_k_keeps_exactly_k</code> 断言恰好留 k 个、
-          <code>test_top_p_keeps_prefix_crossing_p</code> 断言保留质量恰过 p）。
+          <a href="codeview/tests/test_inference/test_generator.py.html#L25"><code>test_top_k_keeps_exactly_k</code></a> 断言恰好留 k 个、
+          <a href="codeview/tests/test_inference/test_generator.py.html#L32"><code>test_top_p_keeps_prefix_crossing_p</code></a> 断言保留质量恰过 p）。
         </p>
       </div>
 

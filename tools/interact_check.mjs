@@ -65,6 +65,11 @@ async function linkAudit(context) {
       if (!existsSync(resolve(ROOT, local))) { bad(`链接 ${p} → ${href}`, "目标文件不存在"); continue; }
       if (anchor && target.endsWith(".html")) {
         const t = readFileSync(resolve(ROOT, local), "utf-8");
+        // codeview 行锚 #Ln 客户端渲染生成，源文件无字面 id——按烘焙文本行数校验（与 check_course 同规则）
+        if (local.startsWith("codeview/") && /^L\d+$/.test(anchor)) {
+          const m2 = t.match(/<code data-lines="1">([\s\S]*?)<\/code><\/pre>/);
+          if (m2 && Number(anchor.slice(1)) <= m2[1].split("\n").length) continue;
+        }
         if (!t.includes(`id="${anchor}"`)) bad(`跨页锚点 ${p} → ${href}`, "目标页缺该 id");
       }
     }

@@ -39,7 +39,7 @@
           <span class="chip">前置：<b>M15</b>（引擎与分布式全部就绪，本课点火）</span>
           <span class="chip">时长：<b>约 90 分钟</b></span>
           <span class="chip">新概念：<b>预训练动力学（loss 曲线读法）· SFT 行为跃迁</b></span>
-          <span class="chip">对照：<code>training/pretrain/workflow.py</code> · <code>training/sft/workflow.py</code> · <code>configs/{pretrain,sft}_64m.yaml</code> · <code>runs/</code></span>
+          <span class="chip">对照：<a href="codeview/src/minimind_reborn/training/pretrain/workflow.py.html"><code>training/pretrain/workflow.py</code></a> · <a href="codeview/src/minimind_reborn/training/sft/workflow.py.html"><code>training/sft/workflow.py</code></a> · <code>configs/{pretrain,sft}_64m.yaml</code> · <code>runs/</code></span>
         </div>
       </header>
 </section>
@@ -200,7 +200,7 @@ train:
 <section class="panel">
 <h2 id="tiny">tiny 实战：200 步，从 8.7 出发</h2>
       <p>
-        引擎读完了，点火。冒烟配方 <code>configs/smoke/smoke_pretrain.yaml</code> 默认只跑 6 步
+        引擎读完了，点火。冒烟配方 <a href="codeview/configs/smoke/smoke_pretrain.yaml.html"><code>configs/smoke/smoke_pretrain.yaml</code></a> 默认只跑 6 步
         （M01 的样子），本课把步数放大到 200——tiny 模型（0.53M 参数）上这是<b>分钟级</b>的事：
       </p>
       <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.max_steps=200 --set train.resume=false --set train.log_interval=20 --set train.save_interval_steps=100</span>

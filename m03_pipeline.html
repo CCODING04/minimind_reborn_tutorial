@@ -264,7 +264,7 @@ def sample_token(logits, gen, generator=None):      <span class="c"># ⑤ 单步
         <span class="prov">[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130 · apply_temperature 换计数包装插桩]</span>。
         每个函数单独看都对——"纯函数都对、串起来的契约有缝隙"，M20 立案；2026-10-06 已修复
         （commit <code>714f9c5</code>：删 generator 的外层调用，sampling.py 契约同步改为"温度恰好施加一次"，
-        回归测试 <code>test_temperature_applied_exactly_once_per_step</code> 锁定）——现在的 generator.py 只施加重复惩罚，
+        回归测试 <a href="codeview/tests/test_inference/test_generator.py.html#L53"><code>test_temperature_applied_exactly_once_per_step</code></a> 锁定）——现在的 generator.py 只施加重复惩罚，
         温度归 sample_token 独家。你在当前代码里插桩会数到每步恰 1 次。
       </p>
 

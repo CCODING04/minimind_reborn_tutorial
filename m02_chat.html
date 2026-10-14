@@ -32,13 +32,13 @@
         <h1>与 64M 模型对话</h1>
         <p class="lede">
           M01 的冒烟给了你 3 个 tiny 权重；完整训练出的官方 64M 正主则按
-          <a href="m01_get_started.html#weights">M01 §官方权重下载</a> 下载到 <code>out/official/</code>。这一课先不管模型内部长什么样——把模型叫醒，问它"你是谁"，转 temperature 旋钮看它换三种性格；然后猎一个真实 bug：课程写作时（2026-09-29），官方对话入口 <code>tools/chat.py</code> 第一句话就崩，而当时 49 个测试全绿（49 为 M01 时代口径，随仓库演进现为 93——2026-10-06 修复周期又新增一批回归测试，演进说明见 M01）。为什么？现在它已被修复，但猎场完整保留——你将学会亲手复现那次崩溃。
+          <a href="m01_get_started.html#weights">M01 §官方权重下载</a> 下载到 <code>out/official/</code>。这一课先不管模型内部长什么样——把模型叫醒，问它"你是谁"，转 temperature 旋钮看它换三种性格；然后猎一个真实 bug：课程写作时（2026-09-29），官方对话入口 <a href="codeview/tools/chat.py.html"><code>tools/chat.py</code></a> 第一句话就崩，而当时 49 个测试全绿（49 为 M01 时代口径，随仓库演进现为 93——2026-10-06 修复周期又新增一批回归测试，演进说明见 M01）。为什么？现在它已被修复，但猎场完整保留——你将学会亲手复现那次崩溃。
         </p>
         <div class="meta">
           <span class="chip">前置：<b>M01 课程导览与第一个绿灯</b></span>
           <span class="chip">时长：<b>约 45 分钟</b></span>
           <span class="chip">新概念：<b>采样分布（temperature / top_p）</b></span>
-          <span class="chip">对照：<code>tools/chat.py</code> · <code>inference/engine.py</code> · <code>out/*.pth</code></span>
+          <span class="chip">对照：<a href="codeview/tools/chat.py.html"><code>tools/chat.py</code></a> · <a href="codeview/src/minimind_reborn/inference/engine.py.html"><code>inference/engine.py</code></a> · <code>out/*.pth</code></span>
         </div>
       </header>
 </section>
@@ -175,7 +175,7 @@ return cls(model, tokenizer, device, target_dtype)</code></pre></div>
         <p>
           HuggingFace 的 <code>from_pretrained()</code> 是同一思路的工业版：给个名字，路径/精度/设备/词表校验全部收拢。
           官方 minimind 相反——每个脚本自己 <code>torch.load</code> + <code>.to(device)</code>，五份脚本五份重复。
-          reborn 把它收敛成库 API 后，<code>tools/chat.py</code>、<code>tools/eval_llm.py</code>、<code>tools/serve.py</code>
+          reborn 把它收敛成库 API 后，<code>tools/chat.py</code>、<a href="codeview/tools/eval_llm.py.html"><code>tools/eval_llm.py</code></a>、<a href="codeview/tools/serve.py.html"><code>tools/serve.py</code></a>
           共享同一条加载语义——本课猎场正是"入口与引擎脱节"的反面教材。
         </p>
       </div>
@@ -282,7 +282,7 @@ git checkout HEAD -- src/minimind_reborn/inference/chat.py       # 恢复修复�
           <li class="fix">
             一行修复（chat.py:73，改为按引擎真实签名传参）：
             <code>self.generate_fn(inputs["input_ids"], self.gen, attention_mask=inputs["attention_mask"])</code>。
-            <b>已于 2026-10-06 落地（commit 8ab893d）</b>，且不止这一行——测试桩的签名同步对齐，另加一条真实引擎 + ChatSession 的接线测试 <code>test_session_respond_via_real_engine</code>（下方红线卡建议 ② 的原样实现），签名再漂移会先在测试里炸。
+            <b>已于 2026-10-06 落地（commit 8ab893d）</b>，且不止这一行——测试桩的签名同步对齐，另加一条真实引擎 + ChatSession 的接线测试 <a href="codeview/tests/test_inference/test_chat_budget.py.html#L129"><code>test_session_respond_via_real_engine</code></a>（下方红线卡建议 ② 的原样实现），签名再漂移会先在测试里炸。
           </li>
         </ul>
       </div>
@@ -316,7 +316,7 @@ out = self.generate_fn(inputs["input_ids"], inputs["attention_mask"], self.gen)
       <div class="callout danger">
         <div class="co-title">🛑 红线：注入的依赖，接口契约必须锁定</div>
         <p>
-          依赖注入（把 generate_fn 传给 ChatSession）换来可测性，也给了"桩可以为所欲为"的自由。契约不锁定，桩会漂离真实接口——测试照绿，线上照崩。两种低成本锁定：① <b>契约测试</b>——断言 <code>inspect.signature(MiniMindLLM.generate_tokens)</code> 与 ChatSession 的调用形式匹配；② <b>加一条真实（tiny）引擎 + ChatSession 的接线测试</b>，让缝隙每次都被踩到。M01 的 make smoke 给训练链做了接线冒烟，推理链没有对应物——此 bug 在 M02 呈现；2026-10-06 修复周期采纳建议 ②，<code>test_session_respond_via_real_engine</code> 已入 <code>test_chat_budget.py</code>。
+          依赖注入（把 generate_fn 传给 ChatSession）换来可测性，也给了"桩可以为所欲为"的自由。契约不锁定，桩会漂离真实接口——测试照绿，线上照崩。两种低成本锁定：① <b>契约测试</b>——断言 <code>inspect.signature(MiniMindLLM.generate_tokens)</code> 与 ChatSession 的调用形式匹配；② <b>加一条真实（tiny）引擎 + ChatSession 的接线测试</b>，让缝隙每次都被踩到。M01 的 make smoke 给训练链做了接线冒烟，推理链没有对应物——此 bug 在 M02 呈现；2026-10-06 修复周期采纳建议 ②，<a href="codeview/tests/test_inference/test_chat_budget.py.html#L129"><code>test_session_respond_via_real_engine</code></a> 已入 <code>test_chat_budget.py</code>。
         </p>
       </div>
 </section>

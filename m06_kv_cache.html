@@ -42,7 +42,7 @@
           <span class="chip">前置：<b>M05</b></span>
           <span class="chip">时长：<b>约 60 分钟</b></span>
           <span class="chip">新概念：<b>KV 缓存</b></span>
-          <span class="chip">对照：<code>models/kv_cache.py</code> · <code>inference/generator.py</code> · <code>tests/test_models/test_kv_cache.py</code></span>
+          <span class="chip">对照：<a href="codeview/src/minimind_reborn/models/kv_cache.py.html"><code>models/kv_cache.py</code></a> · <a href="codeview/src/minimind_reborn/inference/generator.py.html"><code>inference/generator.py</code></a> · <a href="codeview/tests/test_models/test_kv_cache.py.html"><code>tests/test_models/test_kv_cache.py</code></a></span>
         </div>
       </header>
 </section>
@@ -203,7 +203,7 @@ print(statistics.median(bench(no_cache) for _ in range(5)),
       <ul>
         <li><b>cat 每步都在"搬家"</b>：拼接产生新张量——分配一块装得下全部历史的新内存，把旧历史 + 新一列都拷进去，旧块等垃圾回收。生成 N 个 token 的总拷贝量是 1+2+…+N 的平方级，而且 8 层每层各搬各的；</li>
         <li><b>分配器碎片</b>：每步一块"恰好大一点"的短命大块，反复申请/释放让 GPU 显存分配器疲于奔命（显存分配本身是毫秒级、会同步设备的贵操作）；</li>
-        <li><b>预分配一次痛完</b>：形状定死，之后所有写都是原地切片——测试 1 用 <code>data_ptr()</code>（张量底层存储的内存地址）断言写前后地址不变，把"零再分配"锁死成回归。</li>
+        <li><b>预分配一次痛完</b>：形状定死，之后所有写都是原地切片——<a href="codeview/tests/test_models/test_kv_cache.py.html#L15">测试 1</a> 用 <code>data_ptr()</code>（张量底层存储的内存地址）断言写前后地址不变，把"零再分配"锁死成回归。</li>
       </ul>
       <p>代价也明摆着：容量必须提前知道，开多了浪费（生成提前撞 eos 停止时，空位白占显存）——这笔账怎么算，见<a href="#capacity">下一节</a>。</p>
 
@@ -357,11 +357,11 @@ print(f"真实分配核对：k{tuple(cache.k.shape)} + v 同形 = {real/1024/102
         <table>
           <thead><tr><th>测试</th><th>锁死的不变量</th></tr></thead>
           <tbody>
-            <tr><td><code>test_kv_cache_inplace_slice_no_realloc</code></td><td><code>data_ptr()</code> 写前后不变——真·原地、零再分配；<code>advance</code> 前游标不动</td></tr>
-            <tr><td><code>test_kv_cache_overflow_raises</code></td><td>越界必须抛 <code>ValueError</code>，不许静默写坏</td></tr>
-            <tr><td><code>test_generation_cache_consistency</code></td><td><b>逐步 vs 全量重算逐位一致</b>（本节主角）</td></tr>
-            <tr><td><code>test_prefill_then_decode_matches_full_forward</code></td><td>prefill 写 cache 后的单步解码 == 全量 forward 对应位置的 logits</td></tr>
-            <tr><td><code>test_sdpa_prefill_path_matches_manual</code></td><td>SDPA 融合路径与 manual 路径等价（M07 三条路径的伏笔）</td></tr>
+            <tr><td><a href="codeview/tests/test_models/test_kv_cache.py.html#L15"><code>test_kv_cache_inplace_slice_no_realloc</code></a></td><td><code>data_ptr()</code> 写前后不变——真·原地、零再分配；<code>advance</code> 前游标不动</td></tr>
+            <tr><td><a href="codeview/tests/test_models/test_kv_cache.py.html#L31"><code>test_kv_cache_overflow_raises</code></a></td><td>越界必须抛 <code>ValueError</code>，不许静默写坏</td></tr>
+            <tr><td><a href="codeview/tests/test_models/test_kv_cache.py.html#L41"><code>test_generation_cache_consistency</code></a></td><td><b>逐步 vs 全量重算逐位一致</b>（本节主角）</td></tr>
+            <tr><td><a href="codeview/tests/test_models/test_kv_cache.py.html#L63"><code>test_prefill_then_decode_matches_full_forward</code></a></td><td>prefill 写 cache 后的单步解码 == 全量 forward 对应位置的 logits</td></tr>
+            <tr><td><a href="codeview/tests/test_models/test_kv_cache.py.html#L75"><code>test_sdpa_prefill_path_matches_manual</code></a></td><td>SDPA 融合路径与 manual 路径等价（M07 三条路径的伏笔）</td></tr>
           </tbody>
         </table>
       </div>
@@ -432,7 +432,7 @@ cache.write(0, k, k, start=6)"</span>
         <summary>测验 2 · read 返回 view 与返回 copy 有什么区别？为什么这里必须是视图？</summary>
         <div class="quiz-body">
           <div class="quiz-ans">
-            <p><b>答案：</b>view 是指向同一块存储的"窗口"（基本索引切片天然如此），不搬运任何数据；copy 会新开内存把元素逐个搬过去。这里必须用视图：decode 阶段每一步都要读一次全部历史，若每次读都拷贝，读历史就成了新的平方级开销，"增量解码"省下的算力被搬运吃掉。配套的另一半是写入侧用 <code>copy_</code> 原地灌——测试 1 用 <code>data_ptr()</code> 写前后不变锁死"存储从未换过"。</p>
+            <p><b>答案：</b>view 是指向同一块存储的"窗口"（基本索引切片天然如此），不搬运任何数据；copy 会新开内存把元素逐个搬过去。这里必须用视图：decode 阶段每一步都要读一次全部历史，若每次读都拷贝，读历史就成了新的平方级开销，"增量解码"省下的算力被搬运吃掉。配套的另一半是写入侧用 <code>copy_</code> 原地灌——<a href="codeview/tests/test_models/test_kv_cache.py.html#L15">测试 1</a> 用 <code>data_ptr()</code> 写前后不变锁死"存储从未换过"。</p>
             <p class="back">答错回看：<a href="#contract">write / read / advance 协议</a>。</p>
           </div>
         </div>
@@ -526,7 +526,7 @@ for cap in (2048, 4096):
         <p>
           对拍：脚本模板见 <a href="btrack.html">B 轨总纲</a>——用你的 cache 跑"prefill + 逐步 decode"，与全量单次
           forward 的输出逐位对照；再验证写入前后 <code>c.k.data_ptr()</code> 不变（零再分配的直接证据）。
-          裁判测试 <code>tests/test_models/test_kv_cache.py</code>（先跑一遍看参考行为：
+          裁判测试 <a href="codeview/tests/test_models/test_kv_cache.py.html"><code>tests/test_models/test_kv_cache.py</code></a>（先跑一遍看参考行为：
           <code>uv run pytest tests/test_models/test_kv_cache.py -q</code>，5 passed——零再分配/溢出硬错/逐步 vs 全量一致等五条不变量）。
         </p>
       </div>

@@ -40,7 +40,7 @@
           <span class="chip">前置：<b>M13</b>（引擎已在转；M09 的权重三语义本课从训练侧再看）</span>
           <span class="chip">时长：<b>约 70 分钟</b></span>
           <span class="chip">新概念：<b>训练状态（checkpoint 语义）</b></span>
-          <span class="chip">对照：<code>training/common/checkpoint.py</code> · <code>utils/io.py</code> · <code>docs/pretrain_readiness.md</code></span>
+          <span class="chip">对照：<a href="codeview/src/minimind_reborn/training/common/checkpoint.py.html"><code>training/common/checkpoint.py</code></a> · <a href="codeview/src/minimind_reborn/utils/io.py.html"><code>utils/io.py</code></a> · <a href="codeview/docs/pretrain_readiness.md.html"><code>docs/pretrain_readiness.md</code></a></span>
         </div>
       </header>
 </section>
@@ -595,7 +595,7 @@ is_last = offset == start_step + iters - 1        # 循环终点：实际迭代�
 <span class="ok">0</span>
 <span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_pretrain.yaml --set train.max_steps=60 --set train.save_interval_steps=10 --set train.log_interval=2</span>
 <span class="ok">… | 续训恢复清单：epoch=0 step=30 … scaler=ok（恢复清单让加载错误第一步现形）</span></code></pre>
-          <p>第三条（无 GPU 存档路线）：打开 <code>docs/pretrain_readiness.md</code> 第 1 节，指出 0.67% 出自哪三行对比、kill 点与 ckpt 点各在哪一步。</p>
+          <p>第三条（无 GPU 存档路线）：打开 <a href="codeview/docs/pretrain_readiness.md.html"><code>docs/pretrain_readiness.md</code></a> 第 1 节，指出 0.67% 出自哪三行对比、kill 点与 ckpt 点各在哪一步。</p>
           <ul class="pass-criteria">
             <li><code>5 passed</code>——test_common.py 五个用例全绿；</li>
             <li>实验路线：续训日志含三行证据——<code>RNG 状态已恢复</code>、<code>续训恢复清单：epoch=0 step=30</code>（step 必须 ≥10：kill 前至少落过一个存档点）、

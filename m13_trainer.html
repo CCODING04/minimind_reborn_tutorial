@@ -340,8 +340,8 @@ print(f"裁剪后范数 {clipped.norm():.2f}，梯度 {clipped.tolist()}")
         出了问题你得审对象的一生。纯函数没有这层：<b>lr 是 (step, total, base, …) 的函数</b>，
         想知道任意一步的 lr，算就是了；想断言"训练结束恰好在地板上"，直接调函数末步。
         <a href="codeview/tests/test_training/test_common.py.html">test_common.py</a> 前两个用例锁的正是语义：
-        <code>test_lr_official_cosine_floor_semantics</code> 断言与官方公式 <code>lr*(0.1+0.45*(1+cos(pi*t)))</code>
-        逐位一致（误差 &lt; 1e-12），<code>test_lr_warmup_and_clamp</code> 锁 warmup 首步/末步与越界钳制。
+        <a href="codeview/tests/test_training/test_common.py.html#L13"><code>test_lr_official_cosine_floor_semantics</code></a> 断言与官方公式 <code>lr*(0.1+0.45*(1+cos(pi*t)))</code>
+        逐位一致（误差 &lt; 1e-12），<a href="codeview/tests/test_training/test_common.py.html#L21"><code>test_lr_warmup_and_clamp</code></a> 锁 warmup 首步/末步与越界钳制。
       </p>
       <p>
         纯函数还有个隐藏收益：<b>分母口径错了，测试能抓</b>。
@@ -350,7 +350,7 @@ print(f"裁剪后范数 {clipped.norm():.2f}，梯度 {clipped.tolist()}")
         M15 详讲）下每卡每 epoch 只迭代全量的 1/world，而余弦分母此前按全量算——
         2 个 epoch 跑完 lr 只退到 75% 进度处（≈lr×0.23），到不了地板。
         修复是 <code>per_rank_full_iters()</code>（trainer.py:82）按本 rank 口径折算分母；
-        <code>test_old_bug_signature_locked</code> 把旧口径的错值 ≈2.32e-6 钉成"回归签名"——
+        <a href="codeview/tests/test_training/test_lr_schedule.py.html#L44"><code>test_old_bug_signature_locked</code></a> 把旧口径的错值 ≈2.32e-6 钉成"回归签名"——
         这个数字再出现，就是 bug 回来了。<b>单卡 world=1 时两种口径恰好一致</b>，所以 mini 时代从未暴露：
         又一个"单卡测不出、多卡才现形"的案例。
       </p>
@@ -516,7 +516,7 @@ def build_scaler(dtype: torch.dtype) -&gt; torch.amp.GradScaler:
         tiny 模型上真分组看账：decay 组 532,480 个参数、no_decay 组只有 384 个——
         恰是 8 个 norm 向量（q_norm/k_norm 16 维 + 两个 layernorm 64 维，×2 层）加出口 norm 64 维；
         整个模型连一个 bias 都没有（M09 说过的去偏置哲学），全靠 dim 规则兜住。
-        <code>test_optimizer_decay_groups</code> 用 Linear+LayerNorm 双层模型锁死分组不变量。
+        <a href="codeview/tests/test_training/test_common.py.html#L29"><code>test_optimizer_decay_groups</code></a> 用 Linear+LayerNorm 双层模型锁死分组不变量。
       </p>
       <p class="prov"><b>[作者实测 · 2026-10-01]</b> 分组数字来自对 tiny 冒烟模型跑 configure_optimizers 后
       按 <code>param_groups</code> 的 weight_decay 分别求和：532,480 / 384，与逐参数形状清单一致。</p>
@@ -588,7 +588,7 @@ def build_scaler(dtype: torch.dtype) -&gt; torch.amp.GradScaler:
       <p>
         <b>ETA</b>（预计剩余时间）：剩余步数 × 每步平均耗时。它被提炼成又一个纯函数
         （trainer.py:71，9 行）：$\text{ETA}=\dfrac{t_{\text{elapsed}}}{\text{steps}_{\text{done}}}\times\dfrac{\text{steps}_{\text{left}}}{60}$（分钟）。
-        <code>test_eta_formula</code> 锁了三组数：5000 步用了 600 秒 → 剩 3000 步应需 6.0 分钟；
+        <a href="codeview/tests/test_training/test_observability.py.html#L17"><code>test_eta_formula</code></a> 锁了三组数：5000 步用了 600 秒 → 剩 3000 步应需 6.0 分钟；
         0 步已完成 → 0.0（不外推，防除零）。这个函数为什么值得"纯函数化+测试"？因为它刚出过一次
         真实事故——分子用错了时钟，ETA 恒 0。这就是本课猎场。
       </p>
@@ -659,7 +659,7 @@ def estimate_eta_minutes(elapsed_total_s, steps_done, steps_left) -&gt; float:
     return elapsed_total_s / steps_done * steps_left / 60</code></pre></div>
       <p>
         <b>回归锁定</b>：同一个 commit 新增 <a href="codeview/tests/test_training/test_observability.py.html">test_observability.py</a>，
-        <code>test_eta_formula</code> 三组断言把公式钉死；<code>test_metrics_steps_monotonic_and_unified</code> 锁同一 commit 修的另一处口径
+        <a href="codeview/tests/test_training/test_observability.py.html#L17"><code>test_eta_formula</code></a> 三组断言把公式钉死；<a href="codeview/tests/test_training/test_observability.py.html#L24"><code>test_metrics_steps_monotonic_and_unified</code></a> 锁同一 commit 修的另一处口径
         （train/val 曲线统一用 optimizer step，x 轴不再错位——M01 日志里 <code>optimizer_steps=3</code> 那把尺子就是它定的）。
         <b>通用教训：度量口径</b>——分子分母必须来自<b>同一把尺子</b>。"窗口耗时 ÷ 累计步数"各自单独看都合法
         （窗口测吞吐、累计算进度），拼在一起就是结构性的错；而且它错得<b>很体面</b>：早期数值碰巧接近真值
@@ -820,7 +820,7 @@ for step in range(6):
             <p>
               <b>pytest 有 failed</b> → 读用例名分流：<code>test_lr_*</code> 失败回 <a href="#lr">LR 小节</a>（先查是否动过 lr.py），
               <code>test_ddp_* / test_old_bug_signature_locked</code> 失败回 <a href="#purefn">纯函数小节</a> 的分母口径，
-              <code>test_eta_formula</code> 失败回 <a href="#bughunt">猎场</a>；
+              <a href="codeview/tests/test_training/test_observability.py.html#L17"><code>test_eta_formula</code></a> 失败回 <a href="#bughunt">猎场</a>；
               <b>训练启动即 KeyError / 未知精度</b> → <code>--set train.dtype</code> 拼错（守门人应更早拦截，
               见 resolve_dtype 末行的报错文案）；<b>找不到数据集</b> → 回 M11 的 registry/datasets.json 检查语料是否就位；
               <b>runs 目录只有 train.log</b> → config.json/env.json 由 rank0 独占写入（trainer.py:143），
