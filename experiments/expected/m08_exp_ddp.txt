@@ -1,0 +1,2 @@
+无挂图技巧       : RuntimeError: Expected to have finished reduction in the prior iteration before starting a new one. This error indicates that your module has parameters that were not used in producing loss. You can enable unused parameter detection by passing the keyword argument `find_unused_parameters=True` to `torch.nn.parallel.DistributedDataParallel`, and by 
+y[0,0]+=0·Σp 挂图: 两步都通过

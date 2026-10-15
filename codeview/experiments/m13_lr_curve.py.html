@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m13_lr_curve.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m13_lr_curve.py</span>
+  <span class="cv-meta">23 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m13_lr_curve.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M13 教学脚本：get_lr 曲线 10 个采样点 + warmup 变式对照。&quot;&quot;&quot;
+import math
+from minimind_reborn.training.common.lr import get_lr
+
+base, total, warmup = 5e-4, 60, 10
+print(f&quot;base_lr={base:.0e} total_steps={total} warmup_steps={warmup} min_ratio=0.1&quot;)
+print(f&quot;{&#x27;step&#x27;:&gt;4} {&#x27;progress&#x27;:&gt;8} {&#x27;lr&#x27;:&gt;10}  bar&quot;)
+for step in range(0, total + 1, 6):
+    lr = get_lr(step, total, base, warmup_steps=warmup, min_ratio=0.1)
+    bar = &quot;#&quot; * int(round(lr / base * 40))
+    if step &lt; warmup:
+        phase = &quot;warmup&quot;
+    else:
+        phase = &quot;cosine&quot;
+    print(f&quot;{step:&gt;4} {step/total:&gt;7.0%} {lr:&gt;10.3e}  {bar} {phase}&quot;)
+
+print()
+print(&quot;变式：warmup_steps 2 → 10，前 6 步的 lr 对比（total=60, base=5e-4）&quot;)
+print(f&quot;{&#x27;step&#x27;:&gt;4} {&#x27;warmup=2&#x27;:&gt;11} {&#x27;warmup=10&#x27;:&gt;11}&quot;)
+for step in range(6):
+    a = get_lr(step, 60, 5e-4, warmup_steps=2)
+    b = get_lr(step, 60, 5e-4, warmup_steps=10)
+    print(f&quot;{step:&gt;4} {a:&gt;11.3e} {b:&gt;11.3e}&quot;)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+config: experts=4 k=1 moe_intermediate=2432 norm_topk=True coef=0.0005
+随机初始化 router——load（每专家 token 占比）: [0.125, 0.312, 0.156, 0.406]
+importance（每专家平均分数）   : [0.243, 0.256, 0.222, 0.278]
+token0 的路由分数: [0.307, 0.139, 0.236, 0.317] → 选中专家 3
+aux_loss（train, 均匀路由）= 0.000516
+aux_loss（eval）            = 0.000000
+偏心后 load: [1.0, 0.0, 0.0, 0.0]
+偏心后 importance: [1.0, 0.0, 0.0, 0.0]
+aux_loss（train, 偏心路由）= 0.002000
+直通权重前向值: 全部等于 1.0? True  (前向数值上 weight≡1)
+反向后 gate.weight.grad 非零? True

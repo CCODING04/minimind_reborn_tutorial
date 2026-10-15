@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m11_bench.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m11_bench.py</span>
+  <span class="cv-meta">82 行 · 3KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m11_bench.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M11 实验：同一 1.24GB pretrain_t2t_mini.jsonl，三种随机取样姿势对比。
+
+用法：uv run python /tmp/m11_bench.py --mode naive_load|naive_scan|indexed
+每个模式独立进程跑（/usr/bin/time -v 采峰值 RSS），输出机器可读行。
+&quot;&quot;&quot;
+from __future__ import annotations
+
+import argparse
+import json
+import random
+import resource
+import sys
+import time
+from pathlib import Path
+
+PATH = Path.home() / &quot;Code/WorkSpace/minimind-reproduce/dataset/pretrain_t2t_mini.jsonl&quot;
+N_SAMPLE = 1000
+TARGET = 100_000
+
+
+def peak_mb() -&gt; float:
+    # Linux: ru_maxrss 单位 KB
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+
+
+def bench_access(fn, n_lines: int) -&gt; float:
+    rng = random.Random(42)
+    idxs = rng.sample(range(n_lines), N_SAMPLE)
+    t0 = time.perf_counter()
+    for i in idxs:
+        fn(i)
+    return (time.perf_counter() - t0) / N_SAMPLE * 1e6  # µs/次
+
+
+_p = argparse.ArgumentParser()
+_p.add_argument(&quot;--mode&quot;, required=True, choices=[&quot;naive_load&quot;, &quot;naive_scan&quot;, &quot;indexed&quot;])
+mode = _p.parse_args(sys.argv[1:]).mode
+
+if mode == &quot;naive_load&quot;:
+    base = peak_mb()
+    t0 = time.perf_counter()
+    with PATH.open(&quot;rb&quot;) as f:
+        data = [json.loads(line) for line in f if line.strip()]
+    load_s = time.perf_counter() - t0
+    print(f&quot;[naive_load] 行数 {len(data)}&quot;)
+    print(f&quot;[naive_load] 全量解析耗时 {load_s:.2f}s&quot;)
+    print(f&quot;[naive_load] 峰值内存 {peak_mb():.0f}MB（进程基线 {base:.0f}MB → 数据净增 {peak_mb()-base:.0f}MB）&quot;)
+    us = bench_access(lambda i: data[i][&quot;text&quot;][:40], len(data))
+    print(f&quot;[naive_load] 随机取样 {us:.2f}µs/次（{N_SAMPLE} 次平均）&quot;)
+    print(f&quot;[naive_load] 第 {TARGET} 行开头：{data[TARGET][&#x27;text&#x27;][:36]!r}&quot;)
+
+elif mode == &quot;naive_scan&quot;:
+    def scan_get(i: int) -&gt; dict:
+        with PATH.open(&quot;rb&quot;) as f:  # 没有 offset：只能从头数行
+            for n, line in enumerate(f):
+                if n == i:
+                    return json.loads(line)
+        raise IndexError
+
+    row = scan_get(TARGET)
+    t0 = time.perf_counter()
+    scan_get(TARGET)
+    dt = time.perf_counter() - t0
+    print(f&quot;[naive_scan] 不预载、直接取第 {TARGET} 行：{dt*1000:.0f}ms/次（需从头扫过前 {TARGET} 行）&quot;)
+    print(f&quot;[naive_scan] 第 {TARGET} 行开头：{row[&#x27;text&#x27;][:36]!r}&quot;)
+    print(f&quot;[naive_scan] 峰值内存 {peak_mb():.0f}MB（单行缓存，与文件大小无关）&quot;)
+
+elif mode == &quot;indexed&quot;:
+    from minimind_reborn.data.datasets import JsonlIndexedDataset
+
+    base = peak_mb()
+    t0 = time.perf_counter()
+    ds = JsonlIndexedDataset(PATH)
+    build_s = time.perf_counter() - t0
+    print(f&quot;[indexed] 行数 {len(ds)}（与 wc -l 一致）&quot;)
+    print(f&quot;[indexed] 索引构建 {build_s:.2f}s（一次 O(N) 顺序扫描，只记偏移不解析 json）&quot;)
+    print(f&quot;[indexed] 峰值内存 {peak_mb():.0f}MB（进程基线 {base:.0f}MB → 索引净增 {peak_mb()-base:.0f}MB）&quot;)
+    us = bench_access(lambda i: ds.load_line(i)[&quot;text&quot;][:40], len(ds))
+    print(f&quot;[indexed] 随机取样 {us:.1f}µs/次（{N_SAMPLE} 次平均：open+seek+readline+json）&quot;)
+    t0 = time.perf_counter()
+    row = ds.load_line(TARGET)
+    print(f&quot;[indexed] 取第 {TARGET} 行 {(time.perf_counter()-t0)*1e6:.0f}µs：{row[&#x27;text&#x27;][:36]!r}&quot;)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

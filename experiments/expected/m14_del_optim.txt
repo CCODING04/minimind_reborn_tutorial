@@ -1,0 +1,2 @@
+原件九键： ['best_val_loss', 'config', 'epoch', 'model', 'optimizer', 'rng', 'scaler', 'step', 'world_size']
+KeyError: 'optimizer'

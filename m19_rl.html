@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M19 · RL 一览：rollout 的世界 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m19">
 
@@ -127,7 +127,8 @@ RL 家族（本课）   ：grpo · ppo · agent                        ← 学"�
         概念落地最快的方式是真采一次。随机初始化一个 tiny 模型（0.53M，M16 的冒烟尺寸），
         对同一个 prompt 采 4 条回答——这正是 GRPO 里 N=4 的"组"：
       </p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m19_rollout.py · 组采样观测（1 prompt × 4 completions）</span><span class="lang">python</span></div><pre class="code"><code>import torch
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m19_rollout.py.html">experiments/m19_rollout.py</a> · 组采样观测（1 prompt × 4 completions，全文 25 行）</span><span class="lang">python</span></div><pre class="code"><code>"""M19 观测：对一个随机 tiny 模型做一次 GRPO 式组采样（1 prompt × 4 completions）。"""
+import torch
 from transformers import AutoTokenizer
 
 from minimind_reborn.inference.chat import render_chat
@@ -138,21 +139,22 @@ from minimind_reborn.training.rollout import TorchRolloutEngine
 torch.manual_seed(7)
 tok = AutoTokenizer.from_pretrained("assets/tokenizer")
 cfg = MiniMindConfig(hidden_size=64, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2)
-model = MiniMindForCausalLM(cfg).eval()          # 随机权重：只看结构，不看点数
+model = MiniMindForCausalLM(cfg).eval()  # 随机权重：只看结构，不看点数
 engine = TorchRolloutEngine(model, tok, device="cpu")
 
-prompt = render_chat(tok, [{"role": "user", "content": "1+1等于几？"}])   # M10 的模板
-enc = tok([prompt], return_tensors="pt", padding=True,
-          padding_side="left", add_special_tokens=False)  # 左填充：补齐位放左边，生成端右对齐
-result = engine.rollout(enc["input_ids"], enc["attention_mask"],
-                        num_generations=4, max_new_tokens=16, temperature=0.8)
+prompt = render_chat(tok, [{"role": "user", "content": "1+1等于几？"}])
+enc = tok([prompt], return_tensors="pt", padding=True, padding_side="left", add_special_tokens=False)
+result = engine.rollout(enc["input_ids"], enc["attention_mask"], num_generations=4, max_new_tokens=16, temperature=0.8)
 
-print("prompt 长度:", result.prompt_lens.tolist(), " completion_ids 形状:", tuple(result.completion_ids.shape))
-print("per_token_logps 形状:", tuple(result.per_token_logps.shape))
+print("prompt 长度:", result.prompt_lens.tolist(), "  completion_ids 形状:", tuple(result.completion_ids.shape))
+print("per_token_logps 形状:", tuple(result.per_token_logps.shape), "（采样时策略对每个生成 token 的 logp）")
 for i, c in enumerate(result.completions):
-    n = int(result.completion_mask[i].sum())     # 有效生成位（右 padding 不算）
-    print(f"[{i}] {c!r}  有效长度={n}  平均logp={result.per_token_logps[i, :n-1].mean():.3f}")</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m19_rollout.py</span>
+    n = int(result.completion_mask[i].sum())
+    lp = result.per_token_logps[i, : n - 1].mean()
+    print(f"[{i}] {c!r}  有效长度={n}  平均logp={lp:.3f}")</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m19_rollout.py</span>
+<span class="dim"># 实验脚本随课程仓库 experiments/ 提供；在 minimind_reborn 仓库根目录运行（本页同）</span>
+<span class="dim"># 输出为作者实测存档（completion 采样文本随温度采样随机性与运行环境漂移）</span>
 <span class="out">prompt 长度: [23, 23, 23, 23]   completion_ids 形状: (4, 16)</span>
 <span class="out">per_token_logps 形状: (4, 16)</span>
 <span class="out">[0] '帮助企业数字 miss或服务\x03 mar生产吸 please,绿色询互之LP�'  有效长度=16  平均logp=-8.336</span>
@@ -784,6 +786,6 @@ response_old_logps.extend([0.0] * len(obs_delta))</code></pre></div>
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

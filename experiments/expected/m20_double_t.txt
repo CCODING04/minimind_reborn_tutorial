@@ -1,0 +1,6 @@
+generate max_new_tokens=2 · apply_temperature 调用次数 = 2（2 步 × 每步 2 次）
+sample_token 直调 1 次    · apply_temperature 调用次数 = 1（单测路径只有一次——缝隙只在串联处）
+T=0.85 → 有效温度 T²=0.7225
+一次缩放：top1(id=35) 概率=0.137  熵=3.519
+两次缩放：top1(id=35) 概率=0.176  熵=3.308
+贪心路径（T=0）两次缩放都不发生，输出确定：[41, 41]

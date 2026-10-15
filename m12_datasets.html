@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M12 · Dataset 家族与 loss_mask | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m12">
 
@@ -153,7 +153,7 @@ def build_mask(input_ids, spans) -&gt; list[int]:
         撞见前缀锚点就进入"找下文"状态，找到完整后缀锚点就收一个区间；扫到头也没等到后缀的是<b>残段</b>（C2，稍后详讲），只计数不监督。
         下面是它的独立复刻版，<b>三处空</b>正是三条命脉：区间从哪起算、扫描何时停、区间收到哪。把空填上，与 reborn 参照答案对账：
       </p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m12_fill.py · 区间扫描三空版 · 上半：扫描主循环（把 ____ 换成你的答案）</span><span class="lang">python</span></div><pre class="code"><code>"""M12 填空：把 scan_response_spans 的三个关键位补全（对照 reborn 参照答案）。"""
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m12_fill.py.html">experiments/m12_fill.py</a> · 区间扫描三空版 · 上半：扫描主循环（1–31/45 行；把 ____ 换成你的答案）</span><span class="lang">python</span></div><pre class="code"><code>"""M12 填空：把 scan_response_spans 的三个关键位补全（对照 reborn 参照答案）。"""
 from transformers import AutoTokenizer
 
 from minimind_reborn.data.loss_mask import find_response_spans, pattern_ids
@@ -179,12 +179,12 @@ def my_scan(ids):
                 spans.append((start, <span class="fb-blank">____</span>))             # 空③ 区间终点（半开区间）
                 i = spans[-1][1]
             else:
-                dangling += 1                       # 扫到头也没等到 suffix
+                dangling += 1                                   # 扫到头也没等到 suffix
                 i = n
         else:
             i += 1
     return spans, dangling</code></pre></div>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m12_fill.py · 区间扫描三空版 · 下半：构造对话并验收对账</span><span class="lang">python</span></div><pre class="code"><code>msgs = [
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m12_fill.py.html">experiments/m12_fill.py</a> · 区间扫描三空版 · 下半：构造对话并验收对账（34–45/45 行）</span><span class="lang">python</span></div><pre class="code"><code>msgs = [
     {"role": "user", "content": "Q1"}, {"role": "assistant", "content": "A1"},
     {"role": "user", "content": "Q2"}, {"role": "assistant", "content": "A2"},
 ]
@@ -192,7 +192,7 @@ text = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False
 ids = tok(text).input_ids
 spans_full, dg_full = my_scan(ids)
 assert spans_full == find_response_spans(ids, PREFIX, SUFFIX) and dg_full == 0
-spans_cut, dg_cut = my_scan(ids[:-4])             # 模拟拦腰截断：末轮尾巴被砍
+spans_cut, dg_cut = my_scan(ids[:-4])
 print("两轮完整：", len(spans_full), "个区间", spans_full)
 print("砍掉末 4 token：", len(spans_cut), "个区间 +", dg_cut, "个残段（残段不计监督）")
 print("与 reborn find_response_spans 逐位一致：ALL PASS")</code></pre></div>
@@ -229,7 +229,8 @@ spans.append((start, end + len(SUFFIX)))            # 空③ = end + len(SUFFIX)
         </p>
       </details>
       <p>填完后的自测验收（作者环境真实输出，填对即复现）：</p>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m12_fill.py</span>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m12_fill.py</span>
+<span class="dim"># 实验脚本随课程仓库 experiments/ 提供；在 minimind_reborn 仓库根目录运行（本页同）</span>
 <span class="out">两轮完整： 2 个区间 [(13, 23), (36, 46)]</span>
 <span class="out">砍掉末 4 token： 1 个区间 + 1 个残段（残段不计监督）</span>
 <span class="out">与 reborn find_response_spans 逐位一致：ALL PASS</span></code></pre>
@@ -326,21 +327,16 @@ def post_processing_chat(prompt_content, empty_think_ratio=0.2, remove_empty_thi
 
       <h3 id="real-sample">逐 token 真跑：语料第一条，哪段 -100</h3>
       <p>空谈到此为止，拿真实语料第一条（14 条消息、7 轮问答，含一条真 reasoning）完整走一遍：</p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m12_first.py · 第一条样本逐 token 着色（段内文本打印截短）</span><span class="lang">python</span></div><pre class="code"><code>"""M12 实验：sft_t2t_mini.jsonl 第一条 → 渲染 → encode → 逐段标注哪段 -100。"""
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m12_first.py.html">experiments/m12_first.py</a> · 第一条样本逐 token 着色（段内文本打印截短，全文 35 行）</span><span class="lang">python</span></div><pre class="code"><code>"""M12 实验：sft_t2t_mini.jsonl 第一条 → 渲染 → encode → 逐段标注哪段 -100。"""
 import json
-import os
-from pathlib import Path
 
 from transformers import AutoTokenizer
 
 from minimind_reborn.data.datasets import encode_sft_sample, render_conversations
 from minimind_reborn.data.loss_mask import build_labels, pattern_ids, scan_response_spans
 
-# 数据根：export MINIMIND_REBORN_DATA_ROOT=你的数据目录（M01；本脚本缺省 ~/minimind-reproduce/dataset）
-DATA_ROOT = Path(os.environ.get("MINIMIND_REBORN_DATA_ROOT", str(Path.home() / "minimind-reproduce" / "dataset")))
-
 tok = AutoTokenizer.from_pretrained("assets/tokenizer")
-line = open(DATA_ROOT / "sft_t2t_mini.jsonl", "rb").readline()
+line = open("/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/sft_t2t_mini.jsonl", "rb").readline()
 convs = json.loads(line)["conversations"]
 
 text = render_conversations(tok, convs, remove_empty_think=False)  # 固定抽签：空 think 原样保留
@@ -366,7 +362,7 @@ for hot, a, b in segs:
 
 out = encode_sft_sample(tok, prefix_ids, suffix_ids, convs, 256, remove_empty_think=False)
 print("同一样本 C1 演示（预算 256）：", out["stats"])</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m12_first.py</span>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m12_first.py</span>
 <span class="out">渲染 1241 字符 → 549 token；7 个 assistant 区间，dangling=0</span>
 <span class="out">监督 token 414/549 = 75%；区间：[(25, 50), (68, 277), (295, 348), (367, 396), (414, 453), (472, 504), (522, 549)]</span>
 <span class="out">[  0, 25) 忽略 '&lt;|im_start|&gt;user\n你背后的模型是哪个版本？它由谁开发？&lt;|i…'</span>
@@ -599,19 +595,13 @@ for i, h in enumerate(reply_hashes):
         有效监督信号，没有"别人说的话"要排除。样本形态是 <code>bos + 正文 + eos</code> 三明治（bos/eos 的职责见 M10），
         labels 与 input_ids 逐位相同，唯一的 -100 是填充位。真跑一条短文档（64 窗口）：
       </p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m12_pre.py · Pretrain 短样本：pad 位的 label 处理</span><span class="lang">python</span></div><pre class="code"><code>"""M12 · Pretrain 短样本：pad 位的 label 处理。"""
-import os
-from pathlib import Path
-
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m12_pre.py.html">experiments/m12_pre.py</a> · Pretrain 短样本：pad 位的 label 处理（全文 16 行）</span><span class="lang">python</span></div><pre class="code"><code>"""M12 · Pretrain 短样本：pad 位的 label 处理。"""
 from transformers import AutoTokenizer
 
 from minimind_reborn.data.datasets import PretrainDataset
 
-# 数据根：export MINIMIND_REBORN_DATA_ROOT=你的数据目录（M01；本脚本缺省 ~/minimind-reproduce/dataset）
-DATA_ROOT = Path(os.environ.get("MINIMIND_REBORN_DATA_ROOT", str(Path.home() / "minimind-reproduce" / "dataset")))
-
 tok = AutoTokenizer.from_pretrained("assets/tokenizer")
-pd = PretrainDataset(DATA_ROOT / "pretrain_t2t_mini.jsonl", tok, max_length=64)
+pd = PretrainDataset("/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/pretrain_t2t_mini.jsonl", tok, max_length=64)
 best = min(range(50), key=lambda i: len(tok(pd.load_line(i)["text"]).input_ids))  # 前 50 行里挑最短的
 it = pd[best]
 ids, labs = it["input_ids"].tolist(), it["labels"].tolist()
@@ -621,7 +611,7 @@ print("ids    转折点前后：", ids[n_real - 2:n_real + 3])
 print("labels 转折点前后：", labs[n_real - 2:n_real + 3])
 print("首 token：", ids[0], "（bos）；最后一个真实 token：", ids[n_real - 1], "（eos）；pad id：", ids[-1])
 print("正文区 label==id：", labs[:n_real] == ids[:n_real], "；pad 区全 -100：", all(l == -100 for l in labs[n_real:]))</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m12_pre.py</span>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m12_pre.py</span>
 <span class="out">第 25 行 @max_length=64：真实 44 token，pad 20 个</span>
 <span class="out">ids    转折点前后： [49, 2, 0, 0, 0]</span>
 <span class="out">labels 转折点前后： [49, 2, -100, -100, -100]</span>
@@ -800,17 +790,23 @@ print('若把字符下标当 token 下标：监督区间从 68 起，而真实�
             增强A 的默认是 0.2（20% 的样本注入随机 system）。现在把它调到 1.0（每条必注入），同一行样本反复取 6 次，
             观察渲染形态、token 数与监督 token 数。先跑再看：
           </p>
-          <div class="codeblock"><div class="code-head"><span>变式 1 实验脚本（核心逻辑，完整版见 /tmp/m12_variant.py）</span><span class="lang">python</span></div><pre class="code"><code>random.seed(0)
-texts = set()
-for _ in range(6):                                  # 同一行抽 6 次
-    c = convs
-    if c[0].get("role") != "system" and random.random() &lt; ratio:
-        c = [{"role": "system", "content": random.choice(SYSTEM_PROMPTS)}] + c
-    texts.add(render_conversations(tok, c, remove_empty_think=False))
-ids = tok(sorted(texts)[0]).input_ids
-spans, _ = scan_response_spans(ids, prefix_ids, suffix_ids)
-labels = build_labels(ids, spans)
-print(f"渲染变体 {len(texts)} 种；全长 {len(ids)} token；监督 {sum(1 for l in labels if l != -100)}")</code></pre></div>
+          <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m12_variant.py.html">experiments/m12_variant.py</a> · 变式 1 实验脚本 · probe 核心（16–31/35 行核心段节选；完整版见标题链接）</span><span class="lang">python</span></div><pre class="code"><code>def probe(tag, ratio):
+    random.seed(0)
+    texts = set()
+    for _ in range(6):  # 同一行抽 6 次，看渲染是否随抽签漂移
+        c = convs
+        if c[0].get("role") != "system" and random.random() &lt; ratio:
+            c = [{"role": "system", "content": random.choice(SYSTEM_PROMPTS)}] + c
+        texts.add(render_conversations(tok, c, remove_empty_think=False))
+    text = sorted(texts)[0]
+    ids = tok(text).input_ids
+    spans, _ = scan_response_spans(ids, prefix_ids, suffix_ids)
+    labels = build_labels(ids, spans)
+    sup = sum(1 for l in labels if l != -100)
+    print(f"[{tag}] 渲染变体 {len(texts)} 种；全长 {len(ids)} token；监督 {sup} = {sup/len(ids):.0%}")
+    print(f"    开头：{tok.decode(ids[:20])!r}")
+    print(f"    前 12 个 label：{labels[:12]}")
+# ……（余 19 行：模块 docstring · imports · 取第一条样本 · 两次 probe 驱动（ratio=0.0 / 1.0）——完整代码见标题链接）</code></pre></div>
           <div class="ex-predict"></div>
           <p>写下预测：① 监督 token 的<b>绝对数</b>会变吗？② 全长与监督占比会怎么变？③ 6 次抽样会得到几种渲染？④ labels 的开头一段是什么颜色？</p>
           <details>
@@ -869,8 +865,8 @@ print(f"渲染变体 {len(texts)} 种；全长 {len(ids)} token；监督 {sum(1 
 <span class="ok">24 passed in 0.08s</span></code></pre>
           <ul class="pass-criteria">
             <li><code>24 passed</code>——test_loss_mask.py 的 7 个（锚点形状 / 单轮区间 / 多轮双区间 / C2 残段两用例 / 增强确定性 / 增强 B 语义）+ test_sft_pipeline.py 的 17 个（C1×7、C4/C5 基础×3、C3/C4/C5 集成×4、D1×3，归属表见上文）；</li>
-            <li>✏️ 填空自测：<code>uv run python /tmp/m12_fill.py</code> 打出 <code>2 个区间 [(13, 23), (36, 46)]</code> 与 <code>ALL PASS</code>——与 reborn <code>find_response_spans</code> 逐位一致，砍尾 4 token 后区间 1 + 残段 1；</li>
-            <li>逐 token 实验：<code>/tmp/m12_first.py</code> 打出 7 区间、414/549=75%、忽略/监督交替 14 段——能与概念节的着色图逐段对上；</li>
+            <li>✏️ 填空自测：<code>uv run python experiments/m12_fill.py</code> 打出 <code>2 个区间 [(13, 23), (36, 46)]</code> 与 <code>ALL PASS</code>——与 reborn <code>find_response_spans</code> 逐位一致，砍尾 4 token 后区间 1 + 残段 1；</li>
+            <li>逐 token 实验：<a href="codeview/experiments/m12_first.py.html"><code>experiments/m12_first.py</code></a> 打出 7 区间、414/549=75%、忽略/监督交替 14 段——能与概念节的着色图逐段对上；</li>
             <li>变式 1 完成"先预测再观察"，能说清"监督绝对数不变、分布变了"。</li>
           </ul>
           <details>
@@ -923,6 +919,6 @@ print(f"渲染变体 {len(texts)} 种；全长 {len(ids)} token；监督 {sum(1 
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

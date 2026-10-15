@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m10_accept.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m10_accept.py</span>
+  <span class="cv-meta">31 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m10_accept.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M10 验收：encode→decode 完全还原 + 模板锚点（与 test_loss_mask 同机制）。&quot;&quot;&quot;
+from minimind_reborn.data.loss_mask import pattern_ids, find_response_spans
+from minimind_reborn.inference.chat import render_chat
+from minimind_reborn.constants import ASSISTANT_PREFIX_TEXT, RESPONSE_SUFFIX_TEXT
+from transformers import AutoTokenizer
+
+tok = AutoTokenizer.from_pretrained(&quot;assets/tokenizer&quot;)
+
+# ① 往返一致性：encode → decode 必须完全还原（含生僻字/emoji 的字节回退）
+texts = [&quot;你好，世界&quot;, &quot;Hello, world!&quot;, &quot;def add(a, b): return a + b&quot;, &quot;龘&quot;, &quot;你好🤖&quot;]
+for t in texts:
+    ids = tok(t).input_ids
+    assert tok.decode(ids) == t, f&quot;往返失败：{t!r}&quot;
+    print(f&quot;OK 往返 {len(ids):2d} token  {t!r}&quot;)
+
+# ② 模板锚点：渲染产物里 prefix/suffix 必须以完整 token 序列出现（loss mask 的地基）
+prefix_ids, suffix_ids = pattern_ids(tok)
+assert tok.decode(prefix_ids) == ASSISTANT_PREFIX_TEXT
+assert tok.decode(suffix_ids) == RESPONSE_SUFFIX_TEXT
+print(f&quot;OK prefix={prefix_ids} {ASSISTANT_PREFIX_TEXT!r}&quot;)
+print(f&quot;OK suffix={suffix_ids} {RESPONSE_SUFFIX_TEXT!r}&quot;)
+
+messages = [
+    {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Q1&quot;}, {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: &quot;A1&quot;},
+    {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Q2&quot;}, {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: &quot;A2&quot;},
+]
+ids = tok(render_chat(tok, messages, add_generation_prompt=False)).input_ids
+spans = find_response_spans(ids, prefix_ids, suffix_ids)
+assert len(spans) == 2, spans
+print(f&quot;OK 两轮渲染扫描出 {len(spans)} 个 assistant 区间&quot;)
+print(&quot;ALL PASS&quot;)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

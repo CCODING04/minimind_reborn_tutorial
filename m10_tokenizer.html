@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M10 · tokenizer 与 chat 模板 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m10">
 
@@ -86,7 +86,7 @@ M04 配置 → … → M09 🏁A       M10 词表与协议 ← 你在这里     
         M03 ①站见过一例：「你好，世界」→ <code>[1968, 294, 1950]</code>，5 个字符变 3 个 token。
         现在把刀口放宽——英文、代码、生僻字、emoji 一起上，每段都真跑：
       </p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m10_observe.py · 多组文本编码对比</span><span class="lang">python</span></div><pre class="code"><code>from transformers import AutoTokenizer
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m10_observe.py.html">experiments/m10_observe.py</a> · 多组文本编码对比（全文 8 行）</span><span class="lang">python</span></div><pre class="code"><code>from transformers import AutoTokenizer
 
 tok = AutoTokenizer.from_pretrained("assets/tokenizer")  # reborn 词表加载点（engine.py 同款）
 texts = ["你好，世界", "Hello, world!", "def add(a, b): return a + b", "龘", "你好🤖"]
@@ -94,7 +94,8 @@ for t in texts:
     ids = tok(t).input_ids
     pieces = [tok.decode([i]) for i in ids]             # 每个 token 单独还原成文本
     print(f"{t!r:30} {len(t)}字 {len(ids):2d} token  {pieces}")</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m10_observe.py</span>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m10_observe.py</span>
+<span class="dim"># 实验脚本随课程仓库 experiments/ 提供；在 minimind_reborn 仓库根目录运行（本页同）</span>
 <span class="out">'你好，世界'                        5字  3 token  ['你好', '，', '世界']</span>
 <span class="out">'Hello, world!'                13字  4 token  ['Hello', ',', ' world', '!']</span>
 <span class="out">'def add(a, b): return a + b'  27字 11 token  ['def', ' add', '(', 'a', ',', ' b', '):', ' return', ' a', ' +', ' b']</span>
@@ -133,45 +134,53 @@ for t in texts:
       </div>
 
       <h3 id="bpe-play">手玩：8 行语料，跑前 3 轮合并</h3>
-      <p>规则可以直接写成 30 行脚本。给 8 行迷你语料（7 个不同字符），看词表怎么"长出"「你好」：</p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m10_bpe.py · 迷你 BPE（字符级教学版）</span><span class="lang">python</span></div><pre class="code"><code>from collections import Counter
-
-corpus = ["你好世界", "你好小模型", "世界你好", "你好你好",
-          "小模型你好", "你好世界模型", "模型世界你好", "你好小模型世界"]
-
-seqs = [list(line) for line in corpus]                 # 每行拆成字符序列
-vocab = sorted({ch for s in seqs for ch in s})         # 初始词表 = 出现过的字符
+      <p>规则可以直接写成一个 45 行脚本。给 8 行迷你语料（7 个不同字符），看词表怎么"长出"「你好」：</p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m10_bpe.py.html">experiments/m10_bpe.py</a> · 迷你 BPE·主段（15–45/45 行节选；docstring/import 与 8 行语料定义见完整代码）</span><span class="lang">python</span></div><pre class="code"><code># 每行先拆成字符序列；词表初始 = 语料里出现过的字符
+seqs = [list(line) for line in corpus]
+vocab = sorted({ch for s in seqs for ch in s})
 print("初始词表（%d）：%s" % (len(vocab), " ".join(vocab)))
 
-for rnd in range(1, 4):                                # 只看前 3 轮
+def top_pairs(n=3):
     cnt = Counter()
     for s in seqs:
-        for a, b in zip(s, s[1:]):                     # 相邻对：滑窗一格
+        for a, b in zip(s, s[1:]):   # 相邻对：滑窗一格
             cnt[(a, b)] += 1
-    print(f"\n第 {rnd} 轮 · 相邻对频次 top3：{cnt.most_common(3)}")
-    (a, b), c = cnt.most_common(1)[0]
-    new_seqs = []
-    for s in seqs:                                     # 把 (a,b) 全部换成长 token a+b
+    return cnt.most_common(n)
+
+for rnd in range(1, 4):
+    pairs = top_pairs()
+    print(f"\n第 {rnd} 轮 · 相邻对频次 top3：{pairs}")
+    (a, b), c = pairs[0]
+    merged = a + b
+    new_seqs, hits = [], 0
+    for s in seqs:
         out, i = [], 0
         while i &lt; len(s):
             if i &lt; len(s) - 1 and s[i] == a and s[i + 1] == b:
-                out.append(a + b); i += 2              # 两枚旧 token 换一枚新 token
+                out.append(merged); i += 2; hits += 1   # 合并：两枚旧 token 换一枚新 token
             else:
                 out.append(s[i]); i += 1
         new_seqs.append(out)
     seqs = new_seqs
-    vocab.append(a + b)
-    print(f"  合并 {a}+{b} → 「{a+b}」→ 词表 {len(vocab)} 个")
-
-print("\n3 轮后词表（%d）：%s" % (len(vocab), " ".join(vocab)))</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m10_bpe.py</span>
+    vocab.append(merged)
+    print(f"  合并 {a}+{b} → 「{merged}」（命中 {hits} 处）→ 词表 {len(vocab)} 个")
+    print("  语料现状：", ["|".join(s) for s in seqs[:3]], "…")
+print("\n3 轮后词表（%d）：%s" % (len(vocab), " ".join(vocab)))
+# ……（余 14 行：docstring/import 头段与 8 行语料定义——完整代码见标题链接）</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m10_bpe.py</span>
 <span class="out">初始词表（7）：世 你 型 好 小 模 界</span>
+<span class="out"></span>
 <span class="out">第 1 轮 · 相邻对频次 top3：[(('你', '好'), 9), (('世', '界'), 5), (('模', '型'), 5)]</span>
-<span class="out">  合并 你+好 → 「你好」→ 词表 8 个</span>
+<span class="out">  合并 你+好 → 「你好」（命中 9 处）→ 词表 8 个</span>
+<span class="out">  语料现状： ['你好|世|界', '你好|小|模|型', '世|界|你好'] …</span>
+<span class="out"></span>
 <span class="out">第 2 轮 · 相邻对频次 top3：[(('世', '界'), 5), (('模', '型'), 5), (('小', '模'), 3)]</span>
-<span class="out">  合并 世+界 → 「世界」→ 词表 9 个</span>
+<span class="out">  合并 世+界 → 「世界」（命中 5 处）→ 词表 9 个</span>
+<span class="out">  语料现状： ['你好|世界', '你好|小|模|型', '世界|你好'] …</span>
+<span class="out"></span>
 <span class="out">第 3 轮 · 相邻对频次 top3：[(('模', '型'), 5), (('小', '模'), 3), (('你好', '世界'), 2)]</span>
-<span class="out">  合并 模+型 → 「模型」→ 词表 10 个</span>
+<span class="out">  合并 模+型 → 「模型」（命中 5 处）→ 词表 10 个</span>
+<span class="out">  语料现状： ['你好|世界', '你好|小|模型', '世界|你好'] …</span>
 <span class="out"></span>
 <span class="out">3 轮后词表（10）：世 你 型 好 小 模 界 你好 世界 模型</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径]</b> 注意第 3 轮 top3 里出现了 <code>('你好', '世界')</code>——上一轮合并的产物立即参与下一轮计数，这正是"词组越滚越长"的机制；真实词表里「你好」id 1968 就是这么从字节一路合并出来的。</p>
@@ -321,7 +330,7 @@ RESPONSE_SUFFIX_TEXT = f"{EOS_TEXT}\n"</code></pre></div>
 <section class="panel">
 <h2 id="render-exp">实验：同一个 API，四种渲染</h2>
       <p>两个开关各翻一次，行为差异全在输出里（真跑）：</p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m10_render.py · render_chat 参数对比</span><span class="lang">python</span></div><pre class="code"><code>from minimind_reborn.inference.chat import render_chat
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m10_render.py.html">experiments/m10_render.py</a> · render_chat 参数对比（全文 21 行）</span><span class="lang">python</span></div><pre class="code"><code>from minimind_reborn.inference.chat import render_chat
 from transformers import AutoTokenizer
 
 tok = AutoTokenizer.from_pretrained("assets/tokenizer")
@@ -342,7 +351,7 @@ hist = u + [
 ]
 print("C 带 history（旧轮次原样铺在前面，结尾仍递话头）")
 print("  ", repr(render_chat(tok, hist)))</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m10_render.py</span>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m10_render.py</span>
 <span class="out">A 默认 add_generation_prompt=True（推理侧）</span>
 <span class="out">   '&lt;|im_start|&gt;user\n你好&lt;|im_end|&gt;\n&lt;|im_start|&gt;assistant\n&lt;think&gt;\n\n&lt;/think&gt;\n\n' → 18 token</span>
 <span class="out">B add_generation_prompt=False（训练侧）</span>
@@ -418,12 +427,12 @@ def test_single_response_span(tokenizer):
           </li>
         </ul>
       </div>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m10_pit.py · 手拼 vs 真模板的 token 级对照</span><span class="lang">python</span></div><pre class="code"><code>from minimind_reborn.inference.chat import render_chat
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m10_pit.py.html">experiments/m10_pit.py</a> · 手拼 vs 真模板的 token 级对照（全文 18 行）</span><span class="lang">python</span></div><pre class="code"><code>from minimind_reborn.inference.chat import render_chat
 from transformers import AutoTokenizer
 
 tok = AutoTokenizer.from_pretrained("assets/tokenizer")
 u = [{"role": "user", "content": "你好"}]
-real = render_chat(tok, u)                                      # 真模板（单一事实源渲染）
+real = render_chat(tok, u)                                        # 真模板（单一事实源渲染）
 hand = f"&lt;|im_start|&gt;user\n{u[0]['content']}&lt;|im_end|&gt;\n&lt;|im_start|&gt;assistant\n"   # 手拼：漏了空 think 块
 hand2 = "&lt;|im_start|&gt;user\n你好&lt;|im_end|&gt;\n&lt;|im_start|&gt;assistant \n"              # 只多打了一个空格
 ri, hi, h2 = (tok(t).input_ids for t in (real, hand, hand2))
@@ -436,7 +445,7 @@ for a, b in zip(ri, hi):
     same += 1
 print(f"共同前缀 {same} 位后分岔：真 {len(ri)} token，手拼 {len(hi)} token（少了 &lt;think&gt; 空块）")
 print("多个空格：", h2, "→ 结尾", repr(tok.decode([h2[-1]])), "≠ '\\n'，prefix 锚点从此失配")</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m10_pit.py</span>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m10_pit.py</span>
 <span class="out">真模板： [1, 832, 311, 234, 1968, 2, 234, 1, 1388, 570, 811, 234, 25, 234, 234, 26, 234, 234]</span>
 <span class="out">手拼版： [1, 832, 311, 234, 1968, 2, 234, 1, 1388, 570, 811, 234]</span>
 <span class="out">共同前缀 12 位后分岔：真 18 token，手拼 12 token（少了 &lt;think&gt; 空块）</span>
@@ -561,7 +570,7 @@ for t in ['我爱北京天安门', 'The quick brown fox', '3.14159265358979', '�
         <div class="acc-body">
           <p><b>本课需要：</b>无外部依赖（词表 <code>assets/tokenizer</code> 随包自带）；🎮 选做自训词表用页内自造的迷你语料，同样无需下载。</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下两步。第一步，往返一致性与模板锚点断言（脚本全文）：</p>
-          <div class="codeblock"><div class="code-head"><span>/tmp/m10_accept.py · 往返一致性 ×5 + 锚点扫描断言</span><span class="lang">python</span></div><pre class="code"><code>"""M10 验收：encode→decode 完全还原 + 模板锚点（与 test_loss_mask 同机制）。"""
+          <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m10_accept.py.html">experiments/m10_accept.py</a> · 往返一致性 ×5 + 锚点扫描断言（全文 31 行）</span><span class="lang">python</span></div><pre class="code"><code>"""M10 验收：encode→decode 完全还原 + 模板锚点（与 test_loss_mask 同机制）。"""
 from minimind_reborn.data.loss_mask import pattern_ids, find_response_spans
 from minimind_reborn.inference.chat import render_chat
 from minimind_reborn.constants import ASSISTANT_PREFIX_TEXT, RESPONSE_SUFFIX_TEXT
@@ -592,7 +601,7 @@ spans = find_response_spans(ids, prefix_ids, suffix_ids)
 assert len(spans) == 2, spans
 print(f"OK 两轮渲染扫描出 {len(spans)} 个 assistant 区间")
 print("ALL PASS")</code></pre></div>
-          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m10_accept.py</span>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m10_accept.py</span>
 <span class="out">OK 往返  3 token  '你好，世界'</span>
 <span class="out">OK 往返  4 token  'Hello, world!'</span>
 <span class="out">OK 往返 11 token  'def add(a, b): return a + b'</span>
@@ -658,6 +667,6 @@ print("ALL PASS")</code></pre></div>
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

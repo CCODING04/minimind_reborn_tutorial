@@ -30,6 +30,13 @@ COURSE_DIR = Path(__file__).resolve().parent.parent
 # 已有页保留展示但无法与源核对——QA 对其降级为警告而非错误。
 ARCHIVE_TOP_DIRS = ("out", "runs")
 
+# 课程仓库内的顶层目录（同 build_codeview.py）：codeview 这些页的源在本仓库
+LOCAL_TOP_DIRS = ("experiments",)
+
+# /tmp 脚本引用禁令：课程引用的实验脚本应收编 experiments/（数据类 /tmp 路径如
+# 日志/权重/报错存档不在禁令范围）。全站已于 2026-10-15 完成 experiments/ 收编，置 True。
+ERR_AS_TMP_SCRIPT = True
+
 
 def resolve_reborn() -> Path:
     raw = ""
@@ -149,6 +156,12 @@ def check_html(page: Path, body: str, module_ids: set[str]) -> None:
         if not (COURSE_DIR / m.group(1)).exists():
             err(f"{rel}: codeview 链接目标不存在 {m.group(1)}")
 
+    # ── /tmp 脚本引用禁令：实验脚本应收编 experiments/（数据类路径豁免） ──
+    for m in re.finditer(r"/tmp/[\w./-]+\.(?:py|sh)", body):
+        (err if ERR_AS_TMP_SCRIPT else warn)(
+            f"{rel}: /tmp 脚本引用 {m.group(0)}——应收编课程仓库 experiments/ 并链接 codeview"
+        )
+
     # ── 模块页结构必备 ──
     dm = re.search(r'<body data-module="(m\d+)"', body)
     is_module = bool(dm)
@@ -235,7 +248,11 @@ def main() -> int:
         if idx_ver and v and v.group(1) != idx_ver:
             err(f"{rel}: 资源版本 {v.group(1)} 与首页 {idx_ver} 不一致（重跑 build_codeview.py）")
         src_rel = page.relative_to(CODEVIEW).as_posix()[: -len(".html")]
-        if not (REBORN / src_rel).exists():
+        if src_rel.split("/")[0] in LOCAL_TOP_DIRS:
+            src_exists = (COURSE_DIR / src_rel).exists()
+        else:
+            src_exists = (REBORN / src_rel).exists()
+        if not src_exists:
             if src_rel.split("/")[0] in ARCHIVE_TOP_DIRS:
                 warn(f"{rel}: 存档快照（源为 {src_rel.split('/')[0]}/ 运行时产物，不随仓库分发，无法与源核对）")
             else:

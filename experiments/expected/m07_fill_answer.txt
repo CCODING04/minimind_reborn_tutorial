@@ -1,0 +1,2 @@
+out.shape = (1, 2, 5, 4)  ref.shape = (1, 2, 5, 4)
+allclose(atol=1e-6): True  max|Δ| = 2.384185791015625e-07

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m12_pre.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m12_pre.py</span>
+  <span class="cv-meta">16 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m12_pre.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M12 · Pretrain 短样本：pad 位的 label 处理。&quot;&quot;&quot;
+from transformers import AutoTokenizer
+
+from minimind_reborn.data.datasets import PretrainDataset
+
+tok = AutoTokenizer.from_pretrained(&quot;assets/tokenizer&quot;)
+pd = PretrainDataset(&quot;/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/pretrain_t2t_mini.jsonl&quot;, tok, max_length=64)
+best = min(range(50), key=lambda i: len(tok(pd.load_line(i)[&quot;text&quot;]).input_ids))  # 前 50 行里挑最短的
+it = pd[best]
+ids, labs = it[&quot;input_ids&quot;].tolist(), it[&quot;labels&quot;].tolist()
+n_real = sum(1 for l in labs if l != -100)
+print(f&quot;第 {best} 行 @max_length=64：真实 {n_real} token，pad {64 - n_real} 个&quot;)
+print(&quot;ids    转折点前后：&quot;, ids[n_real - 2:n_real + 3])
+print(&quot;labels 转折点前后：&quot;, labs[n_real - 2:n_real + 3])
+print(&quot;首 token：&quot;, ids[0], &quot;（bos）；最后一个真实 token：&quot;, ids[n_real - 1], &quot;（eos）；pad id：&quot;, ids[-1])
+print(&quot;正文区 label==id：&quot;, labs[:n_real] == ids[:n_real], &quot;；pad 区全 -100：&quot;, all(l == -100 for l in labs[n_real:]))</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

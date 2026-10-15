@@ -98,6 +98,14 @@ P6 毕业        M22 🏁C                                全链路与毕业实�
 - 代码块：`.code`（浅底 + 文件路径标头 + 语言标签）承载源码；`.term`（GitHub dark 终端底）承载命令与真实输出，命令以 `$ ` 前缀。**语法高亮由 `assets/course.js` 内置高亮器自动完成**（python/bash/yaml/json，按 `.code-head .lang` 识别）——写课者直接放纯文本代码即可，无需手工标注着色 span；含 `.fb-blank` 填空或 `data-nohighlight` 的块自动跳过。**token 配色为极简三色**（源自 outlierDet 报告的代码框字体设计）：灰注释 `#7a8089`、绿字符串 `#0f7b4f`、加粗蓝关键字 `var(--accent)`；数字/函数名保持正文色。字体 `13px/1.75` 等宽。所有代码块（含终端块）右上角有**悬停浮现的"复制"按钮**（course.js 注入）。
 - 张量操作必须带 shape 注释 `# (B, T, C)`；关键行注释写"为什么"。
 - 单块 ≤40 行，超长拆步；文字叙述中引用 reborn 文件写 `Reproduce/minimind_reborn/...`，`<a href>` 链接则用 `../../Reproduce/minimind_reborn/...`（课程页位于 course/minimind_reborn_tutorial/，两级回到仓库根）。
+- **实验脚本一律收编课程仓库 `experiments/`**（不再写 `/tmp`）：页面引用的每个实验脚本以原名归档，读者在
+  minimind_reborn 仓库根目录 `uv run python experiments/x.py` 运行（页面 cmd 即此短路径写法，每页首处配 dim 说明）。
+  页面代码块 = 归档脚本的**逐字切片**（不润色、不改 print 标签），终端输出 = 归档脚本的**真实运行结果**；
+  ≤40 行全文展示，>40 行主段切片并以 `# ……（余 N 行：<段名>——完整代码见标题链接）` 收尾，
+  code-head 链接 `codeview/experiments/x.py.html`（由 build_codeview.py 生成）并标注行数口径（全文 N 行 / M–N/K 行节选）。
+  输出逐字可复现的脚本带 `experiments/expected/` 存档，`tools/verify_experiments.py` 复跑比对；
+  时延/采样/内存读数类漂移的脚本不自动比对，页面输出以 `.prov` 作者实测存档为准（MANUAL 清单注明原因）。
+  `/tmp` 中的**数据**路径（.pth/.jsonl/.log 等运行时产物）不受限。
 - **数字溯源**：页内每个数字（loss/显存/吞吐/参数量）须有 `.prov` 溯源；作者实测数字来自写作时真实运行（环境指纹：`2×RTX 4090 · torch 2.14.0+cu130 · Python 3.12`）。
 
 ### 3.4 bug 猎场（真实缺陷教学）
@@ -175,10 +183,11 @@ v2 起，`course.css` 的 tokens 基底移植自 answer-me-with-html 的 bluepri
 ### 5.1 写作 SOP
 
 1. 从 COURSE 数组与本文 §2 表取模块规格；
-2. **先跑通**：页面上每条命令作者真实执行，输出留档（写入页面即溯源）；
+2. **先跑通**：页面上每条命令作者真实执行，输出留档（写入页面即溯源）；**实验脚本当日收编 `experiments/<原名>`**
+   （逐字节归档），输出可复现的写 `experiments/expected/<name>.txt` 存档；
 3. 按 §3.1 骨架成文，元素符合 §3.2/3.3 规范；**仓库文件链接一律写原始形式 `../../Reproduce/minimind_reborn/...`**；
 4. 过 §5.2 自查清单；
-5. 跑 `python3 tools/panelize.py`（新页/新小节自动包 panel）→ `python3 tools/build_codeview.py`（仓库链接转站内代码查看页）→ `python3 tools/check_course.py` 全绿后入库。
+5. 跑 `python3 tools/panelize.py`（新页/新小节自动包 panel）→ `python3 tools/build_codeview.py`（仓库链接转站内代码查看页，含 experiments/）→ `python3 tools/check_course.py` 全绿后入库；实验脚本有改动再跑 `python3 tools/verify_experiments.py`（复跑比对 expected/）。
    - codeview 页特性：面包屑 + 行号列 + 每行 `#L42` 锚点 + 三色高亮 + 复制按钮；>200KB 文件截断提示；
    - 改动 course.css/js 后：全量递增页面资源版本号 `?v=N`，并重跑 build_codeview.py（它会同步 view 页的版本引用）。
 
@@ -189,6 +198,7 @@ v2 起，`course.css` 的 tokens 基底移植自 answer-me-with-html 的 bluepri
 - [ ] 坑卡 ≥1（或声明"本课刻意没有坑"）；溯源标注覆盖全部数字
 - [ ] 折叠测验 ≥3 且有"答错回看"；变式练习含"先预测"
 - [ ] 验收块绿灯可判定；命令为作者实测
+- [ ] **实验脚本已收编 experiments/**：页面无 `/tmp/*.py|sh` 引用；code-head 带 codeview 链接与行数口径；代码块为归档脚本逐字切片（超长带省略标记行）；term 输出与归档脚本一致（或注明作者实测存档）
 - [ ] **术语首现逐词自查**：每个术语要么当场解释（A），要么显式桥接"XX 模块讲"（B），零裸用（零基础受众）
 - [ ] 导语第一句承接上一课；结尾一句话钩住下一课
 - [ ] 词汇表：本课新术语 ≥3 条
@@ -199,8 +209,9 @@ v2 起，`course.css` 的 tokens 基底移植自 answer-me-with-html 的 bluepri
 - **断链**：所有 `<a href>` 本地目标存在；页内锚点有对应 id。
 - **nav 一致**：每页声明的 module id 与 COURSE 数组一致；prev/next 链与数组顺序一致。
 - **正文路径引用**：扫描 `Reproduce/minimind_reborn/...` 形态的代码引用并核对文件存在（豁免：学习者产出路径、通配符）。
-- **codeview 链接**：页面不得残留未转换的 `../../Reproduce` href；每个 codeview 链接目标存在；codeview 生成页结构（cv-topbar/data-lines）与资源版本一致性。
+- **codeview 链接**：页面不得残留未转换的 `../../Reproduce` href；每个 codeview 链接目标存在；codeview 生成页结构（cv-topbar/data-lines）与资源版本一致性；`experiments/` 前缀页的源核对课程仓库而非 reborn 仓库。
+- **/tmp 脚本禁令**：页面不得出现 `/tmp/...py|sh` 形态的脚本引用（应收编 experiments/）；`/tmp` 数据路径（.pth/.jsonl/.log 等）豁免。
 - **结构必备**：每模块页含 `.unit-head`/`.accept`/`details.quiz`/`.exercise`/`.glossary`/`.pager`；无 `style=` 内联属性；`<pre>` 内不嵌 `<div>`。
 - **索引同步**：index.html 的模块卡数量/状态与 COURSE 一致。
 
-退出码非 0 即失败，CI 可直接用。
+退出码非 0 即失败，CI 可直接用。`tools/verify_experiments.py` 同理：experiments/ 下非 MANUAL 脚本必须复跑与 expected/ 逐字一致。

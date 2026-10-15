@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m12_variant.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m12_variant.py</span>
+  <span class="cv-meta">35 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m12_variant.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M12 变式：add_system_ratio 0.0 vs 1.0，同一行样本的标签与监督占比怎么变。&quot;&quot;&quot;
+import json
+import random
+
+from transformers import AutoTokenizer
+
+from minimind_reborn.data.datasets import SYSTEM_PROMPTS, render_conversations
+from minimind_reborn.data.loss_mask import build_labels, pattern_ids, scan_response_spans
+
+tok = AutoTokenizer.from_pretrained(&quot;assets/tokenizer&quot;)
+line = open(&quot;/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/sft_t2t_mini.jsonl&quot;, &quot;rb&quot;).readline()
+convs = json.loads(line)[&quot;conversations&quot;]
+prefix_ids, suffix_ids = pattern_ids(tok)
+
+
+def probe(tag, ratio):
+    random.seed(0)
+    texts = set()
+    for _ in range(6):  # 同一行抽 6 次，看渲染是否随抽签漂移
+        c = convs
+        if c[0].get(&quot;role&quot;) != &quot;system&quot; and random.random() &lt; ratio:
+            c = [{&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: random.choice(SYSTEM_PROMPTS)}] + c
+        texts.add(render_conversations(tok, c, remove_empty_think=False))
+    text = sorted(texts)[0]
+    ids = tok(text).input_ids
+    spans, _ = scan_response_spans(ids, prefix_ids, suffix_ids)
+    labels = build_labels(ids, spans)
+    sup = sum(1 for l in labels if l != -100)
+    print(f&quot;[{tag}] 渲染变体 {len(texts)} 种；全长 {len(ids)} token；监督 {sup} = {sup/len(ids):.0%}&quot;)
+    print(f&quot;    开头：{tok.decode(ids[:20])!r}&quot;)
+    print(f&quot;    前 12 个 label：{labels[:12]}&quot;)
+
+
+probe(&quot;ratio=0.0&quot;, 0.0)
+probe(&quot;ratio=1.0&quot;, 1.0)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

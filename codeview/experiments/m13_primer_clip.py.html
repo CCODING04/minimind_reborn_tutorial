@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m13_primer_clip.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m13_primer_clip.py</span>
+  <span class="cv-meta">7 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m13_primer_clip.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">import torch
+g = torch.tensor([0.3, 4.0])           # 两个参数的梯度：一个正常，一个突然&quot;变悬崖&quot;
+print(f&quot;裁剪前范数 {g.norm():.2f}&quot;)     # 4.01 —— 照这个总步长迈一步就是跳崖
+clipped = g * 1.0 / g.norm()           # clip_grad_norm_(…, max_norm=1.0) 的等价手算
+print(f&quot;裁剪后范数 {clipped.norm():.2f}，梯度 {clipped.tolist()}&quot;)
+# 裁剪后范数 1.00，方向比例仍是 0.3 : 4.0 —— 只限总步长、不改方向；
+# M01 冒烟日志里的 grad_norm 列，就是这把尺子量出的&quot;裁剪时读数&quot;</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

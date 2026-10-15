@@ -1,0 +1,1 @@
+generate 2 步 · apply_temperature 调用次数 = 2

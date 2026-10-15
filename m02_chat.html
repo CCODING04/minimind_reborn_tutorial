@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M02 · 与 64M 模型对话 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m02">
 
@@ -100,6 +100,8 @@ llm = MiniMindLLM(model.to(dev).to(torch.float32), _load_tokenizer(), dev, torch
       <p class="prov"><b>[作者实测 · 2026-09-29 · 2×RTX 4090 · torch 2.14.0+cu130]</b> seed=42 · top_p=0.95 · max_new_tokens=128 · full_sft_768.pth。采样有随机性，你复跑的字句几乎必然不同，但三档的<b>结构差异</b>（模板化 / 通顺 / 发散）稳定复现（作者同设置复跑核对）。</p>
 
       <h3 id="temps-quotes">三段原文（… 为截断标记）</h3>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/chat.py --weight full_sft --top-p 0.95 --max-new-tokens 128 --temperature 0.1</span>
+<span class="dim"># 三档引文只换 --temperature（0.1 / 0.85 / 1.5）；引文为作者实测存档（采样有随机性）</span></code></pre>
       <p><b>temperature=0.1</b>——低温像个守规矩的客服，每句话都走同一模板：</p>
       <pre class="term"><code><span class="out">你好！我是Qwen，一个由jingyaogong创造的AI模型。我被设计用于提供信息、解答问题、
 进行对话等，能够理解和生成人类语言。我的主要功能包括：1.**信息查询**…2.**知识检索**…
@@ -475,6 +477,6 @@ print('[finish=%s tokens=%d latency=%sms]' % (out['finish_reason'], out['generat
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

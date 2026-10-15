@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m18_exp_lora.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m18_exp_lora.py</span>
+  <span class="cv-meta">56 行 · 2KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m18_exp_lora.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M18 实验：① LoRA 挂载点与参数占比（64M 与 tiny 两档）；② merge 前后输出一致性。&quot;&quot;&quot;
+
+import torch
+
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.lora import apply_lora, lora_state_dict, merge_lora, save_lora
+from minimind_reborn.models.model import MiniMindForCausalLM
+
+torch.manual_seed(42)
+
+# ---- ① 参数占比：64M 主配方（rank=16，与 lora_64m.yaml 一致）----
+for tag, cfg, rank in [
+    (&quot;64M  (768×8层, rank=16)&quot;, MiniMindConfig(), 16),
+    (&quot;tiny (64×2层,  rank=8 )&quot;, MiniMindConfig(hidden_size=64, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2), 8),
+]:
+    m = MiniMindForCausalLM(cfg)
+    before = sum(p.numel() for p in m.parameters())
+    apply_lora(m, rank=rank)
+    hooked = [n for n, mod in m.named_modules() if hasattr(mod, &quot;lora&quot;) and n]
+    lora_n = sum(p.numel() for n, p in m.named_parameters() if &quot;lora&quot; in n)
+    print(f&quot;{tag}: 总参数 {before:,} | LoRA 参数 {lora_n:,} | 占比 {100*lora_n/before:.3f}%&quot;)
+    print(f&quot;  挂载点（{len(hooked)} 个）: {hooked}&quot;)
+
+# ---- ② merge 一致性：64M，rank=16 ----
+model = MiniMindForCausalLM(MiniMindConfig())
+apply_lora(model, rank=16)
+# 把 B 随机化，模拟&quot;训了一阵的适配器&quot;（B 非零，ΔW = B·A 才非零）
+for n, p in model.named_parameters():
+    if &quot;lora.B&quot; in n:
+        p.data.normal_(0, 0.02)
+x = torch.randint(0, 6400, (2, 16))
+model.eval()
+with torch.no_grad():
+    y_adapter = model(x).logits  # 基座 + 旁路（W + B·A 的等价拆分执行）
+
+save_lora(model, &quot;/tmp/m18_lora.pth&quot;)
+with torch.no_grad():  # 同一模型把 B 归零 = 纯基座视角（ΔW=B·A=0，旁路加 0）
+    for n, p in model.named_parameters():
+        if &quot;lora.B&quot; in n:
+            p.zero_()
+    y_base = model(x).logits
+
+merge_lora(model, &quot;/tmp/m18_lora.pth&quot;, &quot;/tmp/m18_merged.pth&quot;)
+model3 = MiniMindForCausalLM(MiniMindConfig())
+sd = torch.load(&quot;/tmp/m18_merged.pth&quot;, map_location=&quot;cpu&quot;, weights_only=True)
+model3.load_state_dict(sd)  # merged 权重按基座结构载入（无 lora 键）
+with torch.no_grad():
+    y_merged = model3(x).logits
+
+d_base = (y_adapter - y_base).abs().max().item()
+d_merge = (y_adapter - y_merged).abs().max().item()
+print(f&quot;\nmerge 一致性（64M, rank=16, fp16 适配器存档）:&quot;)
+print(f&quot;  adapter 路线 vs 干净基座     max|Δ| = {d_base:.4f}   ← 旁路确实改了输出&quot;)
+print(f&quot;  adapter 路线 vs merge 后基座 max|Δ| = {d_merge:.6f} ← 应≈0（半精度舍入级）&quot;)
+print(f&quot;  merged 权重里还有 lora 键?  {any(&#x27;.lora.&#x27; in k for k in sd)}&quot;)
+print(f&quot;  lora 存档大小: {len(lora_state_dict(model))} 个张量 → B·A 逐层写回 W&#x27;&quot;)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

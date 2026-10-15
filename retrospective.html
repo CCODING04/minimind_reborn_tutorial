@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>制作复盘 · 方法论 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/course.css?v=19">
+</head>
+<body data-page="retrospective">
+
+<header class="topbar">
+  <button class="nav-toggle" aria-label="打开课程目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="logo">MR</span>
+    <span>minimind_reborn 教程<span class="crumb"> · 附录</span></span>
+  </a>
+  <div class="progress-wrap">
+    <span>完成 <span id="topbar-progress">0/23</span></span>
+    <span class="progress-bar"><i></i></span>
+    <a class="map-link" href="index.html#map">课程地图</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar" aria-label="课程目录"></aside>
+
+  <main class="main">
+    <div class="content"><section class="panel panel-head">
+<header class="unit-head">
+        <div class="kicker"><span class="badge-m">附录</span><span>制作复盘 · Retrospective</span></div>
+        <h1>制作复盘：这套教程是怎么做出来的</h1>
+        <p class="lede">
+          本课程站用 <b>10 天、22 个提交</b>从空仓库走到 23 模块 + 4 附录 + 103 个源码查看页。
+          本页复盘全程遇到的<b>问题 → 解决方案</b>，以及最终质量背后<b>做对了什么</b>——
+          目的是把这套做法沉淀成可复用的制作方法（见本页第 7 节 SOP）。
+        </p>
+        <div class="meta">
+          <span class="chip">受众：<b>想复用这套方法做课的人 · 不限</b></span>
+          <span class="chip">用法：<b>方法论参考，可跳读</b></span>
+          <span class="chip">姊妹篇：<b>仓库内 ANALYSIS.md / DESIGN.md / RETROSPECTIVE.md</b></span>
+        </div>
+      </header>
+</section>
+
+<section class="panel">
+<h2 id="tldr">一、一页总结</h2>
+      <p>
+        <b>结果</b>：机械 QA（check_course + interact_check 54 项）0 错误，上游 93 个单元测试全绿，
+        五档视口无横向溢出，完全离线自足（无外部资源依赖）。
+      </p>
+      <div class="callout tip">
+        <div class="co-title">💡 四条核心结论</div>
+        <p>
+          ① <b>内容质量不是"审"出来的，是结构保证的</b>——开工前三条工程原则（单一事实源 + 生成式导航 /
+          机械 QA 覆盖正文引用 / 写作即实测）把参照教程尸检出的 8 类过程缺陷在结构上堵死；
+          ② <b>修复历史呈收敛形态</b>——前 48 小时集中消灭内容层错误，此后全部是排版、导航、渲染层的长尾清理，
+          人工通读验收的反馈同样集中在排版层；③ <b>最危险的内容错误（三处教了不存在的 API 参数）不是人眼发现的</b>，
+          是跨仓库同步时的机械对拍发现的；④ <b>最大的维护负担是烘焙 HTML + 手动资源版本链</b>
+          （13 次全站 bump），复用本法时应改为构建期注入。
+        </p>
+      </div>
+</section>
+
+<section class="panel">
+<h2 id="scale">二、项目概况与关键数字</h2>
+      <div class="table-scroll"><table>
+        <thead><tr><th class="u-w130">维度</th><th>数值</th></tr></thead>
+        <tbody>
+          <tr><td>教程主线</td><td>23 个模块（M00–M22）/ 7 篇 / 3 座里程碑（🏁A/B/C）+ B 轨终点 🏁D</td></tr>
+          <tr><td>附录</td><td>4 页：B 轨总纲、PyTorch 指南、工程工具速查、术语解释（词条持续增补）</td></tr>
+          <tr><td>源码查看页</td><td>103 页（初始 98 → 102 → 103），逐行锚点 + 三色高亮 + 复制按钮</td></tr>
+          <tr><td>正文总量</td><td>约 101 万字符（含 HTML 标记）；单模块 348–928 行</td></tr>
+          <tr><td>提交数 / 周期</td><td>22 个提交 / 10 天；单日峰值 12 个提交（2026-10-06）</td></tr>
+          <tr><td>上游测试口径</td><td>85（写作时）→ 93（10-06 修复周期后），全站数字随同步更新</td></tr>
+          <tr><td>机械 QA</td><td>check_course.py 7 类校验 + interact_check.mjs 54 项（链接/交互/五档视口）</td></tr>
+          <tr><td>资源版本链</td><td>?v=3 → ?v=19，共 13 次全站递增</td></tr>
+          <tr><td>部署</td><td>GitHub Actions 推送即发（真·静态直传，无构建步骤）</td></tr>
+          <tr><td>开发方式</td><td>双机经 GitHub fast-forward 同步；单 main 线性历史，无 merge/rebase</td></tr>
+        </tbody>
+      </table></div>
+</section>
+
+<section class="panel">
+<h2 id="chain">三、方法论链条：开工前做对了什么</h2>
+      <p>
+        分工链是 <b>ANALYSIS（尸检参照物）→ DESIGN（宪法）→ 写手规范 → QA 工具链（兜底）→ 一次性成文</b>。
+        前三环都发生在第一个提交之前——全项目最重要的一条经验：<b>把决策成本前置，把执行交给流水线。</b>
+      </p>
+
+      <h3 id="chain-analysis">3.1 先尸检，后动笔（ANALYSIS.md）</h3>
+      <p>
+        动笔前先对参照教程（Part7_minimind，21 模块 HTML 课程）做了一次逐证据检查，
+        产出"8 项优势全继承 + 8 项缺点逐条对策"。8 项对策的方向：
+      </p>
+      <div class="table-scroll"><table>
+        <thead><tr><th class="u-w200">参照教程的缺点</th><th>新课程对策</th></tr></thead>
+        <tbody>
+          <tr><td>声称产物与实际不符（权重丢、日志在）</td><td>只引用实际存在的产物；QA 对正文提到的路径做存在性检查</td></tr>
+          <tr><td>规划文档漂移（模块数自相矛盾）</td><td>模块清单单一事实源 = course.js 的 COURSE 数组，导航全部生成</td></tr>
+          <tr><td>机器特定路径（读者不可复现）</td><td>一律仓库相对路径 + 环境指纹标注</td></tr>
+          <tr><td>单页模板不一致（另一代模板残留）</td><td>共享 CSS 承载全部样式；QA 检查内联 style 属性</td></tr>
+          <tr><td>正文文本引用路径失效（非链接，查不到）</td><td>QA 扫描正文路径形引用并核对存在性</td></tr>
+          <tr><td>测试承诺与交付落差</td><td>不虚构承诺，直接绑定上游真实 93 测试 + 8 冒烟配方</td></tr>
+          <tr><td>仓库卫生（杂散文件、node_modules）</td><td>目录最小结构约定</td></tr>
+          <tr><td>已知渲染问题记录了但不修</td><td>样式层预防 + QA 含移动端宽度检查项</td></tr>
+        </tbody>
+      </table></div>
+      <div class="callout note">
+        <div class="co-title">📐 元教训（最值钱的一段）</div>
+        <p>
+          参照教程的缺点几乎都不是写作能力问题，而是<b>多轮 agent 生成之间的过程问题</b>——
+          状态不同步、模板换代未全量重刷、QA 只覆盖链接不覆盖正文。
+          对应的工程解法只有三条，全部写进了新课程工作流：
+          <b>单一事实源 + 生成式导航</b>；<b>机械 QA 覆盖到正文引用</b>；<b>写作即实测</b>（页面上每个命令作者真实跑过）。
+        </p>
+      </div>
+
+      <h3 id="chain-design">3.2 宪法先行（DESIGN.md）</h3>
+      <p>
+        DESIGN.md 把"这门课长什么样"一次性定死：7 篇 23 模块结构表（每模块映射上游关键资产与 bug 猎场索引）、
+        每模块固定骨架（模块头 → 学完你能 → 正文 → 测验 → 变式 → 验收 → 词汇 → 导航）、
+        <b>11 类教学元素体系</b>（直觉卡/严谨卡/坑卡/红线/工业对照/折叠测验/变式练习/填空/验收块/里程碑/概念图，
+        每类定用量规则）、代码与数字规范、写作 SOP 五步、9 项自查清单、QA 契约。
+        关键设计：<b>模块清单以 COURSE 数组为准，本文表格冲突时服从数组</b>——文档自己不争事实源地位，
+        从制度上消灭规划漂移。
+      </p>
+
+      <h3 id="chain-brief">3.3 写手规范：把风格决策做成"逐字模板"</h3>
+      <p>
+        给 AI 写手的规范（tools/agent_brief_common.md）不写抽象原则，直接给<b>逐字照抄的页面骨架模板</b> +
+        <b>10 条硬规则</b>（零内联样式、代码块结构、终端块手写、仓库链接原始形式、HTML 转义、shape 注释、
+        标题带 id、数字溯源、长度区间）+ <b>连贯性纪律</b>（术语首现必须 A=当场解释或 B=显式桥接，零裸用；
+        新概念 ≤2 个/模块；开头承接结尾预告）。违反硬规则的，QA 直接拦。
+        效果：23 个模块由多轮会话生成，但<b>没有一个模块出现模板漂移</b>。
+      </p>
+
+      <h3 id="chain-tools">3.4 工具链五件套 + CI</h3>
+      <div class="table-scroll"><table>
+        <thead><tr><th class="u-w200">工具</th><th>角色</th></tr></thead>
+        <tbody>
+          <tr><td><code>check_course.py</code></td><td>静态 QA：断链/锚点/nav 一致性/<b>正文路径存在性</b>/结构必备/禁内联样式/索引同步，退出码非 0 即失败</td></tr>
+          <tr><td><code>interact_check.mjs</code></td><td>动态 QA：54 项链接审计、按键交互矩阵、<b>五档视口</b>横向溢出、外部资源依赖</td></tr>
+          <tr><td><code>build_codeview.py</code></td><td>正文源码引用 → 站内查看页，仓库链接自动改写</td></tr>
+          <tr><td><code>panelize.py</code></td><td>正文小节幂等包进 panel 卡片（不手写）</td></tr>
+          <tr><td><code>build_package.py</code></td><td>单文件自包含部署包（<code>file://</code> 可开）</td></tr>
+          <tr><td>GitHub Actions</td><td>push 即部署 Pages；课程站本身就是"最小 CI/CD"活教具</td></tr>
+        </tbody>
+      </table></div>
+</section>
+
+<section class="panel">
+<h2 id="timeline">四、时间线复盘：五个阶段</h2>
+
+      <h3 id="t0">阶段 0 · 奠基（10-05）：一次性成文 + CI 就位</h3>
+      <p>
+        init 提交 <code>978918c</code>：134 个文件、29,167 行一次性入库——22 个模块页（400–856 行/页）、
+        index、ANALYSIS/DESIGN/README、设计系统（CSS 575 行 + JS 417 行 + 本地 MathJax）、98 个 codeview 页、
+        QA 工具四件套，54 项自动检查全部通过；随后两个提交接上 GitHub Pages 自动部署。
+        <b>经验</b>：正文不是逐模块挤牙膏产出的，而是"宪法 + 写手规范 + 工具链"就绪后<b>集中成文</b>，
+        再进入修错周期——风格一致性由规范保证，而不是由写作顺序保证。
+      </p>
+
+      <h3 id="t1">阶段 1 · B0–B5 质检修复周期（10-06 上午，一天 12 提交的前 6 个）</h3>
+      <div class="table-scroll"><table>
+        <thead><tr><th class="u-w120">批次</th><th>遇到的问题 → 解决方案</th></tr></thead>
+        <tbody>
+          <tr><td><b>B0</b> <code>dcf770d</code></td><td><b>先修 QA 工具本身</b>：工具用旧 monorepo 布局硬编码定位上游仓库 → 参数 > 环境变量 > 旧布局三级 fallback；存档快照页被当孤儿清理 → 豁免标记；补全 2 个缺失配方页</td></tr>
+          <tr><td><b>B1</b> <code>ec76d3a</code></td><td>13 项一致性机械修复：链接指错、数字口径不一、误归属 ×5、两模块参数互标、行数实测纠正、悬空章节号——逐项清单式修复 + 实测复核</td></tr>
+          <tr><td><b>B2</b> <code>c4ffb03</code></td><td><b>资源供应链</b>：读者从零跑不通——缺 clone/权重下载第 0 步 → 补全；验收兜底命令会 size mismatch → 补参数；<b>5 处硬编码作者绝对路径</b> → 环境变量体例；实验脚本未入页 → 全文入页</td></tr>
+          <tr><td><b>B3</b> <code>01dabbe</code></td><td>设计系统 v2：明/暗/自动三态主题（自动态用 CSS 原生 prefers-color-scheme，零闪烁）；硬编码色变量化。<b>代价：引入 ?v= 全站 bump 纪律</b></td></tr>
+          <tr><td><b>B4</b> <code>4e515c8</code></td><td>受众入口 + B 轨：新增 M00 三档受众自测 + B 轨自写挑战总纲 + 8 个自写挑战块。<b>事故：版本升级脚本截断存档页，git 恢复</b></td></tr>
+          <tr><td><b>B5</b> <code>624afb0</code></td><td>理论补充与连贯：PyTorch 指南附录（1285 行）；优化器前置节；<b>结尾钩子原是假链接 → 改真实锚点</b>；三模块时长 +30–40% 并同步元数据</td></tr>
+        </tbody>
+      </table></div>
+      <p>
+        <b>经验</b>：B0 排在最前——<b>先修工具再修内容</b>，否则 QA 报错本身就不可信；
+        "读者从零能否跑通"（供应链）优先级高于排版类问题。
+      </p>
+
+      <h3 id="t2">阶段 2 · 视觉重构与跨仓库同步（10-06 下午）</h3>
+      <p>
+        panelize 幂等面板化（25 页全站）；双排版皮肤（经典/蓝图）；皮肤配色事故修复——
+        <b>皮肤误用样张 token 名 <code>var(--fill)</code> 而共享 CSS 的同义 token 是 <code>--subtle</code>，
+        未定义变量静默退化透明</b>（第二次脚本截断事故，git 恢复）。
+        最重的一次修复 <code>4c6e5be</code>——跨仓库大同步：上游修了 12 项（测试 85→93），三批处理：
+        ① bug 猎场模块改"已修复"口径但<b>保留完整发现叙事 + 回归锁定段</b>；
+        ② <b>修课程自身 8 处内容错误——最严重的是三处验收块教了 <code>build()</code> 不存在的头数参数（照抄必 TypeError）</b>，
+        另有记号错误（λ→β）、措辞过强（"无偏下界"→"无偏估计"）；
+        ③ 全站口径同步 + 行号重核 + 修设计系统遗留的顶栏窄屏溢出（320/390px 回归）。
+      </p>
+      <p>
+        <b>经验</b>：课程绑定活仓库，<b>上游漂移是常态</b>，同步要成建制（口径、叙事、行号、测试数四样一起动）；
+        "已修复"不等于删素材——改为"发现→修复→回归锁定"叙事反而更有教学价值。
+      </p>
+
+      <h3 id="t3">阶段 3 · 附录体系与 SPA 导航（10-07 → 10-08）</h3>
+      <p>
+        工程工具速查附录（16 词 × 三行讲清）；随后两连修：① 新附录<b>忘了注册进 course.js 的 APPENDIX 数组</b>
+        （侧栏不显示——单一事实源的代价：漏注册就真的不存在）；② <b>TOC 隐藏断点 1023 应为 1439</b>——
+        1024–1439px 视口下页内目录落到侧栏下方，原始笔误、全站性错位，双档实测修复。
+        再往后：术语解释附录（词条持续增补）+ 侧栏滚动记忆 + <b>SPA 式局部刷新</b>
+        （站内点链只换正文、侧栏滚动不动；fetch 缓存回放、MathJax 按需排版、失败回退整页）。
+        <b>经验</b>：附录体系是被"读者旅程的真实缺口"逼出来的（受众自测 → 工程词 → 理论前置 → 概念词），
+        每个附录都在正文首现处有桥接入口。
+      </p>
+
+      <h3 id="t4">阶段 4 · 长尾 UI 清零（10-10 → 10-14）</h3>
+      <div class="table-scroll"><table>
+        <thead><tr><th class="u-w120">提交</th><th>问题</th><th>根因与修法</th></tr></thead>
+        <tbody>
+          <tr><td><code>9b9d576</code></td><td>复制按钮随横向滚动条走</td><td>绝对定位子元素挂在滚动容器内部 → 运行时包一层不滚动的包裹层做定位锚；页面源码零改动</td></tr>
+          <tr><td><code>400f013</code></td><td>"见折叠深读"不可点</td><td>折叠块补 id + 两处补锚点链接（3 行）</td></tr>
+          <tr><td><code>a2d7062</code></td><td>codeview 行号恒显示 1、空行翻倍</td><td>counter-reset 挂在从未命中的类上 → 挂真实存在的选择器；旧生成器烘焙页换行翻倍 → 全部 103 页重生成；连带修复复制粘成一行</td></tr>
+          <tr><td><code>fa76d2e</code></td><td>codeview 链接可达性</td><td>全站补链 227 处（测试名 → 定义行深链、裸路径、对照 chip）；<b>校验器同步升级：行级锚点按烘焙文本行数校验，深链首次"可达且可验证"</b></td></tr>
+        </tbody>
+      </table></div>
+      <p>
+        <b>经验</b>：长尾阶段的特征是"每个问题都小、每个都要打开浏览器才能发现"。两个动作把它治住：
+        ① 每修一类就把<b>校验规则固化进 QA</b>，让同类问题不可再犯；② 交互层修法尽量<b>运行时注入而非改烘焙页</b>。
+      </p>
+</section>
+
+<section class="panel">
+<h2 id="taxonomy">五、问题分类学：八类问题与解法模式</h2>
+      <div class="table-scroll"><table>
+        <thead><tr><th class="u-w44">#</th><th class="u-w120">类别</th><th>怎么发现的</th><th>解法模式 / 一般化教训</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><b>事实一致性</b></td><td>跨仓库同步对拍、系统性 QA 审查</td><td>清单式机械修复 + 实测复核。最危险的是"教程教的 API 不存在"——人眼审不出，必须与真实代码机械对拍</td></tr>
+          <tr><td>2</td><td><b>资源供应链</b></td><td>"读者从零走一遍"视角审查</td><td>补第 0 步、参数补全、路径环境变量化。自己机器上永远复现不了读者的问题；从零验收要独立做</td></tr>
+          <tr><td>3</td><td><b>上游代码漂移</b></td><td>上游提交监控</td><td>成建制同步（口径+叙事+行号+数字），改"已修复"叙事而非删素材</td></tr>
+          <tr><td>4</td><td><b>响应式/布局回归</b></td><td>五档视口矩阵</td><td>断点实测修正 + 视口进 QA。布局回归是设计系统改版的固定伴生物，改版必须带视口回归</td></tr>
+          <tr><td>5</td><td><b>滚动与锚点</b></td><td>人工通读 + 交互矩阵</td><td>定位锚与滚动容器分离、状态存储化。绝对定位元素不能挂在滚动容器内部——DOM 结构即 bug</td></tr>
+          <tr><td>6</td><td><b>渲染缺陷</b></td><td>人工通读</td><td>修根因 + 全量重生成。生成器修了别忘了旧产物——烘焙页要跟生成器版本对齐</td></tr>
+          <tr><td>7</td><td><b>CSS token 错名</b></td><td>双皮肤对比时暴露</td><td>token 名对齐共享 CSS。CSS 变量拼错不报错；新皮肤先用最小用例验证每个 token</td></tr>
+          <tr><td>8</td><td><b>工具/流程事故</b></td><td>事后 diff 发现</td><td>git 恢复零损失；后续批量改文件只用纯 sed + 对账。批量脚本要有"可回滚 + 事后对账"双保险</td></tr>
+        </tbody>
+      </table></div>
+      <div class="callout tip">
+        <div class="co-title">💡 分布规律</div>
+        <p>
+          类别 1–3（内容层）全部发生在前 48 小时；类别 4–8（呈现层）散布全程。
+          <b>内容层的收敛速度是 QA 管线效果的直接度量</b>——人工通读（至 M08）后剩余反馈集中在排版层，
+          内容层未再发现硬伤。
+        </p>
+      </div>
+</section>
+
+<section class="panel">
+<h2 id="wins">六、最终做对了什么（八条）</h2>
+      <ol>
+        <li><b>先尸检再动笔。</b> 对参照教程的 8 项缺点逐条立对策。成本一天，收益是整类问题（文档漂移、路径失效、模板不一致）从制度上不存在。</li>
+        <li><b>风格决策一次性做完，执行交给流水线。</b> DESIGN 定元素体系、写手规范给逐字模板、panelize 自动包卡片、语法高亮由 JS 运行时完成——写手只产出结构与文字，23 个模块多轮生成零模板漂移。</li>
+        <li><b>单一事实源 + 生成式导航。</b> COURSE/APPENDIX 数组是唯一清单，导航全部运行时生成。全项目导航类 bug 只有一次（漏注册），且修一处即全站生效。</li>
+        <li><b>机械 QA 覆盖到正文引用。</b> 三处"教了不存在参数"级别的硬伤由对拍发现而非审读发现；行锚校验让 227 处深链"可达"变成可验证属性。</li>
+        <li><b>写作即实测 + 数字溯源。</b> 页面每条命令真实跑过、每个数字带溯源标注。一致性修复里没有一个是"凭空捏造的数字"——最多是口径漂移。</li>
+        <li><b>一次性成文 + 分批质检。</b> 先修工具、再修内容、再修视觉——修工具优先于修内容，供应链优先于排版，每批修复都建立在可信地基上。</li>
+        <li><b>缺口驱动增补。</b> M00、B 轨、PyTorch 指南、两份词汇表——全部是被读者旅程的真实缺口逼出来的，每个都有正文首现桥接，没有一个是"规划出来的完税结构"。</li>
+        <li><b>提交纪律 + git 兜底。</b> 几乎每个提交以"QA: 0 错误 + 浏览器实测"收尾；两次脚本截断事故因 git 而零损失；危险操作前建备份分支。</li>
+      </ol>
+</section>
+
+<section class="panel">
+<h2 id="risks">七、遗留风险与改进建议</h2>
+      <div class="table-scroll"><table>
+        <thead><tr><th class="u-w44">#</th><th class="u-w200">风险</th><th>现状</th><th>复用时的改进</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><b>?v= 资源版本链</b></td><td>13 次手动全站 bump，每次触及 100+ 烘焙页；两次截断事故均发生在 bump 脚本</td><td>版本号构建期注入（CI 模板替换或 SSG），或改 hash 文件名</td></tr>
+          <tr><td>2</td><td><b>烘焙 HTML 维护模式</b></td><td>内容与呈现耦合在 130 个静态页里，改 CSS/JS 即全站手术</td><td>正文改 Markdown 源 + 构建生成；本站因"零构建直传"是有意取舍</td></tr>
+          <tr><td>3</td><td><b>上游漂移同步成本</b></td><td>10-06 一次同步即 99 文件 ±1.27 万行</td><td>同步检查清单（口径/叙事/行号/测试数四件套）+ 上游 release 监听</td></tr>
+          <tr><td>4</td><td><b>视觉回归靠人眼</b></td><td>interact_check 查溢出与交互，像素级回归无自动化</td><td>关键页五档视口截图快照对比</td></tr>
+          <tr><td>5</td><td><b>批量脚本直改文件</b></td><td>历史上两次截断</td><td>批量改文件只用纯 sed + 前后对账 + git diff 审查，复杂逻辑脚本不直接写烘焙页</td></tr>
+        </tbody>
+      </table></div>
+</section>
+
+<section class="panel">
+<h2 id="sop">八、可复用 SOP：下次做新教程的八步</h2>
+      <p>前置条件：已选定一个<b>真实、带测试、持续维护</b>的上游代码仓库作为教学对象。</p>
+      <ol>
+        <li><b>尸检参照物</b>（1 天）：找一套同类优秀教程，逐证据列优势（继承）与缺点（对策），产出分析文档。重点提炼"过程性缺点"——它们才对应工程解法。</li>
+        <li><b>写宪法</b>（1 天）：定结构表（模块 ↔ 上游资产映射）、固定骨架、教学元素体系（每类定用量规则）、代码与数字规范、QA 契约。<b>声明单一事实源，文档自己不争</b>。</li>
+        <li><b>写写手规范</b>：逐字骨架模板 + 硬规则清单（QA 可拦的）+ 连贯性纪律（术语首现 A/B、新概念限额、开头承接结尾预告）。</li>
+        <li><b>工具链先行</b>：静态检查（断链/锚点/nav 一致性/正文路径/禁内联样式）、动态检查（交互/五档视口）、codeview 生成器、部署 CI。<b>工具本身先过"参数化与可移植"关</b>（本项目 B0 的教训）。</li>
+        <li><b>先跑通再成文，一次性集中成文</b>：页面上每条命令真实执行、输出留档；按骨架批量产出全部模块。</li>
+        <li><b>分批质检</b>：顺序 = 工具 → 内容一致性 → 资源供应链 → 视觉。每批修复后 QA 归零再进下一批。</li>
+        <li><b>缺口驱动增补</b>：以"读者从零走一遍"的视角找缺口（受众入口、理论前置、词汇表、自写轨道），每个增补在正文首现处建桥接，并注册进导航事实源（<b>别忘注册</b>）。</li>
+        <li><b>长尾清零 + 规则固化</b>：排版/锚点/渲染类长尾逐个清；每修一类就把校验规则固化进 QA；批量改文件 = 纯 sed + 对账 + git 兜底。</li>
+      </ol>
+      <div class="callout danger">
+        <div class="co-title">🛑 三条不可妥协的底线</div>
+        <p>
+          单一事实源 + 生成式导航；机械 QA 覆盖正文；写作即实测。
+          丢了任何一条，就会退化成参照教程的样子——文档自相矛盾、路径失效、数字凭空。
+        </p>
+      </div>
+</section>
+
+<section class="panel">
+<h2 id="commits">九、附录：22 个提交完整索引</h2>
+      <div class="table-scroll"><table>
+        <thead><tr><th class="u-w44">#</th><th class="u-w100">Hash</th><th class="u-w90">日期</th><th>主题</th><th class="u-w90">资源版本</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><code>978918c</code></td><td>10-05</td><td>init：一次性 22 模块 + 设计系统 + 98 codeview + QA 工具（134 文件 / 29,167 行）</td><td>v3</td></tr>
+          <tr><td>2</td><td><code>71f778d</code></td><td>10-05</td><td>ci：GitHub Pages 自动部署工作流</td><td>—</td></tr>
+          <tr><td>3</td><td><code>bdebb1f</code></td><td>10-05</td><td>ci：空提交触发首次部署</td><td>—</td></tr>
+          <tr><td>4</td><td><code>dcf770d</code></td><td>10-06</td><td>B0：QA 工具参数化（三级 fallback）+ 存档豁免 + 配方页补全</td><td>—</td></tr>
+          <tr><td>5</td><td><code>ec76d3a</code></td><td>10-06</td><td>B1：13 项一致性机械修复</td><td>—</td></tr>
+          <tr><td>6</td><td><code>c4ffb03</code></td><td>10-06</td><td>B2：资源供应链修复（第 0 步/兜底参数/路径环境变量化）</td><td>—</td></tr>
+          <tr><td>7</td><td><code>01dabbe</code></td><td>10-06</td><td>B3：设计系统 v2 三态主题 + 硬编码色变量化</td><td>v4</td></tr>
+          <tr><td>8</td><td><code>4e515c8</code></td><td>10-06</td><td>B4：M00 受众入口 + B 轨自写总纲 + 8 挑战块</td><td>v5</td></tr>
+          <tr><td>9</td><td><code>624afb0</code></td><td>10-06</td><td>B5：PyTorch 指南附录 + 理论补充与连贯性</td><td>v6</td></tr>
+          <tr><td>10</td><td><code>8c2d683</code></td><td>10-06</td><td>panelize 面板化全站 + flowchart 升级</td><td>v7</td></tr>
+          <tr><td>11</td><td><code>ba14174</code></td><td>10-06</td><td>双排版皮肤（经典/样章）</td><td>v8</td></tr>
+          <tr><td>12</td><td><code>77c57b5</code></td><td>10-06</td><td>皮肤配色修复（token 错名）+ chrome 融合</td><td>v9</td></tr>
+          <tr><td>13</td><td><code>4c6e5be</code></td><td>10-06</td><td>跨仓库大同步：上游 12 项 + 课程自身 8 处内容错误 + 顶栏窄屏修复</td><td>v10</td></tr>
+          <tr><td>14</td><td><code>70a963f</code></td><td>10-06</td><td>风格切换按钮语义化 + codeview 增至 102 页</td><td>—</td></tr>
+          <tr><td>15</td><td><code>19c0206</code></td><td>10-06</td><td>皮肤更名「蓝图」（内部键不动）</td><td>v11</td></tr>
+          <tr><td>16</td><td><code>17a5ee4</code></td><td>10-07</td><td>附录：工程工具速查（16 词）</td><td>—</td></tr>
+          <tr><td>17</td><td><code>310a893</code></td><td>10-07</td><td>APPENDIX 漏注册修复 + TOC 断点 1023→1439 全站修正</td><td>v12</td></tr>
+          <tr><td>18</td><td><code>1cbc7e9</code></td><td>10-08</td><td>附录：术语解释 + 侧栏滚动记忆 + SPA 局部刷新导航</td><td>v15</td></tr>
+          <tr><td>19</td><td><code>9b9d576</code></td><td>10-10</td><td>复制按钮锚到不滚动包裹层</td><td>v16</td></tr>
+          <tr><td>20</td><td><code>400f013</code></td><td>10-12</td><td>M05 YaRN 折叠深读补锚点</td><td>—</td></tr>
+          <tr><td>21</td><td><code>a2d7062</code></td><td>10-12</td><td>codeview 行号恒 1 / 空行翻倍 / 复制单行三连修 + 103 页重生成</td><td>v18</td></tr>
+          <tr><td>22</td><td><code>fa76d2e</code></td><td>10-14</td><td>全站 227 处 codeview 深链可达性 + 行锚校验器 + 3σ 词条</td><td>—</td></tr>
+        </tbody>
+      </table></div>
+      <p>
+        注：资源版本列为该提交引入的 ?v= 目标值；"—"表示未触及 CSS/JS。
+        v13/v14/v17 未使用（跨段跳号）。本页自身为第 23 个功能提交的一部分
+        （连同 RETROSPECTIVE.md 与 APPENDIX 注册，资源版本升至 v19）。
+      </p>
+
+      <p class="prov">[编者注 · 2026-10-15 · 本页为新增附录；事实来源：git 全量历史 + ANALYSIS.md / DESIGN.md / tools/agent_brief_common.md + 各提交 QA 记录]</p>
+</section>
+
+<section class="panel">
+<footer class="course-footer">
+        <p><a href="index.html">课程地图</a> · <a href="btrack.html">B 轨总纲</a> · <a href="pytorch_guide.html">PyTorch 特殊用法指南</a> · <a href="eng_glossary.html">工程工具速查</a> · <a href="glossary.html">术语解释</a></p>
+        <p>跟着 minimind_reborn 造一个大模型 · 附录页 · 断网时 MathJax 公式显示为 LaTeX 原文</p>
+      </footer>
+</section>
+      </div>
+  </main>
+  <aside class="toc" id="toc" aria-label="页内目录"></aside>
+</div>
+
+<script src="assets/course.js?v=19"></script>
+</body>
+</html>

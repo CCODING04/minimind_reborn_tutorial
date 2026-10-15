@@ -1,0 +1,10 @@
+64M  (768×8层, rank=16): 总参数 63,912,192 | LoRA 参数 393,216 | 占比 0.615%
+  挂载点（16 个）: ['model.layers.0.self_attn.q_proj', 'model.layers.0.self_attn.o_proj', 'model.layers.1.self_attn.q_proj', 'model.layers.1.self_attn.o_proj', 'model.layers.2.self_attn.q_proj', 'model.layers.2.self_attn.o_proj', 'model.layers.3.self_attn.q_proj', 'model.layers.3.self_attn.o_proj', 'model.layers.4.self_attn.q_proj', 'model.layers.4.self_attn.o_proj', 'model.layers.5.self_attn.q_proj', 'model.layers.5.self_attn.o_proj', 'model.layers.6.self_attn.q_proj', 'model.layers.6.self_attn.o_proj', 'model.layers.7.self_attn.q_proj', 'model.layers.7.self_attn.o_proj']
+tiny (64×2层,  rank=8 ): 总参数 532,864 | LoRA 参数 4,096 | 占比 0.769%
+  挂载点（4 个）: ['model.layers.0.self_attn.q_proj', 'model.layers.0.self_attn.o_proj', 'model.layers.1.self_attn.q_proj', 'model.layers.1.self_attn.o_proj']
+
+merge 一致性（64M, rank=16, fp16 适配器存档）:
+  adapter 路线 vs 干净基座     max|Δ| = 0.4551   ← 旁路确实改了输出
+  adapter 路线 vs merge 后基座 max|Δ| = 0.002657 ← 应≈0（半精度舍入级）
+  merged 权重里还有 lora 键?  False
+  lora 存档大小: 32 个张量 → B·A 逐层写回 W'

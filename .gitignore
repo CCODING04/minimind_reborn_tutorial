@@ -4,3 +4,6 @@ packaged_website/
 # 系统
 .DS_Store
 Thumbs.db
+
+# ZCode 会话工作区
+.zcode/

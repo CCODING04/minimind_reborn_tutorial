@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m22_temp_ab3.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m22_temp_ab3.py</span>
+  <span class="cv-meta">66 行 · 2KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m22_temp_ab3.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M22 毕业示范实验（终版）：温度 0.7 vs 0.85 × 3 seed 的固定 8 题对照。
+
+单变量设计：
+- 自变量：temperature（0.7 vs 0.85）
+- 因变量：distinct-2 均值、平均生成长度、finish=stop 比例、吞吐
+- 控制变量：同一权重 out/full_sft_768.pth、top_p=0.95、top_k=50、max_new_tokens=384、
+  固定 8 题（M21 eval_llm.py 的 PROMPTS）、seed ∈ {42,43,44}（两臂用同一组 seed）
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import torch
+
+from minimind_reborn.configuration.schemas import GenerateConfig
+from minimind_reborn.inference.engine import MiniMindLLM
+
+PROMPTS = [
+    &quot;你有什么特长？&quot;,
+    &quot;为什么天空是蓝色的&quot;,
+    &quot;请用Python写一个计算斐波那契数列的函数&quot;,
+    &#x27;解释一下&quot;光合作用&quot;的基本过程&#x27;,
+    &quot;如果明天下雨，我应该如何出门&quot;,
+    &quot;比较一下猫和狗作为宠物的优缺点&quot;,
+    &quot;解释什么是机器学习&quot;,
+    &quot;推荐一些中国的美食&quot;,
+]
+
+
+def distinct2(text: str) -&gt; float:
+    &quot;&quot;&quot;distinct-2：不重复 bigram 占全部 bigram 的比例（越低=复读越重）。&quot;&quot;&quot;
+    chs = list(text)
+    bigrams = [tuple(chs[i : i + 2]) for i in range(len(chs) - 1)]
+    return len(set(bigrams)) / len(bigrams) if bigrams else 1.0
+
+
+def run_arm(llm: MiniMindLLM, temperature: float, seed: int) -&gt; dict:
+    torch.manual_seed(seed)
+    gen = GenerateConfig(temperature=temperature, top_p=0.95, max_new_tokens=384)
+    lens, d2s, stops, total_s = [], [], 0, 0.0
+    for p in PROMPTS:
+        r = llm.generate_text([{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: p}], gen)
+        lens.append(r[&quot;generated_tokens&quot;])
+        d2s.append(distinct2(r[&quot;content&quot;]))
+        stops += r[&quot;finish_reason&quot;] == &quot;stop&quot;
+        total_s += r[&quot;latency_ms&quot;] / 1000
+    return {&quot;d2&quot;: sum(d2s) / len(d2s), &quot;len&quot;: sum(lens) / len(lens),
+            &quot;stops&quot;: stops, &quot;tps&quot;: sum(lens) / total_s}
+
+
+def main() -&gt; None:
+    llm = MiniMindLLM.build(&quot;full_sft&quot;)
+    seeds = (42, 43, 44)
+    print(&quot;temp  seed  distinct2  平均长度  stop/8  tok/s&quot;)
+    for t in (0.7, 0.85):
+        stats = []
+        for s in seeds:
+            r = run_arm(llm, t, s)
+            stats.append(r)
+            print(f&quot;{t:.2f}  {s:&gt;4}  {r[&#x27;d2&#x27;]:.4f}    {r[&#x27;len&#x27;]:6.1f}   {r[&#x27;stops&#x27;]}/8   {r[&#x27;tps&#x27;]:6.1f}&quot;)
+        m = lambda k: sum(x[k] for x in stats) / len(stats)
+        print(f&quot;  → {t} 均值：distinct2={m(&#x27;d2&#x27;):.4f}  长度={m(&#x27;len&#x27;):.1f}  &quot;
+              f&quot;stop={sum(x[&#x27;stops&#x27;] for x in stats)}/{3*8}  吞吐={m(&#x27;tps&#x27;):.1f}\n&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

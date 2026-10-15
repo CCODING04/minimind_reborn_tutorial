@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M05 · 地基件：RMSNorm 与 RoPE | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m05">
 
@@ -137,7 +137,7 @@ x₁ ──┬──────────────────────
         算完 <code>type_as</code> 回落原精度</b>——存储不变、带宽不涨，只有计算中间态升精度。
         真跑对比（脚本与 <code>_norm</code> 相同，只换精度路径）：
       </p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m05_exp_bf16.py · bf16 直算 vs fp32 纪律</span><span class="lang">python</span></div><pre class="code"><code>import torch
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m05_exp_bf16.py.html">experiments/m05_exp_bf16.py</a> · bf16 直算 vs fp32 纪律（全文 18 行）</span><span class="lang">python</span></div><pre class="code"><code>import torch
 torch.manual_seed(0)
 eps = 1e-5
 def norm(x):                                    # 与 layers.py 的 _norm 相同
@@ -146,7 +146,7 @@ def norm(x):                                    # 与 layers.py 的 _norm 相同
 dev = "cuda" if torch.cuda.is_available() else "cpu"
 h = (torch.randn(8192, 768) * 30).to(dev)       # 模拟训练后期的 hidden（std=30），(8192, 768)
 x = h.bfloat16()                                # 全 bf16 模型里 RMSNorm 的真实输入
-ref    = norm(h.double()).float()               # fp64（双精度）参考答案
+ref    = norm(h.double()).float()               # fp64 参考答案
 direct = norm(x).float()                        # 无纪律：统计量在 bf16 里算
 discip = norm(x.float()).bfloat16().float()     # reborn：升 fp32 算完回落
 for name, out in [("bf16 直算", direct), ("fp32 纪律", discip)]:
@@ -155,7 +155,8 @@ r64 = torch.rsqrt(h.double().pow(2).mean(-1, keepdim=True) + eps)
 print("scale 因子误差: bf16 %.4f%%  fp32 %.4f%%" % (
     ((torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps).double() - r64).abs() / r64).max() * 100,
     ((torch.rsqrt(x.float().pow(2).mean(-1, keepdim=True) + eps).double() - r64).abs() / r64).max() * 100))</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m05_exp_bf16.py</span>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m05_exp_bf16.py</span>
+<span class="dim"># 实验脚本随课程仓库 experiments/ 提供；在 minimind_reborn 仓库根目录运行（本页同）</span>
 <span class="out">cuda · bf16 直算: max_abs=0.0452 rel=0.321%</span>
 <span class="out">cuda · fp32 纪律: max_abs=0.0298 rel=0.235%</span>
 <span class="out">scale 因子误差: bf16 0.4880%  fp32 0.0405%</span></code></pre>
@@ -271,7 +272,7 @@ print("scale 因子误差: bf16 %.4f%%  fp32 %.4f%%" % (
         RoPE 的招牌性质值得亲手验证一次。同一对 q/k 向量，放在三个不同起点（位置差都是 4），
         旋转后的内积应当完全相等——用 reborn 的真实函数跑：
       </p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m05_exp_rope.py · 相对位置不变性验证</span><span class="lang">python</span></div><pre class="code"><code>import torch
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m05_exp_rope.py.html">experiments/m05_exp_rope.py</a> · 相对位置不变性验证（全文 17 行）</span><span class="lang">python</span></div><pre class="code"><code>import torch
 from minimind_reborn.models.layers import precompute_freqs_cis, apply_rotary_pos_emb
 
 torch.manual_seed(0)
@@ -288,7 +289,7 @@ def qk_at(m, n):
 print("q·k（不旋转）= %.6f" % (q * k).sum().item())
 for m, n in [(2, 6), (30, 34), (57, 61)]:
     print(f"q@{m:2d} k@{n:2d}（距离 {n-m}）: {qk_at(m, n):.6f}")</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m05_exp_rope.py</span>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m05_exp_rope.py</span>
 <span class="out">q·k（不旋转）= -0.526053</span>
 <span class="out">q@ 2 k@ 6（距离 4）: -1.706030</span>
 <span class="out">q@30 k@34（距离 4）: -1.706030</span>
@@ -546,8 +547,8 @@ print('eps=0   :', RMSNorm(768, eps=0.0)(x).abs().sum().item())"</span></code></
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run pytest tests/test_models/test_rope_scaling.py -q</span>
 <span class="ok">......                                                                   [100%]</span>
 <span class="ok">6 passed in 0.04s</span></code></pre>
-          <p>第二步，亲手复现内积不变性（脚本见 <a href="#rope-inv">实验小节</a>，存为 /tmp/m05_exp_rope.py）：</p>
-          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m05_exp_rope.py</span>
+          <p>第二步，亲手复现内积不变性（脚本见 <a href="#rope-inv">实验小节</a>的 <code>experiments/m05_exp_rope.py</code>）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m05_exp_rope.py</span>
 <span class="out">q·k（不旋转）= -0.526053</span>
 <span class="out">q@ 2 k@ 6（距离 4）: -1.706030</span>
 <span class="out">q@30 k@34（距离 4）: -1.706030</span>
@@ -609,6 +610,6 @@ print('eps=0   :', RMSNorm(768, eps=0.0)(x).abs().sum().item())"</span></code></
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

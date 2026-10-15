@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m13_bench_dtype.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m13_bench_dtype.py</span>
+  <span class="cv-meta">52 行 · 2KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m13_bench_dtype.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M13 教学脚本：同一训练步（前向+反向+优化）在 fp32/bf16/fp16 下的耗时对比。
+
+走 Trainer 同款机制：resolve_dtype → autocast_context → build_scaler。
+tiny = 冒烟 0.53M；64M = 官方结构（B=4, T=96 与 smoke_pretrain 一致）。
+&quot;&quot;&quot;
+import time
+import torch
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+from minimind_reborn.training.common.amp import autocast_context, build_scaler, resolve_dtype
+
+TINY = dict(hidden_size=64, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2)
+
+
+def bench(cfg_kwargs, dtype_name, steps=30, warmup=8, B=4, T=96):
+    torch.manual_seed(0)
+    model = MiniMindForCausalLM(MiniMindConfig(**cfg_kwargs)).cuda().train()
+    dtype = resolve_dtype(dtype_name)
+    ctx = autocast_context(dtype, &quot;cuda&quot;)        # fp32 → nullcontext，bf16/fp16 → cuda autocast
+    scaler = build_scaler(dtype)                  # fp32/bf16 → enabled=False（透传），fp16 → 真 scaler
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    x = torch.randint(0, 6400, (B, T), device=&quot;cuda&quot;)   # (B, T)：假语料，只测计算耗时
+
+    def one_step():
+        with ctx:
+            loss = model(x, labels=x).loss
+        scaler.scale(loss).backward()
+        scaler.step(opt)
+        scaler.update()
+        opt.zero_grad(set_to_none=True)
+
+    for _ in range(warmup):
+        one_step()                                # CUDA 就绪 + cudnn benchmark 收敛
+    torch.cuda.synchronize()
+    t0 = time.time()
+    for _ in range(steps):
+        one_step()
+    torch.cuda.synchronize()
+    ms = (time.time() - t0) / steps * 1000
+    n = sum(p.numel() for p in model.parameters())
+    peak = torch.cuda.max_memory_allocated() / 2**20
+    torch.cuda.reset_peak_memory_stats()
+    del model, opt
+    torch.cuda.empty_cache()
+    return n, ms, peak
+
+
+print(f&quot;{&#x27;model&#x27;:&gt;6} {&#x27;params&#x27;:&gt;9} {&#x27;dtype&#x27;:&gt;5} {&#x27;ms/step&#x27;:&gt;8} {&#x27;tok/s&#x27;:&gt;8} {&#x27;peak MB&#x27;:&gt;8}&quot;)
+for tag, cfg in [(&quot;tiny&quot;, TINY), (&quot;64M&quot;, {})]:
+    for dt in (&quot;fp32&quot;, &quot;bf16&quot;, &quot;fp16&quot;):
+        n, ms, peak = bench(cfg, dt)
+        print(f&quot;{tag:&gt;6} {n/1e6:&gt;8.2f}M {dt:&gt;5} {ms:&gt;8.2f} {4*96/ms*1000:&gt;8.0f} {peak:&gt;8.0f}&quot;)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

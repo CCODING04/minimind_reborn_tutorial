@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m12_first.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m12_first.py</span>
+  <span class="cv-meta">35 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m12_first.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M12 实验：sft_t2t_mini.jsonl 第一条 → 渲染 → encode → 逐段标注哪段 -100。&quot;&quot;&quot;
+import json
+
+from transformers import AutoTokenizer
+
+from minimind_reborn.data.datasets import encode_sft_sample, render_conversations
+from minimind_reborn.data.loss_mask import build_labels, pattern_ids, scan_response_spans
+
+tok = AutoTokenizer.from_pretrained(&quot;assets/tokenizer&quot;)
+line = open(&quot;/home/admin02/Code/WorkSpace/minimind-reproduce/dataset/sft_t2t_mini.jsonl&quot;, &quot;rb&quot;).readline()
+convs = json.loads(line)[&quot;conversations&quot;]
+
+text = render_conversations(tok, convs, remove_empty_think=False)  # 固定抽签：空 think 原样保留
+ids = tok(text).input_ids
+prefix_ids, suffix_ids = pattern_ids(tok)
+spans, dangling = scan_response_spans(ids, prefix_ids, suffix_ids)
+labels = build_labels(ids, spans)
+
+supervised = sum(1 for l in labels if l != -100)
+print(f&quot;渲染 {len(text)} 字符 → {len(ids)} token；{len(spans)} 个 assistant 区间，dangling={dangling}&quot;)
+print(f&quot;监督 token {supervised}/{len(ids)} = {supervised/len(ids):.0%}；区间：{spans}&quot;)
+
+def brief(s):  # 段内文本截短展示（数据原样，只是打印截断）
+    return (s[:38] + &quot;…&quot;) if len(s) &gt; 40 else s
+
+segs, cur, start = [], labels[0] != -100, 0       # 连续同色段合并
+for j in range(1, len(labels) + 1):
+    hot = j &lt; len(labels) and labels[j] != -100
+    if j == len(labels) or hot != cur:
+        segs.append((cur, start, j)); start, cur = j, hot
+for hot, a, b in segs:
+    print(f&quot;[{a:3},{b:3}) {&#x27;监督&#x27; if hot else &#x27;忽略&#x27;} {brief(tok.decode(ids[a:b]))!r}&quot;)
+
+out = encode_sft_sample(tok, prefix_ids, suffix_ids, convs, 256, remove_empty_think=False)
+print(&quot;同一样本 C1 演示（预算 256）：&quot;, out[&quot;stats&quot;])</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

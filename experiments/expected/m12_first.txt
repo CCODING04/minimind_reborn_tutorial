@@ -1,0 +1,17 @@
+渲染 1241 字符 → 549 token；7 个 assistant 区间，dangling=0
+监督 token 414/549 = 75%；区间：[(25, 50), (68, 277), (295, 348), (367, 396), (414, 453), (472, 504), (522, 549)]
+[  0, 25) 忽略 '<|im_start|>user\n你背后的模型是哪个版本？它由谁开发？<|i…'
+[ 25, 50) 监督 '<think>\n\n</think>\n\n我是由jingyaogong开发的高效…'
+[ 50, 68) 忽略 '<|im_start|>user\n你模型的训练数据来源是什么？<|im_en…'
+[ 68,277) 监督 '<think>\n好的，用户问我的模型训练数据来源。首先，我需要确认用户的问题…'
+[277,295) 忽略 '<|im_start|>user\n训练数据的来源和多样性如何？<|im_en…'
+[295,348) 监督 '<think>\n\n</think>\n\n我的训练数据来源广泛，涵盖多个领域，确…'
+[348,367) 忽略 '<|im_start|>user\n训练数据如何保障信息准确性？<|im_en…'
+[367,396) 监督 '<think>\n\n</think>\n\n我的训练数据通过多轮验证和质量控制流程…'
+[396,414) 忽略 '<|im_start|>user\n训练数据如何确保来源透明？<|im_end…'
+[414,453) 监督 '<think>\n\n</think>\n\n我的训练数据来源透明，所有数据均来自公…'
+[453,472) 忽略 '<|im_start|>user\n训练数据如何保障多语言支持？<|im_en…'
+[472,504) 监督 '<think>\n\n</think>\n\n我的训练数据支持多语言，涵盖多种语言的…'
+[504,522) 忽略 '<|im_start|>user\n你最近在忙什么？<|im_end|>\n<|…'
+[522,549) 监督 '<think>\n\n</think>\n\n我目前专注于优化和提升自身的性能，持续…'
+同一样本 C1 演示（预算 256）： {'full_len': 549, 'fitted': True, 'hard_truncated': False, 'complete_before': 7, 'complete_after': 4, 'dangling': 0, 'n_messages': 14, 'zero_loss': False}

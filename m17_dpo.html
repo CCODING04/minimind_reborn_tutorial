@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M17 · DPO：偏好对齐 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m17">
 
@@ -372,7 +372,7 @@ dpo:
           </tbody>
         </table>
       </div>
-      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · 脚本 /tmp/m17_mem.py（本页复刻版见此节）]</b>
+      <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · 脚本已收录：<a href="codeview/experiments/m17_mem.py.html"><code>experiments/m17_mem.py</code></a>（本页复刻版见此节）]</b>
       DPO 峰值只比同 batch 的单模型高约 360 MiB（+8%）：两份 fp32 参数共 539 MiB 是"硬开销"，
       但参考侧前向全程 no_grad——激活即算即释放，不留计算图；真正的大头是策略侧的激活图
       （前向 4672−539 ≈ 4.1 GiB）。训练时策略侧还有 Adam 优化器状态（M13）与梯度各一份参数，
@@ -477,25 +477,29 @@ dpo:
         DPO 前的 full_sft（也是参考）与 DPO 后的 dpo_768——在 64 个抽样对上算每对的
         $z = \beta[(\pi_c-\pi_r) - (\mathrm{ref}_c-\mathrm{ref}_r)]$，统计 z&gt;0（比参考更偏爱 chosen）的占比：
       </p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m17_margin.py · 核心段（完整脚本 60 行，此为循环体）</span><span class="lang">python</span></div><pre class="code"><code>ref  = build("out/archive/era2/full_sft_768.pth")   # DPO 的参考 = 起点（存档 md5 fb1dcf…）
-pol  = {"DPO 前": build("out/archive/era2/full_sft_768.pth"),
-        "DPO 后": build("out/dpo_768.pth")}           # 存档 md5 521a5b…（=era2 快照）
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m17_margin.py.html">experiments/m17_margin.py</a> · 核心段（29–47/51 行节选：两份权重 · one_pass · 统计循环；docstring/imports/打印段见完整代码）</span><span class="lang">python</span></div><pre class="code"><code>ref = build("out/archive/era2/full_sft_768.pth")   # 冻结参考 = DPO 的锚
+pol = {"DPO 前（=ref）": build("out/archive/era2/full_sft_768.pth"),
+       "DPO 后": build("out/dpo_768.pth")}
 
 @torch.no_grad()
 def one_pass(m, b):
-    x = torch.stack([b["x_chosen"], b["x_rejected"]]).cuda()   # (2, T) 拼批
+    x = torch.stack([b["x_chosen"], b["x_rejected"]]).cuda()   # (2, T) 拼批：上半 chosen 下半 rejected
     y = torch.stack([b["y_chosen"], b["y_rejected"]]).cuda()
     mask = torch.stack([b["mask_chosen"], b["mask_rejected"]]).cuda()
-    return (logits_to_log_probs(m(x).logits, y) * mask).sum(dim=1)   # (2,)
+    return (logits_to_log_probs(m(x).logits, y) * mask).sum(dim=1)   # (2,) 回答区间总 logp
 
+stats = {k: [] for k in pol}
 for i in range(64):
     b = ds[i * 7 % len(ds)]
-    ref_lp = one_pass(ref, b)                                    # (2,) 参考的偏好
+    ref_lp = one_pass(ref, b)                                   # (2,)
     for k, m in pol.items():
         lp = one_pass(m, b)
-        z = beta * ((lp[0] - lp[1]) - (ref_lp[0] - ref_lp[1]))   # 每对的判据量
-        stats[k].append(z.item())</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m17_margin.py</span>
+        z = beta * ((lp[0] - lp[1]) - (ref_lp[0] - ref_lp[1]))  # 每对的 DPO 判据量
+        stats[k].append((z.item(), (-F.logsigmoid(z)).item()))
+# ……（余 32 行：docstring（权重 md5 档案说明）· imports · seed/数据/build 前置段 · 统计打印段——完整代码见标题链接）</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m17_margin.py</span>
+<span class="dim"># 实验脚本随课程仓库 experiments/ 提供；在 minimind_reborn 仓库根目录运行（本页同）</span>
+<span class="dim"># 输出为作者实测存档（数字随所依赖的 out/ 权重存档与数据状态漂移——见下方"参照物被覆盖"工程课）</span>
 <span class="out">DPO 前: margin z 均值 +0.0000 | σ(z) 偏好判对率 0.5000 | 单对 DPO loss 0.6931 | z&gt;0 占比 0.00%</span>
 <span class="out">DPO 后: margin z 均值 +0.0049 | σ(z) 偏好判对率 0.5012 | 单对 DPO loss 0.6907 | z&gt;0 占比 59.38%</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · 64 对抽样（stride 7）· dpo_mini 未变（数据文件 2026-09-10）]</b>
@@ -601,14 +605,29 @@ for i in range(64):
           <div class="ex-predict"></div>
           <p>先写下预测：①此时 loss 等于多少？（提示：公式里每个 π 项会发生什么？）②梯度呢——
           是 0 吗，为什么？③如果"参考"与"策略"此刻也是同一份权重（训练起点），答案会因此改变吗？</p>
-          <div class="codeblock"><div class="code-head"><span>/tmp/m17_pair.py · 核心段</span><span class="lang">python</span></div><pre class="code"><code>pair = -torch.rand(1, 32)                                # 伪造每 token log prob ∈ (-1, 0)
-logp = torch.cat([pair, pair], dim=0).requires_grad_(True)   # (2, 32) chosen=rejected
-loss = dpo_loss(logp, logp, torch.ones(2, 32), beta=0.15)    # 同一张量既当 π 又当 ref
+          <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m17_pair.py.html">experiments/m17_pair.py</a> · 变式：chosen == rejected（全文 22 行）</span><span class="lang">python</span></div><pre class="code"><code>"""变式：chosen == rejected（同一文本两边）时，DPO 的 loss 与梯度是什么？"""
+import torch
+from minimind_reborn.training.dpo.loss import dpo_loss
+
+torch.manual_seed(42)
+# 1 对"完全相同"的回答：B=2（前半 chosen 后半 rejected），两边一字不差
+pair = -torch.rand(1, 32)                          # 伪造每 token log prob ∈ (-1, 0)
+logp = torch.cat([pair, pair], dim=0).requires_grad_(True)   # (2, 32)
+mask = torch.ones(2, 32)
+
+loss = dpo_loss(logp, logp, mask, beta=0.15)       # 同一张量既当 π 又当 ref
+print(f"loss = {loss.item():.6f} | ln(2) = {torch.log(torch.tensor(2.0)):.6f}")
 loss.backward()
+print(f"grad|logp| 最大 = {logp.grad.abs().max().item():.3e}（精确为 0：{logp.grad.abs().max().item() == 0.0}）")
+
 # 对照：只把 rejected 侧末 token 的 logp 压低 0.5 —— 偏好信号出现
-ref, pol, mask = logp.detach(), logp.detach().clone(), torch.ones(2, 32)
-pol[1, -1] -= 0.5; loss2 = dpo_loss(ref, pol, mask, beta=0.15)</code></pre></div>
-          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m17_pair.py</span>
+ref = logp.detach()
+pol = logp.detach().clone(); pol[1, -1] -= 0.5
+pol.requires_grad_(True)
+loss2 = dpo_loss(ref, pol, mask, beta=0.15)
+loss2.backward()
+print(f"对照（rejected 略差）loss = {loss2.item():.6f} &lt; ln(2)；grad|pol| 最大 = {pol.grad.abs().max().item():.3e} ≠ 0")</code></pre></div>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m17_pair.py</span>
 <span class="out">loss = 0.693147 | ln(2) = 0.693147</span>
 <span class="out">grad|logp| 最大 = 0.000e+00（精确为 0：True）</span>
 <span class="out">对照（rejected 略差）loss = 0.656350 &lt; ln(2)；grad|pol| 最大 = 7.219e-02 ≠ 0</span></code></pre>
@@ -711,6 +730,6 @@ pol[1, -1] -= 0.5; loss2 = dpo_loss(ref, pol, mask, beta=0.15)</code></pre></div
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

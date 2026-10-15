@@ -1,0 +1,2 @@
+LoRA rank=16: 393,216/63,912,192 = 0.615%（挂载点 16 个：q/o_proj × 8 层）
+3 checks passed

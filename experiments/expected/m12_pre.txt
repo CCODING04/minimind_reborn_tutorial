@@ -1,0 +1,5 @@
+第 25 行 @max_length=64：真实 44 token，pad 20 个
+ids    转折点前后： [49, 2, 0, 0, 0]
+labels 转折点前后： [49, 2, -100, -100, -100]
+首 token： 1 （bos）；最后一个真实 token： 2 （eos）；pad id： 0
+正文区 label==id： True ；pad 区全 -100： True

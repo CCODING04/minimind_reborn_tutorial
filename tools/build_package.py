@@ -101,10 +101,11 @@ def collect_files() -> list[Path]:
     return files
 
 # ── 源码浏览页 ────────────────────────────────────────────────────────
-def crumb(rel: str, prefix: str) -> str:
+def crumb(rel: str, prefix: str, snap: str | None = None) -> str:
+    snap = snap or f"reborn 快照 @{SNAPSHOT_DATE}"
     return f'<div class="crumbs"><a href="{prefix}index.html">← 课程首页</a><span class="sep">·</span>' \
            f'<a href="{prefix}source/index.html">源码索引</a><span class="sep">·</span>' \
-           f'<span class="path">{rel}</span><span class="snap">reborn 快照 @{SNAPSHOT_DATE}</span></div>'
+           f'<span class="path">{rel}</span><span class="snap">{snap}</span></div>'
 
 PAGE_SHELL = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -137,14 +138,18 @@ def build_source_page(rel: str, src: Path, css: str, js: str, source_css: str) -
     lines = text.split("\n")
     if lines and lines[-1] == "":
         lines.pop()
-    body_parts = [crumb(rel, prefix)]
+    # 课程实验脚本（experiments/…）标注课程仓库来源，与 reborn 快照区分
+    is_exp = rel.startswith("experiments/")
+    head_label = ("minimind_reborn_tutorial/" if is_exp else "Reproduce/minimind_reborn/") + rel
+    snap = "课程实验脚本归档" if is_exp else None
+    body_parts = [crumb(rel, prefix, snap)]
     body_parts.append(
-        f'<div class="codeblock"><div class="code-head"><span>{html.escape("Reproduce/minimind_reborn/" + rel)}</span>'
+        f'<div class="codeblock"><div class="code-head"><span>{html.escape(head_label)}</span>'
         f'<span class="lang">{LANG_LABEL.get(lang, "text")} · {len(lines)} 行</span></div>'
         # 服务端已高亮；data-nohighlight 阻止客户端高亮器重写 innerHTML（会抹掉行号 span）
         f'<pre class="code src" data-nohighlight><code>')
-    for line in lines:
-        body_parts.append(f'<span class="srcline">{hl_line(line, lang)}</span>')
+    for i, line in enumerate(lines, 1):
+        body_parts.append(f'<span class="srcline" id="L{i}">{hl_line(line, lang)}</span>')
     body_parts.append("</code></pre></div>")
     return PAGE_SHELL.format(title=html.escape(rel), prefix=prefix, css=css, js=js,
                              source_css=source_css, body="".join(body_parts), date=SNAPSHOT_DATE)
@@ -174,8 +179,8 @@ def build_source_index(files: list[tuple[str, Path]], css: str, js: str, source_
 # ── 课程页重写 ────────────────────────────────────────────────────────
 CODE_RE = re.compile(r'(<a [^>]*>)?\s*<code>([^<]+)</code>')
 HREF_RE = re.compile(r'href="\.\./\.\./Reproduce/minimind_reborn/([^"]+)"')
-# 课程页里已由 build_codeview.py 转成站内 codeview/ 的链接 → 包内统一指向 source/
-HREF_CV_RE = re.compile(r'href="codeview/([^"#?]+)\.html"')
+# 课程页里已由 build_codeview.py 转成站内 codeview/ 的链接 → 包内统一指向 source/（保留 #Ln 行锚）
+HREF_CV_RE = re.compile(r'href="codeview/([^"#?]+)\.html(#[^"]*)?"')
 
 def build_link_keys(files: list[str]) -> dict[str, str]:
     """精确匹配键 → 仓库相对路径。裸 basename 仅唯一时注册。"""
@@ -184,7 +189,10 @@ def build_link_keys(files: list[str]) -> dict[str, str]:
         keys[rel] = rel                                   # src/minimind_reborn/models/model.py
         if rel.startswith("src/minimind_reborn/"):
             keys[rel.removeprefix("src/minimind_reborn/")] = rel   # models/model.py
-        keys["Reproduce/minimind_reborn/" + rel] = rel
+        if rel.startswith("experiments/"):
+            keys["minimind_reborn_tutorial/" + rel] = rel          # 课程实验脚本全前缀
+        else:
+            keys["Reproduce/minimind_reborn/" + rel] = rel
     base: dict[str, list[str]] = {}
     for rel in files:
         base.setdefault(Path(rel).name, []).append(rel)
@@ -208,8 +216,10 @@ def rewrite_course_page(text: str, keys: dict[str, str], raw_files: dict[str, st
             return f'href="{raw_files[rel]}"'
         return f'href="source/{rel}.html"'
     text = HREF_RE.sub(href_sub, text)
-    text = HREF_CV_RE.sub(
-        lambda m: f'href="{raw_files.get(m.group(1), "source/" + m.group(1) + ".html")}"', text)
+    def cv_sub(m: re.Match) -> str:
+        anchor = m.group(2) or ""
+        return f'href="{raw_files.get(m.group(1), "source/" + m.group(1) + ".html")}{anchor}"'
+    text = HREF_CV_RE.sub(cv_sub, text)
 
     def code_sub(m: re.Match) -> str:
         lead, content = m.group(1), m.group(2).strip()
@@ -266,7 +276,7 @@ def main() -> int:
             (OUT / "assets" / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(src, OUT / "assets" / rel)
 
-    # 2. reborn 源码
+    # 2. reborn 源码 + 课程实验脚本（experiments/，页面 codeview/experiments/ 链接同样改写为 source/）
     files = collect_files()
     rendered: list[tuple[str, Path]] = []
     raw_files: dict[str, str] = {}
@@ -279,6 +289,13 @@ def main() -> int:
             raw_files[rel] = "raw/" + rel
         else:
             rendered.append((rel, src))
+    exp_dir = COURSE / "experiments"
+    if exp_dir.is_dir():
+        for src in sorted(exp_dir.rglob("*")):
+            # expected/ 是复跑输出存档，不做源码页
+            if not src.is_file() or src.suffix not in TEXT_SUFFIXES or "expected" in src.parts:
+                continue
+            rendered.append(("experiments/" + src.relative_to(exp_dir).as_posix(), src))
     for rel, src in rendered:
         page = build_source_page(rel, src, css, js, SOURCE_CSS)
         dest = OUT / "source" / (rel + ".html")

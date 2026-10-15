@@ -51,6 +51,7 @@ const APPENDIX = [
   { id: "pytorch-guide", file: "pytorch_guide.html", title: "PyTorch 特殊用法指南" },
   { id: "eng-glossary", file: "eng_glossary.html", title: "工程工具速查（CI · lint · mypy）" },
   { id: "glossary", file: "glossary.html", title: "术语解释（LLM 概念词）" },
+  { id: "retrospective", file: "retrospective.html", title: "制作复盘 · 方法论（可复用）" },
 ];
 
 /* —— 进度（localStorage）—— */

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m12_fill.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m12_fill.py</span>
+  <span class="cv-meta">45 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m12_fill.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M12 填空：把 scan_response_spans 的三个关键位补全（对照 reborn 参照答案）。&quot;&quot;&quot;
+from transformers import AutoTokenizer
+
+from minimind_reborn.data.loss_mask import find_response_spans, pattern_ids
+
+tok = AutoTokenizer.from_pretrained(&quot;assets/tokenizer&quot;)
+PREFIX, SUFFIX = pattern_ids(tok)  # ([1, 1388, 570, 811, 234], [2, 234])
+
+
+def match_at(seq, pat, i):
+    return seq[i : i + len(pat)] == pat  # 越界切片得短列表 → 自然 False
+
+
+def my_scan(ids):
+    &quot;&quot;&quot;返回 (spans, dangling)：完整回答的 [start, stop)，残段只计数。&quot;&quot;&quot;
+    spans, dangling, i, n = [], 0, 0, len(ids)
+    while i &lt; n:
+        if match_at(ids, PREFIX, i):
+            start = i + len(PREFIX)                             # 空①
+            end = start
+            while end &lt; n and not match_at(ids, SUFFIX, end):   # 空②
+                end += 1
+            if end &lt; n:
+                spans.append((start, end + len(SUFFIX)))        # 空③
+                i = spans[-1][1]
+            else:
+                dangling += 1                                   # 扫到头也没等到 suffix
+                i = n
+        else:
+            i += 1
+    return spans, dangling
+
+
+msgs = [
+    {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Q1&quot;}, {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: &quot;A1&quot;},
+    {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Q2&quot;}, {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: &quot;A2&quot;},
+]
+text = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
+ids = tok(text).input_ids
+spans_full, dg_full = my_scan(ids)
+assert spans_full == find_response_spans(ids, PREFIX, SUFFIX) and dg_full == 0
+spans_cut, dg_cut = my_scan(ids[:-4])
+print(&quot;两轮完整：&quot;, len(spans_full), &quot;个区间&quot;, spans_full)
+print(&quot;砍掉末 4 token：&quot;, len(spans_cut), &quot;个区间 +&quot;, dg_cut, &quot;个残段（残段不计监督）&quot;)
+print(&quot;与 reborn find_response_spans 逐位一致：ALL PASS&quot;)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

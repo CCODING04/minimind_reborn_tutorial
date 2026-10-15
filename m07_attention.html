@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M07 · Attention：GQA、QK-Norm 与三条路径 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m07">
 
@@ -355,38 +355,53 @@ output = self.attn_dropout(F.softmax(scores, dim=-1).type_as(xq)) @ xv_full  # s
 
       <h3 id="equiv">等价性：真跑三路径，同权重 fp32</h3>
       <p>空口无凭，跑。两份同权重模型，一个 <code>flash=True</code>（①②按条件生效）、一个逐层 <code>flash=False</code>（逼走③）：</p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m07_equiv.py · 三路径等价性（tiny 配置，CPU 可跑）</span><span class="lang">python</span></div><pre class="code"><code>import torch
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m07_equiv.py.html">experiments/m07_equiv.py</a> · 三路径等价性·主段（12–50/60 行节选；docstring/imports 头段与 padding mask 批次见完整代码）</span><span class="lang">python</span></div><pre class="code"><code>torch.manual_seed(7)
+cfg = MiniMindConfig(
+    hidden_size=32, num_hidden_layers=2, num_attention_heads=2, num_key_value_heads=1,
+    vocab_size=64, max_position_embeddings=128, dropout=0.0,
+)
 
-from minimind_reborn.models import KVCache
-from minimind_reborn.models.config import MiniMindConfig
-from minimind_reborn.models.model import MiniMindForCausalLM
-
-torch.manual_seed(7)
-cfg = MiniMindConfig(hidden_size=32, num_hidden_layers=2, num_attention_heads=2,
-                     num_key_value_heads=1, vocab_size=64, max_position_embeddings=128, dropout=0.0)
 a = MiniMindForCausalLM(cfg).eval()   # flash=True：无 cache 走①，带 cache 走②
 b = MiniMindForCausalLM(cfg).eval()
-b.load_state_dict(a.state_dict())     # 同一份权重，只换执行路径
+b.load_state_dict(a.state_dict())
 for layer in b.model.layers:
-    layer.self_attn.flash = False     # 关掉 SDPA，逼走③
+    layer.self_attn.flash = False      # 强制③ manual
 
-x = torch.randint(0, 64, (2, 7))
-with torch.no_grad():
-    out1 = a(x).logits                                           # ① 无 cache、无 mask
-    cache = KVCache(2, 2, 24, 1, 16, torch.float32, "cpu")
-    out2 = a(x[:, :5], past_key_values=cache).logits             # ② prefill 写 5 列
-    for i in (5, 6):                                             # ② 两步 decode，每步 1 列
-        out2 = torch.cat([out2, a(x[:, i:i + 1], past_key_values=cache).logits], dim=1)
-    out3 = b(x).logits                                           # ③ manual 全段
-
-for name, u, v in [("① vs ③", out1, out3), ("② vs ③", out2, out3), ("② vs ①", out2, out1)]:
-    print(f"{name}  allclose={torch.allclose(u, v, atol=1e-5)}  max|Δ|={(u - v).abs().max().item():.2e}")
-print("贪心稳定性——①与③ argmax 全等:", bool((out1.argmax(-1) == out3.argmax(-1)).all()))</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m07_equiv.py</span>
-<span class="out">① vs ③  allclose=True  max|Δ|=5.96e-08
+# ——证据增强：数一数 SDPA 到底被谁调用——
+calls = {"n": 0}
+_real_sdpa = F.scaled_dot_product_attention
+def counting_sdpa(*args, **kw):
+    calls["n"] += 1
+    return _real_sdpa(*args, **kw)
+F.scaled_dot_product_attention = counting_sdpa
+try:
+    x = torch.randint(0, 64, (2, 7))
+    with torch.no_grad():
+        calls["n"] = 0
+        out1 = a(x).logits                                   # ① 无 cache、无 mask
+        n1 = calls["n"]
+        ca = KVCache(2, 2, 24, 1, 16, torch.float32, "cpu")
+        pre2 = a(x[:, :5], past_key_values=ca).logits        # ② prefill（写 5 列 cache）
+        step2 = a(x[:, 5:6], past_key_values=ca).logits      # ② decode（每步 1 列）
+        step3 = a(x[:, 6:7], past_key_values=ca).logits      # ② decode 第 2 步
+        n2 = calls["n"] - n1
+        calls["n"] = 0
+        out3 = b(x).logits                                   # ③ manual 全段
+        n3 = calls["n"]
+    # ② 的 prefill 前 5 位 + 两步 decode 拼起来，对齐①③的 7 位输出
+    out2 = torch.cat([pre2, step2, step3], dim=1)
+    print(f"路径判定（SDPA 调用次数，2 层模型）: ①={n1}  ②={n2}(prefill 2 层 + 2 步 decode 各 2 层)  ③={n3}")
+    for name, u, v in [("① vs ③", out1, out3), ("② vs ③", out2, out3), ("② vs ①", out2, out1)]:
+        ok = torch.allclose(u, v, atol=1e-5)
+        print(f"{name}  allclose={ok}  max|Δ|={(u - v).abs().max().item():.2e}")
+# ……（余 21 行：docstring/imports 头段 · padding mask 批次与 finally 恢复——完整代码见标题链接）</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m07_equiv.py</span>
+<span class="dim"># 实验脚本随课程仓库 experiments/ 提供；在 minimind_reborn 仓库根目录运行（本页同）</span>
+<span class="out">路径判定（SDPA 调用次数，2 层模型）: ①=2  ②=6(prefill 2 层 + 2 步 decode 各 2 层)  ③=0
+① vs ③  allclose=True  max|Δ|=5.96e-08
 ② vs ③  allclose=True  max|Δ|=7.45e-08
 ② vs ①  allclose=True  max|Δ|=7.45e-08
-贪心稳定性——①与③ argmax 全等: True</span></code></pre>
+② vs ③（含 padding mask） allclose=True  max|Δ|=7.45e-08</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130 · CPU 执行]</b> 三路径两两 allclose（atol=1e-5），最大偏差 7.45e-8（fp32 舍入极限量级），argmax 逐位全等。②的 5+1+1 拼接能对齐①③整段，靠的正是因果性：位置 $i$ 的输出只依赖前 $i{+}1$ 列。同款断言在 <a href="codeview/tests/test_models/test_model.py.html">tests/test_models/test_model.py</a>（训练路径）与 <a href="codeview/tests/test_models/test_kv_cache.py.html">tests/test_models/test_kv_cache.py</a>（prefill/decode/padding 三断言）里各有一份——跑测试就是跑等价性。</p>
 
       <h3 id="hunt">🔍 bug 猎场：等价性先行的性能纪律（c2e43ff）</h3>
@@ -428,7 +443,7 @@ print("贪心稳定性——①与③ argmax 全等:", bool((out1.argmax(-1) == 
         读过不等于会写。下面是路径③的独立可跑缩小版（5 个 token、2 个头、$d{=}4$，不依赖仓库），
         <b>三处空</b>正是本课的三条命脉：$\sqrt{d}$ 缩放、因果 mask 构造、softmax 的维度。把空填上，跑通它：
       </p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m07_fill.py · 路径③ 三空版（把 ____ 换成你的答案）</span><span class="lang">python</span></div><pre class="code"><code>import math
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m07_fill.py.html">experiments/m07_fill.py</a> · 路径③ 三空版（填空模板，全文 18 行；把 ____ 换成你的答案）</span><span class="lang">python</span></div><pre class="code"><code>import math
 
 import torch
 import torch.nn.functional as F
@@ -472,9 +487,12 @@ out = F.softmax(scores, dim=-1).type_as(q) @ v                    # 空③ = -1<
           空②错成 <code>triu(0)</code>——对角线也被屏蔽，行内全 $-\infty$ 出 NaN；错成 <code>tril(1)</code>——mask 颠倒成"只看未来"，与 is_causal 相反且无报错；
           空③错成 <code>dim=-2</code>——沿 query 方向归一，权重行和≠1，输出量纲全错。
         </p>
+        <p>填空模板与答案版脚本：<a href="codeview/experiments/m07_fill.py.html"><code>experiments/m07_fill.py</code></a> · <a href="codeview/experiments/m07_fill_answer.py.html"><code>experiments/m07_fill_answer.py</code></a></p>
       </details>
-      <p>填完后的自测验收（作者环境真实输出）：</p>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m07_fill.py</span>
+      <p>填完后的自测验收（下为答案版真实输出）：</p>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m07_fill.py</span>
+<span class="dim"># 填完三空后运行；下为答案版真实输出</span>
+<span class="out">out.shape = (1, 2, 5, 4)  ref.shape = (1, 2, 5, 4)</span>
 <span class="out">allclose(atol=1e-6): True  max|Δ| = 2.384185791015625e-07</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> 填对三空即与路径①（SDPA is_causal）逐元素一致，max|Δ|≈2.4e-7；任何一空填错，allclose 变 False 或直接 NaN——对错机器可判，不用问人。</p>
 </section>
@@ -626,7 +644,7 @@ for kv in (4, 8):   # 4 = GQA（n_rep=2），8 = MHA（n_rep=1）
           <ul class="pass-criteria">
             <li><code>8 passed</code>——test_model.py 全绿：<code>test_sdpa_vs_manual_attention_equivalence</code>（①③训练路径等价）与 <code>test_moe_aux_loss_positive</code>（MoE 负载均衡损失，M08 预告）都在这 8 个里；</li>
             <li><code>19 passed</code>——test_models 目录全绿（另含 KV cache 5 个：<code>test_sdpa_prefill_path_matches_manual</code> 的 prefill/decode/padding 三断言；RoPE/YaRN 6 个）；</li>
-            <li>✏️ 填空自测：<code>uv run python /tmp/m07_fill.py</code> 打出 <code>allclose(atol=1e-6): True</code>；</li>
+            <li>✏️ 填空自测：<code>uv run python experiments/m07_fill.py</code> 打出 <code>allclose(atol=1e-6): True</code>；</li>
             <li>（可选 GPU）跑 <a href="#hunt">猎场</a>同款对照，亲见②③峰值显存差 ~287MB；无 GPU 走读档 [存档 c2e43ff] 573→237MB。</li>
           </ul>
           <details>
@@ -682,6 +700,6 @@ for kv in (4, 8):   # 4 = GQA（n_rep=2），8 = MHA（n_rep=1）
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

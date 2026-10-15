@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M03 · 全链路地图：一次请求的一生 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m03">
 
@@ -342,11 +342,11 @@ def split_reasoning(text):                      <span class="c"># chat.py:28</sp
 <section class="panel">
 <h2 id="tour">动手巡游：七行证据</h2>
       <p>
-        把脚本存到仓库<b>外</b>（如 <code>/tmp/tour.py</code>，临时文件不进 reborn 仓库），在
+        脚本已随课程仓库提供（<code>experiments/tour.py</code>），不再散落临时目录，在
         <code>Reproduce/minimind_reborn/</code> 下运行。权重用 <code>out/pretrain_768.pth</code>
         （base 模型走 bos + 裸文本，见上面坑卡），七站各打印一行证据：
       </p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/tour.py · M03 巡游：一次请求的一生</span><span class="lang">python</span></div><pre class="code"><code><span class="c"># M03 巡游：一次请求的一生——七站各打印一行证据（权重 out/pretrain_768.pth）</span>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/tour.py.html">experiments/tour.py</a> · M03 巡游：一次请求的一生（全文 31 行）</span><span class="lang">python</span></div><pre class="code"><code># M03 巡游：一次请求的一生——七站各打印一行证据（权重 out/pretrain_768.pth）
 import torch
 from torch.nn.functional import softmax
 from minimind_reborn.configuration.schemas import GenerateConfig
@@ -355,34 +355,36 @@ from minimind_reborn.inference.engine import MiniMindLLM
 from minimind_reborn.inference.sampling import apply_temperature, apply_top_k, apply_top_p
 from minimind_reborn.models.kv_cache import KVCache
 
-llm = MiniMindLLM.build("pretrain")  <span class="c"># ③ engine 门面：权重→模型→dtype 回退→设备</span>
-ids = llm.tokenizer("你好，世界")["input_ids"]  <span class="c"># ①</span>
+llm = MiniMindLLM.build("pretrain")  # ③ engine 门面：权重→模型→dtype 回退→设备
+ids = llm.tokenizer("你好，世界")["input_ids"]  # ①
 print(f"① encode 「你好，世界」→ {ids} → decode 还原「{llm.tokenizer.decode(ids)}」 vocab={len(llm.tokenizer)}")
 print(f"② render {render_chat(llm.tokenizer, [{'role': 'user', 'content': '你好'}])!r}")
 print(f"③ engine device={llm.device} dtype={llm.dtype} 参数={sum(p.numel() for p in llm.model.parameters()) / 1e6:.2f}M")
-inputs = llm.tokenizer(llm.tokenizer.bos_token + "大语言模型", return_tensors="pt").to(llm.device)  <span class="c"># (1, 4)</span>
+inputs = llm.tokenizer(llm.tokenizer.bos_token + "大语言模型", return_tensors="pt").to(llm.device)  # (1, 4)
 gen = GenerateConfig(temperature=0.85, top_k=50, top_p=0.95, max_new_tokens=6)
 with torch.inference_mode():
-    out = llm.generate_tokens(inputs["input_ids"], gen)  <span class="c"># ④ generator 内核</span>
+    out = llm.generate_tokens(inputs["input_ids"], gen)  # ④ generator 内核
     c = llm.model.config
-    cache = KVCache(num_layers=c.num_hidden_layers, max_batch_size=1,  <span class="c"># 复刻 generator.py 的分配参数</span>
+    cache = KVCache(num_layers=c.num_hidden_layers, max_batch_size=1,  # 复刻 generator.py 的分配参数
                     max_seq_len=4 + gen.max_new_tokens, num_kv_heads=c.num_key_value_heads,
                     head_dim=c.head_dim, dtype=llm.dtype, device=llm.device)
-    print(f"④ generator·KV 预分配 k.shape={tuple(cache.k.shape)} 生成 {out['generated_ids'].shape[1]} tokens finish={out['finish_reasons'][0]}")
-    logits = llm.model(**inputs).logits[:, -1, :]  <span class="c"># ⑤ 一次前向 → (1, 6400)</span>
+    print(f"④ generKV 预分配 k.shape={tuple(cache.k.shape)} 生成 {out['generated_ids'].shape[1]} tokens finish={out['finish_reasons'][0]}")
+    logits = llm.model(**inputs).logits[:, -1, :]  # ⑤ 一次前向 → (1, 6400)
     print(f"⑤ forward logits.shape={tuple(logits.shape)}（hidden=768 × 8 层 → 每步只留最后一位）")
-    t0 = softmax(logits[0], -1).topk(5)  <span class="c"># ⑥ 链前</span>
-    s = apply_top_p(apply_top_k(apply_temperature(logits, gen.temperature), gen.top_k), gen.top_p)  <span class="c"># 顺序契约</span>
+    t0 = softmax(logits[0], -1).topk(5)  # ⑥ 链前
+    s = apply_top_p(apply_top_k(apply_temperature(logits, gen.temperature), gen.top_k), gen.top_p)  # 顺序契约
     fmt = lambda t: [f"{i}:{v:.3f}" for i, v in zip(t.indices.tolist(), t.values.tolist())]
     print(f"⑥ sample 链前 top5 {fmt(t0)}\n          链后 top5 {fmt(softmax(s[0], -1).topk(5))}（temperature→top_k→top_p 后重归一化）")
-    text = llm.tokenizer.decode(out["sequences"][0, 4:].tolist(), skip_special_tokens=True)  <span class="c"># ⑦ 只解码生成段</span>
+    text = llm.tokenizer.decode(out["sequences"][0, 4:].tolist(), skip_special_tokens=True)  # ⑦ 只解码生成段
     print(f"⑦ decode sequences[0, 4:] → {text!r} → split_reasoning={split_reasoning(text)[0]!r}")</code></pre></div>
       <p>真实运行（<code>Reproduce/minimind_reborn/</code> 下）：</p>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/tour.py</span>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/tour.py</span>
+<span class="dim"># 实验脚本随课程仓库 experiments/ 提供；在 minimind_reborn 仓库根目录运行（本页同）</span>
+<span class="dim"># 输出为作者实测存档（数字随时延/采样/机器态漂移）</span>
 <span class="out">① encode 「你好，世界」→ [1968, 294, 1950] → decode 还原「你好，世界」 vocab=6400</span>
 <span class="out">② render '&lt;|im_start|&gt;user\n你好&lt;|im_end|&gt;\n&lt;|im_start|&gt;assistant\n&lt;think&gt;\n\n&lt;/think&gt;\n\n'</span>
 <span class="out">③ engine device=cuda dtype=torch.bfloat16 参数=63.91M</span>
-<span class="out">④ generator·KV 预分配 k.shape=(8, 1, 10, 4, 96) 生成 6 tokens finish=length</span>
+<span class="out">④ generKV 预分配 k.shape=(8, 1, 10, 4, 96) 生成 6 tokens finish=length</span>
 <span class="out">⑤ forward logits.shape=(1, 6400)（hidden=768 × 8 层 → 每步只留最后一位）</span>
 <span class="out">⑥ sample 链前 top5 ['294:0.080', '357:0.068', '410:0.053', '3013:0.039', '372:0.039']</span>
 <span class="out">          链后 top5 ['294:0.157', '357:0.131', '410:0.099', '3013:0.068', '372:0.068']（temperature→top_k→top_p 后重归一化）</span>
@@ -439,7 +441,7 @@ with torch.inference_mode():
       <div class="exercise">
         <div class="ex-head">🧪 变式 · 把巡游脚本的 temperature 改成 0</div>
         <div class="ex-body">
-          <p>复制 <code>/tmp/tour.py</code> 为 <code>/tmp/tour_greedy.py</code>，把 <code>temperature=0.85</code>
+          <p>复制 <code>experiments/tour.py</code> 为 <code>tour_greedy.py</code>，把 <code>temperature=0.85</code>
             改成 <code>temperature=0</code>，重跑。</p>
           <div class="ex-predict"></div>
           <p>写下预测：⑥行 top5 概率分布会怎么变？⑦行文本会怎么变——每次运行还一样吗？第一个 token 是谁？</p>
@@ -465,8 +467,8 @@ with torch.inference_mode():
         <div class="acc-head">✅ M03 验收</div>
         <div class="acc-body">
           <p><b>本课需要：</b>官方 pretrain_768 权重（<a href="m01_get_started.html#weights">M01 获取</a>）或 M01 冒烟的 tiny 产物回退；CPU 可完成</p>
-          <p>把 <a href="#tour">巡游脚本</a>存为 <code>/tmp/tour.py</code>，在 <code>Reproduce/minimind_reborn/</code> 下执行：</p>
-          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/tour.py</span></code></pre>
+          <p>巡游脚本已随课程仓库提供（<a href="#tour"><code>experiments/tour.py</code></a>），在 <code>Reproduce/minimind_reborn/</code> 下执行：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/tour.py</span></code></pre>
           <ul class="pass-criteria">
             <li>①~⑦ <b>七行证据齐全</b>，无 <code>Traceback</code>；</li>
             <li>④行含 <code>k.shape=(8, 1, 10, 4, 96)</code>（768 权重；结构对得上即可）；</li>
@@ -518,6 +520,6 @@ with torch.inference_mode():
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

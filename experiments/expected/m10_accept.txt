@@ -1,0 +1,9 @@
+OK 往返  3 token  '你好，世界'
+OK 往返  4 token  'Hello, world!'
+OK 往返 11 token  'def add(a, b): return a + b'
+OK 往返  2 token  '龘'
+OK 往返  4 token  '你好🤖'
+OK prefix=[1, 1388, 570, 811, 234] '<|im_start|>assistant\n'
+OK suffix=[2, 234] '<|im_end|>\n'
+OK 两轮渲染扫描出 2 个 assistant 区间
+ALL PASS

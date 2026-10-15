@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m08_exp_params.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m08_exp_params.py</span>
+  <span class="cv-meta">33 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m08_exp_params.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M08 实验 B：use_moe 参数量对比——总参数 vs 每 token 激活参数（真实 768 配置）。&quot;&quot;&quot;
+import torch
+
+torch.manual_seed(0)
+
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.feedforward import FeedForward, MOEFeedForward
+from minimind_reborn.models.model import MiniMindForCausalLM
+
+n = lambda m: sum(p.numel() for p in m.parameters())
+cfg = MiniMindConfig()
+ffn, expert = n(FeedForward(cfg)), n(FeedForward(cfg))     # 同构：一个专家 = 一份 dense FFN
+moe = MOEFeedForward(MiniMindConfig(use_moe=True))
+gate = n(moe.gate)                                          # router：768×4
+d = n(MiniMindForCausalLM(cfg))
+m = n(MiniMindForCausalLM(MiniMindConfig(use_moe=True)))
+print(f&quot;dense FFN 参数（3 矩阵 768×2432）: {ffn:,}&quot;)
+print(f&quot;单个专家参数（同为 3×768×2432）  : {expert:,}&quot;)
+print(f&quot;MoE 每层总参数（gate + 4 专家）  : {n(moe):,}  = gate {gate:,} + 4×{expert:,}&quot;)
+print(f&quot;MoE 每 token 激活（gate + 1 专家）: {gate + expert:,}  → 占总参数 {100*(gate+expert)/n(moe):.1f}%&quot;)
+
+called = []
+for i, e in enumerate(moe.experts):         # forward hook：模块被真调用时记一笔
+    e.register_forward_hook(lambda mod, inp, out, idx=i: called.append(idx))
+moe.eval()
+with torch.no_grad():
+    _ = moe(torch.randn(1, 1, 768))          # 只喂 1 个 token：只应激活 1 个专家
+print(f&quot;单 token 前向实际调用的专家: {sorted(called)}  （其余专家的参数一次都没碰）&quot;)
+
+print(f&quot;全模型 dense: {d:,}（{d/1e6:.2f}M）&quot;)
+print(f&quot;全模型 MoE : {m:,}（{m/1e6:.2f}M）  总参数 {m/d:.2f}×dense&quot;)
+act = d + 8 * gate   # 每层：dense FFN 换成 gate + 1 专家（专家与 dense FFN 同构，净增仅 gate）
+print(f&quot;MoE 每 token 激活参数 ≈ {act:,}（{act/1e6:.2f}M）  ≈ dense 的 {act/d:.3f}×&quot;)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

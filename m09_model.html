@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M09 · 组装 ForCausalLM：参数账本与官方权重互通 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m09">
 
@@ -214,7 +214,7 @@ logits[t] 谁该得高分？ —— 位置 t 的答案是 labels[t+1]（下一�
         M01 测验 1 承诺过"M09 组装模型后用它验证组装没装错"——当场兑现。组装一台 tiny 版
         （词表仍是默认 6400），喂随机 token 看 loss 落在哪：
       </p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m09_tiny_loss.py · 初始 loss 体检</span><span class="lang">python</span></div><pre class="code"><code>import math
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m09_tiny_loss.py.html">experiments/m09_tiny_loss.py</a> · 初始 loss 体检（全文 14 行）</span><span class="lang">python</span></div><pre class="code"><code>import math
 import torch
 from minimind_reborn.models.config import MiniMindConfig
 from minimind_reborn.models.model import MiniMindForCausalLM
@@ -228,7 +228,8 @@ with torch.no_grad():
     out = tiny(x, labels=x)                       # labels=input_ids：预测下一个 token
 print("logits:", tuple(out.logits.shape), "| loss = %.4f" % out.loss.item())
 print("ln(6400) = %.4f" % math.log(6400))</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m09_tiny_loss.py</span>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m09_tiny_loss.py</span>
+<span class="dim"># 实验脚本随课程仓库 experiments/ 提供；在 minimind_reborn 仓库根目录运行（本页同）</span>
 <span class="out">logits: (3, 16, 6400) | loss = 8.8141</span>
 <span class="out">ln(6400) = 8.7641</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b>
@@ -287,7 +288,7 @@ print("ln(6400) = %.4f" % math.log(6400))</code></pre></div>
         得 63,912,192。结构上大头是 FFN：44,826,624（70.1%），注意力只占 22.2%——
         "Transformer 的参数住在 FFN 里"是记住这账本的口诀。手算会错，让模型自己核对：
       </p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m09_ledger.py · 逐键分组参数账本</span><span class="lang">python</span></div><pre class="code"><code>import re
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m09_ledger.py.html">experiments/m09_ledger.py</a> · 逐键分组参数账本（全文 20 行）</span><span class="lang">python</span></div><pre class="code"><code>import re
 from collections import OrderedDict
 from minimind_reborn.models.config import MiniMindConfig
 from minimind_reborn.models.model import MiniMindForCausalLM
@@ -295,7 +296,7 @@ from minimind_reborn.models.model import MiniMindForCausalLM
 model = MiniMindForCausalLM(MiniMindConfig())   # 64M 默认结构：768 宽 × 8 层
 groups: "OrderedDict[str, list]" = OrderedDict()
 for name, p in model.named_parameters():
-    key = name.removeprefix("model.")                 # model.layers.0.… → layers.0.…
+    key = name.removeprefix("model.")                 # embed_tokens.weight / layers.0.… / norm.weight / lm_head.weight
     key = re.sub(r"layers\.\d+", "layers.N", key)     # 8 层逐层归并到同一行
     groups.setdefault(key, [0, 0])
     groups[key][0] += p.numel()                       # 该行总参数
@@ -307,7 +308,7 @@ for k, (n, c) in groups.items():
     print(f"{k:44s}{n:>12,}{tag}")
 print(f"{'合计':44s}{total:>12,}   = {total/1e6:.2f}M")
 print("lm_head.weight 单独计账了吗：", "lm_head.weight" in groups)</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m09_ledger.py</span>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m09_ledger.py</span>
 <span class="out">embed_tokens.weight                            4,915,200</span>
 <span class="out">layers.N.self_attn.q_proj.weight               4,718,592  ← ×8 层</span>
 <span class="out">layers.N.self_attn.k_proj.weight               2,359,296  ← ×8 层</span>
@@ -466,7 +467,7 @@ print('finetune 语义：不炸，带着警告继续')"</span>
         </ul>
       </div>
       <p>责任真空的最小复现（meta → 物化 → 灌参数，三步还原 transformers 的初始化路线）：</p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m09_meta_repro.py · 非持久 buffer 的责任真空</span><span class="lang">python</span></div><pre class="code"><code>import torch
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m09_meta_repro.py.html">experiments/m09_meta_repro.py</a> · 非持久 buffer 的责任真空（全文 17 行）</span><span class="lang">python</span></div><pre class="code"><code>import torch
 from minimind_reborn.models.config import MiniMindConfig
 from minimind_reborn.models.model import MiniMindForCausalLM
 
@@ -474,7 +475,7 @@ torch.manual_seed(0)
 cfg = MiniMindConfig(hidden_size=32, num_hidden_layers=2, num_attention_heads=2,
                      num_key_value_heads=1, vocab_size=64, max_position_embeddings=128)
 good = MiniMindForCausalLM(cfg).eval()              # 正常初始化的孪生模型
-with torch.device("meta"):                          # transformers>=5 建模型的姿势：只登记形状
+with torch.device("meta"):                          # transformers>=5 建模型的姿势：只登记形状不占内存
     m = MiniMindForCausalLM(cfg)
 m = m.to_empty(device="cpu")                        # 物化：分配内存但不填值
 m.load_state_dict(good.state_dict())                # 参数与持久 buffer 复活；非持久 buffer 无人负责
@@ -483,10 +484,11 @@ with torch.no_grad():
     diff = (m(x).logits - good(x).logits).abs().max().item()
 print("freqs_cos 与好模型一致?", torch.equal(m.model.freqs_cos, good.model.freqs_cos))
 print("logits 最大偏差:", round(diff, 4))</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m09_meta_repro.py</span>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m09_meta_repro.py</span>
+<span class="dim"># 输出为作者实测存档（数字随时延/采样/机器态漂移）</span>
 <span class="out">freqs_cos 与好模型一致? False</span>
 <span class="out">logits 最大偏差: nan</span>
-<span class="p">$ </span><span class="cmd">uv run python /tmp/m09_meta_repro.py</span>
+<span class="p">$ </span><span class="cmd">uv run python experiments/m09_meta_repro.py</span>
 <span class="out">freqs_cos 与好模型一致? False</span>
 <span class="out">logits 最大偏差: 0.1355</span></code></pre>
       <p>
@@ -684,8 +686,8 @@ for tag, cfg in [('tiny tied  ', MiniMindConfig(**base)),
 <span class="out">...................                                                      [100%]</span>
 <span class="ok">19 passed, 1 warning in 0.09s</span>
 <span class="dim">（warning 来自 test_moe_aux_loss_positive：带梯度张量转 float，M08 见过，无害）</span></code></pre>
-          <p>第二条，官方权重 strict 互通（脚本存为 /tmp/m09_strict_load.py，正文仅 6 行）：</p>
-          <div class="codeblock"><div class="code-head"><span>/tmp/m09_strict_load.py · 官方权重 strict 载入</span><span class="lang">python</span></div><pre class="code"><code>from minimind_reborn.models.config import MiniMindConfig
+          <p>第二条，官方权重 strict 互通（脚本已随课程仓库提供：<code>experiments/m09_strict_load.py</code>，全文 8 行）：</p>
+          <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m09_strict_load.py.html">experiments/m09_strict_load.py</a> · 官方权重 strict 载入（全文 8 行）</span><span class="lang">python</span></div><pre class="code"><code>from minimind_reborn.models.config import MiniMindConfig
 from minimind_reborn.models.model import MiniMindForCausalLM
 from minimind_reborn.models.weights import load_inference_weights
 
@@ -693,7 +695,7 @@ model = MiniMindForCausalLM(MiniMindConfig())            # 自建 64M：全部�
 load_inference_weights(model, "out/official/pretrain_768.pth", strict=True)
 print("官方 pretrain_768.pth strict=True 载入成功：无缺失 key、无多余 key")
 print("参数量：%.2fM" % (sum(p.numel() for p in model.parameters()) / 1e6))</code></pre></div>
-          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m09_strict_load.py</span>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m09_strict_load.py</span>
 <span class="out">官方 pretrain_768.pth strict=True 载入成功：无缺失 key、无多余 key</span>
 <span class="ok">参数量：63.91M</span></code></pre>
           <ul class="pass-criteria">
@@ -756,6 +758,6 @@ print("参数量：%.2fM" % (sum(p.numel() for p in model.parameters()) / 1e6))<
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

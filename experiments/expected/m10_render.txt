@@ -1,0 +1,8 @@
+A 默认 add_generation_prompt=True（推理侧）
+   '<|im_start|>user\n你好<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n' → 18 token
+B add_generation_prompt=False（训练侧）
+   '<|im_start|>user\n你好<|im_end|>\n' → 7 token
+D open_thinking=True（think 留白，M20 再见）
+   '<|im_start|>user\n你好<|im_end|>\n<|im_start|>assistant\n<think>\n' → 14 token
+C 带 history（旧轮次原样铺在前面，结尾仍递话头）
+   '<|im_start|>user\n你好<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n我是 minimind。<|im_end|>\n<|im_start|>user\n你会什么？<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n'

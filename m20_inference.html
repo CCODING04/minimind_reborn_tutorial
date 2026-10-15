@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M20 · 推理栈深潜：采样、停止与引擎 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m20">
 
@@ -176,30 +176,38 @@ def apply_top_p(logits, top_p: float):
       </p>
 
       <p>五个函数的最小数值例子（脚本真跑，输出逐字）：</p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m20_demo.py · 五连数值例子（节选，完整脚本见验收）</span><span class="lang">python</span></div><pre class="code"><code>logits = torch.tensor([[2.0, -2.0, 3.0, 0.0]])
-seen = torch.tensor([[0, 1]])              # 候选 0/1 已出现过
-print(apply_repetition_penalty(logits.clone(), seen, 2.0))
-<span class="c"># tensor([[ 1.0, -4.0, 3.0, 0.0]])：正 2→1（除）、负 -2→-4（乘）、未见的 3/0 不动</span>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m20_demo.py.html">experiments/m20_demo.py</a> · 五连数值例子（16–31/38 行节选；①~⑤ 全段见完整代码）</span><span class="lang">python</span></div><pre class="code"><code>print("== 2 apply_repetition_penalty（正除负乘）==")
+logits = torch.tensor([[2.0, -2.0, 3.0, 0.0]])    # 候选 0/1 已出现过
+seen = torch.tensor([[0, 1]])
+out = apply_repetition_penalty(logits.clone(), seen, penalty=2.0)
+print("penalty=2.0 :", out.tolist())              # 正 2→1（除），负 -2→-4（乘），未见的 3/0 不动
 
-logits = torch.log(torch.tensor([[0.5, 0.3, 0.15, 0.05]]))   <span class="c"># softmax 后恰好这组概率</span>
+print("== 3 apply_top_k ==")
+logits = torch.tensor([[1.0, 2.0, 3.0, 4.0, 5.0]])
+print("k=2 :", apply_top_k(logits.clone(), 2).tolist())     # 只留前 2 大，其余 -inf
+
+print("== 4 apply_top_p（右移累积掩码）==")
+logits = torch.log(torch.tensor([[0.5, 0.3, 0.15, 0.05]]))  # softmax 后恰好 [0.5,0.3,0.15,0.05]
 out = apply_top_p(logits.clone(), 0.9)
-<span class="c"># 保留前 3 个：累积 0.5/0.8/0.95——跨过 0.9 的第 3 个（右移）也留下，保留质量 0.95</span>
-
-print([int(sample_token(torch.tensor([[1.0, 3.0, 2.0]]),
-                  GenerateConfig(temperature=1.0))[0, 0]) for _ in range(20)])
-<span class="c"># T=1 抽 20 次：[1, 1, 1, 1, 1, 1, 0, 2, 1, 1, 1, 2, 1, 1, 1, 2, 2, 1, 1, 1]</span></code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m20_demo.py</span>
+kept = (out != float("-inf")).squeeze(0).tolist()
+kept_mass = torch.softmax(torch.log(torch.tensor([0.5, 0.3, 0.15, 0.05])), -1)[kept].sum().item()
+print(f"p=0.9 保留前 {sum(kept)} 个（累积 0.5/0.8/0.95 跨过 0.9 的第 3 个也留下），保留质量={kept_mass:.2f}")
+# ……（余 22 行：① apply_temperature 与 ⑤ sample_token 两段及 import 头——完整代码见标题链接）</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m20_demo.py</span>
+<span class="dim"># 实验脚本随课程仓库 experiments/ 提供；在 minimind_reborn 仓库根目录运行（本页同）</span>
+<span class="dim"># ①③⑤ 段输出；②④ 段在正文代码块；全量输出为作者实测存档</span>
 <span class="out">== 1 apply_temperature ==</span>
-<span class="out">T=0.5 : [[2.0, 4.0, 8.0]]      ← [1,2,4]/0.5：间距放大，分布更尖</span>
-<span class="out">T=2.0 : [[0.5, 1.0, 2.0]]      ← /2：压平，分布更平</span>
-<span class="out">T=0   : [[1.0, 2.0, 4.0]]      ← ≤0 原样返回（贪心交给 sample_token）</span>
+<span class="out">T=0.5 : [[2.0, 4.0, 8.0]]</span>
+<span class="out">T=2.0 : [[0.5, 1.0, 2.0]]</span>
+<span class="out">T=0   : [[1.0, 2.0, 4.0]]</span>
 <span class="out">== 3 apply_top_k ==</span>
-<span class="out">k=2 : [[-inf, -inf, -inf, 4.0, 5.0]]   ← 只留前 2 大</span>
-<span class="out">== 5 sample_token ==</span>
+<span class="out">k=2 : [[-inf, -inf, -inf, 4.0, 5.0]]</span>
+<span class="out">== 5 sample_token（贪心 vs 抽签）==</span>
 <span class="out">T=0 贪心 : [1] （必选第一名 id=1）</span>
-<span class="out">T=1 抽 20 次: [1, 1, 1, 1, 1, 1, 0, 2, 1, 1, 1, 2, 1, 1, 1, 2, 2, 1, 1, 1]</span></code></pre>
+<span class="out">T=1 抽 20 次: [1, 1, 1, 1, 1, 1, 0, 2, 1, 1, 1, 2, 1, 1, 1, 2, 2, 1, 1, 1] （按概率出现，绝大多数是 1，偶尔 2）</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-30 · 纯 CPU 路径 · torch 2.14.0+cu130]</b>
-      上为完整脚本输出的关键段（第②④段在正文代码块里逐字给出）；抽签一行带随机性，
+      上为脚本全量输出的 ①③⑤ 段（②④ 段代码在上方代码块，其输出即行内注释的数字：
+      penalty 2→1 / −2→−4、top_p 保留 3 个、质量 0.95——现跑与存档逐字一致）；抽签一行带随机性，
       重跑数字不同但"绝大多数是 1"不变。</p>
       <div class="callout tip">
         <div class="co-title">💡 为什么非要纯函数</div>
@@ -231,31 +239,53 @@ logits = apply_temperature(logits, gen.temperature)   <span class="c"># 又除�
         每个函数单独看都正确；串起来，进 softmax 前的 logits 被除了两遍 T——等效温度是
         <b>T²</b>。真跑插桩复现（把 apply_temperature 换成计数包装）：
       </p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m20_double_t.py · 双重温度插桩（核心 8 行）</span><span class="lang">python</span></div><pre class="code"><code>import minimind_reborn.inference.generator as gen_mod
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m20_double_t.py.html">experiments/m20_double_t.py</a> · 双重温度插桩（1–30/52 行节选；直调对照/影响面量化/贪心免疫三段见完整代码）</span><span class="lang">python</span></div><pre class="code"><code># M20 双重温度插桩：钩住 apply_temperature 计数，复现"generate 路径上温度被应用两次"
+import torch
+
+import minimind_reborn.inference.generator as gen_mod
 import minimind_reborn.inference.sampling as samp_mod
-CALLS = {"n": 0}; _orig = samp_mod.apply_temperature
+from minimind_reborn.configuration.schemas import GenerateConfig
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+
+CALLS = {"n": 0}
+_orig = samp_mod.apply_temperature
+
 def counting(logits, temperature):
     CALLS["n"] += 1
     return _orig(logits, temperature)
-gen_mod.apply_temperature = counting    <span class="c"># 钩住 generator.py:81 的外层调用（修复前存在）</span>
-samp_mod.apply_temperature = counting    <span class="c"># 钩住 sampling.py:64 里 sample_token 的内层调用</span>
-...
-out = gen_mod.generate(model, prompt, GenerateConfig(temperature=0.85, max_new_tokens=2),
-                       eos_token_id=None, pad_token_id=0, generator=g)
-print(f"generate 2 步 · apply_temperature 调用次数 = {CALLS['n']}")</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m20_double_t.py</span>   <span class="c"># 修复前（2026-09-30 实测）</span>
+
+# 两处引用各打一个钩：generator.py:81 的外层调用 + sampling.py:64 里 sample_token 的内层调用
+gen_mod.apply_temperature = counting
+samp_mod.apply_temperature = counting
+
+torch.manual_seed(0)
+cfg = MiniMindConfig(hidden_size=32, num_hidden_layers=2, num_attention_heads=2,
+                     num_key_value_heads=1, vocab_size=64, max_position_embeddings=128, dropout=0.0)
+model = MiniMindForCausalLM(cfg).eval()
+prompt = torch.randint(0, 64, (1, 6))
+
+gen = GenerateConfig(temperature=0.85, max_new_tokens=2)   # 与 M03 巡游同款旋钮读数
+g = torch.Generator().manual_seed(123)
+out = gen_mod.generate(model, prompt, gen, eos_token_id=None, pad_token_id=0, generator=g)
+print(f"generate max_new_tokens=2 · apply_temperature 调用次数 = {CALLS['n']}（2 步 × 每步 2 次）")
+# ……（余 22 行：sample_token 直调对照 · T² 影响面量化（top1 概率/熵）· 贪心免疫验证——完整代码见标题链接）</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m20_double_t.py</span>   <span class="c"># 修复前（2026-09-30 实测）</span>
+<span class="dim"># 输出为作者实测存档（修复前 HEAD：仓库合入 714f9c5 修复后，同脚本首行现跑计数=2，其余各行现跑逐字一致）</span>
 <span class="out">generate max_new_tokens=2 · apply_temperature 调用次数 = 4（2 步 × 每步 2 次）</span>
 <span class="out">sample_token 直调 1 次    · apply_temperature 调用次数 = 1（单测路径只有一次——缝隙只在串联处）</span>
 <span class="out">T=0.85 → 有效温度 T²=0.7225</span>
 <span class="out">一次缩放：top1(id=35) 概率=0.137  熵=3.519</span>
 <span class="out">两次缩放：top1(id=35) 概率=0.176  熵=3.308</span>
 <span class="out">贪心路径（T=0）两次缩放都不发生，输出确定：[41, 41]</span>
-<span class="p">$ </span><span class="cmd">uv run python /tmp/m20_double_t2.py</span>  <span class="c"># 修复后（2026-10-06 实测，钩子只挂 sampling——generator 已无外层调用可钩）</span>
-<span class="ok">generate 2 步 · apply_temperature 调用次数 = 2（每步恰好一次）</span></code></pre>
+<span class="p">$ </span><span class="cmd">uv run python experiments/m20_double_t2.py</span>  <span class="c"># 修复后（2026-10-06 实测，钩子只挂 sampling——generator 已无外层调用可钩）</span>
+<span class="ok">generate 2 步 · apply_temperature 调用次数 = 2</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-30 修复前 / 2026-10-06 修复后 · 纯 CPU 路径 · torch 2.14.0+cu130 · tiny 模型 seed=0/7]</b>
+      修复前 6 行为作者存档读数（合入修复后同脚本第一行现跑为 2——想复现 =4 的历史读数见本页验收的 checkout 方法）。
       熵（entropy，分布的不确定度：越平越大、均匀分布最大 ln V）由 −Σp·log p 算出。
       修复前旋钮读数 0.85、实际分布按 0.7225 定型——top1 概率 0.137→0.176，比你要求的<b>更贪</b>；
-      修复后的实际分布即"一次缩放"行（0.137 / 3.519）——旋钮读数与分布重新对表。</p>
+      修复后的实际分布即"一次缩放"行（0.137 / 3.519）——旋钮读数与分布重新对表。修复版插桩全文 24 行已收录：
+      <a href="codeview/experiments/m20_double_t2.py.html"><code>experiments/m20_double_t2.py</code></a>。</p>
       <p><b>影响面（修复前谁踩到、谁踩不到）：</b></p>
       <div class="table-scroll">
         <table>
@@ -487,15 +517,18 @@ if eos_token_id is not None:
       chat.py 自创建期（0d0a421）之后只有一个文档/风格 commit 动过它，73 行原样未修——
       <b>本课写作时 bug 仍在</b>，症状与 M02 逐字一致；8 天后修复周期落地（8ab893d）。</p>
       <p>
-        修复落地前的验证以<b>补丁形态</b>做过（在 /tmp 给 ChatSession.respond 打上 M02 的一行修复，
+        修复落地前的验证以<b>补丁形态</b>做过（给 ChatSession.respond 打上 M02 一行修复的运行时补丁，
+        补丁脚本已收录 <a href="codeview/experiments/m20_chat_fix.py.html"><code>experiments/m20_chat_fix.py</code></a>，
         其余代码原封不动，接<b>真实引擎</b>而非桩）：
       </p>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m20_chat_fix.py</span>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m20_chat_fix.py</span>
+<span class="dim"># ① 为修复前存档读数（仓库合入 8ab893d 后现跑不再复现，输出直接从 ② 起）；②③ 现跑逐字一致</span>
 <span class="out">① 直连复现: MiniMindLLM.generate_tokens() takes 3 positional arguments but 4 were given</span>
 <span class="ok">② 修复后 respond: 你好！有什么我可以帮助你的吗？</span>
 <span class="out">   history roles: ['user', 'assistant']</span>
 <span class="out">③ generate_tokens 必填位置参数: ['gen'] ——其余全部 keyword-only（星号之后）</span></code></pre>
-      <p class="prov"><b>[作者实测 · 2026-09-30 · RTX 4090 · torch 2.14.0+cu130 · full_sft_768.pth · 补丁只在 /tmp，仓库未动]</b>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · RTX 4090 · torch 2.14.0+cu130 · full_sft_768.pth]</b>
+      补丁存档于 <a href="codeview/experiments/m20_chat_fix.py.html"><code>experiments/m20_chat_fix.py</code></a>，reborn 仓库未动。
       ①为直连真实引擎的复现；②③在给 respond 打上 chat.py:73 一行修复后的同一进程内取得。</p>
       <p>
         ②证明一行修复（chat.py:73 改为 <code>self.generate_fn(inputs["input_ids"], self.gen,
@@ -579,19 +612,30 @@ if eos_token_id is not None:
             统计字符级重复 5-gram 率（5-gram：连续 5 个字符的片段；重复率 = 出现多于一次的片段占比）。
             注意 <code>build("full_sft")</code> 依赖 full_sft 权重——按 <a href="m01_get_started.html#weights">M01 权重获取</a> 下载的官方权重（需把 build 改传 <code>out_root="out/official"</code>）或 M16 自己训出的 <code>out/full_sft_768.pth</code> 均可；两手皆空时见验收排查的 tiny 回退：
           </p>
-          <div class="codeblock"><div class="code-head"><span>/tmp/m20_rep_variant.py · 核心循环</span><span class="lang">python</span></div><pre class="code"><code>llm = MiniMindLLM.build("full_sft")
+          <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m20_rep_variant.py.html">experiments/m20_rep_variant.py</a> · 变式实验脚本（全文 17 行）</span><span class="lang">python</span></div><pre class="code"><code># M20 变式：repetition_penalty 对贪心复读的影响（full_sft_768.pth，temperature=0 排除采样随机性）
+from collections import Counter
+from minimind_reborn.configuration.schemas import GenerateConfig
+from minimind_reborn.inference.engine import MiniMindLLM
+
+def dup_rate(text: str, n: int = 5) -&gt; float:
+    grams = [text[i:i + n] for i in range(len(text) - n + 1)]
+    return sum(c for g, c in Counter(grams).items() if c &gt; 1) / len(grams)
+
+llm = MiniMindLLM.build("full_sft")
 msgs = [{"role": "user", "content": "介绍一下大语言模型"}]
 for rp in (1.0, 1.5):
     gen = GenerateConfig(temperature=0.0, repetition_penalty=rp, max_new_tokens=128)
     r = llm.generate_text(msgs, gen)
-    print(f"rp={rp}: 重复 5-gram 率={dup_rate(r['content']):.1%}",
-          f"「大语言模型」出现 {r['content'].count('大语言模型')} 次")</code></pre></div>
+    c = r["content"]
+    print(f"rp={rp}: 重复 5-gram 率={dup_rate(c):.1%} 「大语言模型」出现 {c.count('大语言模型')} 次 tokens={r['generated_tokens']}")
+    print("  ", c[:80], "…")</code></pre></div>
           <div class="ex-predict"></div>
           <p>写下预测：rp=1.5 时重复率会怎么变？「大语言模型」这个词的出现次数呢——会一起降吗，还是恰恰相反？内容质量会有代价吗？</p>
           <details>
             <summary>观察结果与解释（先动手再看）</summary>
             <p>作者实测（同环境、同权重）：</p>
-            <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m20_rep_variant.py</span>
+            <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m20_rep_variant.py</span>
+<span class="dim"># 输出为作者实测存档（贪心解码在共享 GPU 上随机器态漂移，见上文坑卡；生成回显两行只截前 80 字）</span>
 <span class="out">rp=1.0: 重复 5-gram 率=8.1% 「大语言模型」出现 5 次 tokens=128</span>
 <span class="out">  大语言模型（LLM）是一种基于深度学习的自然语言处理模型，它能够理解、生成和生成人类语言。大语言模型主要由Transformer架构组成，它能够处理文本数据，包 …</span>
 <span class="out">rp=1.5: 重复 5-gram 率=2.3% 「大语言模型」出现 3 次 tokens=128</span>
@@ -657,9 +701,9 @@ for rp in (1.0, 1.5):
           <b>温度恰好一次</b>（新）、停止三重与 cancel、seed 复现；上下文硬校验 ×4（含输入+生成上限合计新条）、
           滑窗 ×4、<b>真实引擎接线</b>（新）。（课程写作时为 14 passed——修复周期补了 3 条回归。）</p>
           <p>双重温度插桩验证（修复后脚本只钩 sampling 一处——generator 已无外层调用可钩）：</p>
-          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m20_double_t2.py</span>
-<span class="ok">generate 2 步 · apply_temperature 调用次数 = 2（每步恰好一次）</span>
-<span class="p">$ </span><span class="cmd">git checkout 714f9c5^ -- src/minimind_reborn/inference/generator.py &amp;&amp; uv run python /tmp/m20_double_t.py</span>   <span class="c"># 想看历史版：退回修复前再跑（跑完记得 checkout HEAD -- 恢复）</span>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m20_double_t2.py</span>
+<span class="ok">generate 2 步 · apply_temperature 调用次数 = 2</span>
+<span class="p">$ </span><span class="cmd">git checkout 714f9c5^ -- src/minimind_reborn/inference/generator.py &amp;&amp; uv run python experiments/m20_double_t.py</span>   <span class="c"># 想看历史版：退回修复前再跑（跑完记得 checkout HEAD -- 恢复）</span>
 <span class="out">generate max_new_tokens=2 · apply_temperature 调用次数 = 4（2 步 × 每步 2 次）</span></code></pre>
           <ul class="pass-criteria">
             <li><code>16 passed</code>，无 failed / error；</li>
@@ -735,6 +779,6 @@ for rp in (1.0, 1.5):
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

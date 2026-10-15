@@ -2,8 +2,8 @@
 
 以工程化重构的 [minimind_reborn](https://github.com/CCODING04/minimind-reborn)（64M 中文小模型：pretrain → SFT → DPO → 蒸馏/LoRA → RL → 推理服务）为唯一实现目标的 LLM 全栈实训课——**跟读真实工程代码、跑通训练全链路、用 93 个单元测试做绿灯验收**。
 
-- **23 个模块 / 7 篇**（Week-0 准备 → 开箱 → 模型 → 数据 → 训练 → 推理评测 → 毕业），三座里程碑（🏁A 官方权重 strict 互通 / 🏁B 训出自己的基座 / 🏁C 八范式冒烟+毕业实验）+ **2 个附录**（B 轨·自写挑战总纲，终点 🏁D / PyTorch 特殊用法指南）
-- **102 个站内代码查看页**：正文提到的每个源文件都能点开在线阅读（行号、语法高亮、逐行锚点、一键复制）
+- **23 个模块 / 7 篇**（Week-0 准备 → 开箱 → 模型 → 数据 → 训练 → 推理评测 → 毕业），三座里程碑（🏁A 官方权重 strict 互通 / 🏁B 训出自己的基座 / 🏁C 八范式冒烟+毕业实验）+ **5 个附录**（B 轨·自写挑战总纲，终点 🏁D / PyTorch 特殊用法指南 / 工程工具速查 / 术语解释 / 制作复盘·方法论）
+- **103 个站内代码查看页**：正文提到的每个源文件都能点开在线阅读（行号、语法高亮、逐行锚点、一键复制）
 - **零基础友好**：术语首现必有解释或桥接；每课折叠测验 + 先预测再观察的变式练习 + 可判定的验收块
 - **完全离线自足**：公式渲染（MathJax）、样式、脚本全部本地化，无外部资源依赖
 
@@ -25,10 +25,15 @@ python3 -m http.server 6006
 ├── m01..m22 *.html       22 个主线模块页（GitHub light 风格，PC/平板/手机自适应）
 ├── btrack.html           附录 · B 轨自写挑战总纲（🏁D 自己的模型说话）
 ├── pytorch_guide.html    附录 · PyTorch 特殊用法指南
+├── eng_glossary.html     附录 · 工程工具速查（CI · lint · mypy）
+├── glossary.html         附录 · 术语解释（LLM 概念词，词条持续增补）
+├── retrospective.html    附录 · 制作复盘·方法论（可复用）
 ├── assets/               设计系统 + 课程引擎（CSS/JS）+ 本地 MathJax + favicon
-├── codeview/             102 个源码查看页（镜像仓库目录结构，#L42 逐行锚点）
+├── codeview/             站内源码查看页（镜像仓库目录结构 + experiments/，#L42 逐行锚点）
+├── experiments/          课程实验脚本归档（页面引用的 /tmp 脚本收编于此 + expected/ 复跑存档）
 ├── ANALYSIS.md           参照教程（Part7_minimind）的优劣分析与继承决定
 ├── DESIGN.md             课程设计：模块结构 / 教学约定 / 写作 SOP / QA 契约
+├── RETROSPECTIVE.md      制作复盘：问题 → 解决方案 → 可复用 SOP（retrospective.html 的 Markdown 源）
 └── tools/                构建与检查管线（见下）
 ```
 
@@ -36,13 +41,23 @@ python3 -m http.server 6006
 
 | 工具 | 作用 |
 |---|---|
-| `tools/build_codeview.py` | 扫描课程页引用的源文件 → 生成 `codeview/` 查看页，并把仓库链接改写为站内链接 |
-| `tools/check_course.py` | QA：断链 / 锚点 / nav 一致性 / 正文路径存在性 / 结构必备 / 禁内联样式 |
+| `tools/build_codeview.py` | 扫描课程页引用的源文件 → 生成 `codeview/` 查看页（含课程仓库 `experiments/`），并把仓库链接改写为站内链接 |
+| `tools/check_course.py` | QA：断链 / 锚点 / nav 一致性 / 正文路径存在性 / 结构必备 / 禁内联样式 / 禁 `/tmp` 脚本引用 |
 | `tools/panelize.py` | 把页面正文区块幂等包进 `<section class="panel">`（新页/新章节接入时用） |
-| `tools/build_package.py` | 生成 `packaged_website/` 单页自包含部署包（CSS/JS 内联 + 源码快照，`file://` 可开） |
-| `tools/interact_check.mjs` | 54 项交互/链接/五档视口自动检查（26 页全覆盖，playwright + 本机 chrome） |
+| `tools/build_package.py` | 生成 `packaged_website/` 单页自包含部署包（CSS/JS 内联 + 源码快照 + experiments/，`file://` 可开） |
+| `tools/verify_experiments.py` | 在 reborn uv 环境复跑 `experiments/` 脚本，与 `expected/` 存档逐行比对（结果审查） |
+| `tools/interact_check.mjs` | 54 项交互/链接/五档视口自动检查（29 页全覆盖，playwright + 本机 chrome） |
 
 改动 CSS/JS 后：全量递增页面资源版本号 `?v=N` → 依次重跑上述脚本。
+
+## 实验脚本约定（experiments/）
+
+- 课程页面引用的实验脚本一律收编 `experiments/<原名>`（不再散落 `/tmp`），在 minimind_reborn
+  仓库根目录 `uv run python experiments/x.py` 运行；页面代码块 = 归档脚本逐字切片，终端输出 = 真实运行结果。
+- 超长脚本（>40 行）页面只展示主段切片，末尾以 `# ……（余 N 行：…——完整代码见标题链接）` 标注，
+  code-head 链接 `codeview/experiments/x.py.html` 查看全文。
+- 输出逐字可复现的脚本带 `expected/` 存档并纳入 `verify_experiments.py` 自动比对；
+  时延/采样类数字漂移的脚本以页面"作者实测"存档为准（MANUAL 清单注明原因）。
 
 ## 内容与致谢
 

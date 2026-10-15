@@ -1,0 +1,2 @@
+官方 pretrain_768.pth strict=True 载入成功：无缺失 key、无多余 key
+参数量：63.91M

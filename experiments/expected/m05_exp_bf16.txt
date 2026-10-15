@@ -1,0 +1,3 @@
+cuda · bf16 直算: max_abs=0.0452 rel=0.321%
+cuda · fp32 纪律: max_abs=0.0298 rel=0.235%
+scale 因子误差: bf16 0.4880%  fp32 0.0405%

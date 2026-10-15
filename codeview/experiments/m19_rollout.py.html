@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m19_rollout.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m19_rollout.py</span>
+  <span class="cv-meta">25 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m19_rollout.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M19 观测：对一个随机 tiny 模型做一次 GRPO 式组采样（1 prompt × 4 completions）。&quot;&quot;&quot;
+import torch
+from transformers import AutoTokenizer
+
+from minimind_reborn.inference.chat import render_chat
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+from minimind_reborn.training.rollout import TorchRolloutEngine
+
+torch.manual_seed(7)
+tok = AutoTokenizer.from_pretrained(&quot;assets/tokenizer&quot;)
+cfg = MiniMindConfig(hidden_size=64, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2)
+model = MiniMindForCausalLM(cfg).eval()  # 随机权重：只看结构，不看点数
+engine = TorchRolloutEngine(model, tok, device=&quot;cpu&quot;)
+
+prompt = render_chat(tok, [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;1+1等于几？&quot;}])
+enc = tok([prompt], return_tensors=&quot;pt&quot;, padding=True, padding_side=&quot;left&quot;, add_special_tokens=False)
+result = engine.rollout(enc[&quot;input_ids&quot;], enc[&quot;attention_mask&quot;], num_generations=4, max_new_tokens=16, temperature=0.8)
+
+print(&quot;prompt 长度:&quot;, result.prompt_lens.tolist(), &quot;  completion_ids 形状:&quot;, tuple(result.completion_ids.shape))
+print(&quot;per_token_logps 形状:&quot;, tuple(result.per_token_logps.shape), &quot;（采样时策略对每个生成 token 的 logp）&quot;)
+for i, c in enumerate(result.completions):
+    n = int(result.completion_mask[i].sum())
+    lp = result.per_token_logps[i, : n - 1].mean()
+    print(f&quot;[{i}] {c!r}  有效长度={n}  平均logp={lp:.3f}&quot;)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

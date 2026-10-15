@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M06 · KV Cache：预分配设计 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m06">
 
@@ -75,9 +75,13 @@
         同样贪心解码（temperature=0，排除采样随机性），生成 50 个 token，只换一件事：
         <b>无缓存</b>——每步把整个前缀（prompt + 已生成部分）重新喂进模型全量前向，这是最朴素的写法；
         <b>有缓存</b>——reborn 的 <code>generate()</code>，预分配 KV cache 后每步只喂 1 个新 token。
-        核心脚本（完整版把 NEW 换成 200/500 再跑两轮）：
+        实验脚本（表格里的 200/500 两轮是改 NEW 后重跑）：
       </p>
-      <div class="codeblock"><div class="code-head"><span>对照实验脚本 · 在 Reproduce/minimind_reborn 下 uv run 执行</span><span class="lang">python</span></div><pre class="code"><code>import statistics, time, torch
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m06_bench_kv.py.html">experiments/m06_bench_kv.py</a> · 无缓存 vs KV cache 对照实验（全文 45 行）</span><span class="lang">python</span></div><pre class="code"><code>"""M06 对照实验：无缓存全量重算 vs reborn generate()（KV cache）——耗时/前向 token 数/逐位一致。
+
+页面展示为 NEW=50 版本；表格里的 200/500 两轮是改 NEW 后重跑。
+"""
+import statistics, time, torch
 from minimind_reborn.configuration.schemas import GenerateConfig
 from minimind_reborn.inference.generator import generate
 from minimind_reborn.models.config import MiniMindConfig
@@ -118,7 +122,7 @@ seq_a, tok_a = no_cache(); seq_b, tok_b = with_cache()
 assert (seq_a == seq_b).all()                     # 两条路径必须逐位一致（见"最硬的一条测试"）
 print(statistics.median(bench(no_cache) for _ in range(5)),
       statistics.median(bench(with_cache) for _ in range(5)))</code></pre></div>
-      <p>三个生成长度的实测（其余设置不变，各取 5 次中位数）：</p>
+      <p>三个生成长度的实测（其余设置不变，各取 5 次中位数）——时延为作者实测存档（机器态漂移；两路径逐位一致断言现跑仍通过）：</p>
       <div class="table-scroll">
         <table>
           <thead><tr><th class="u-w130">生成 token 数</th><th>无缓存耗时</th><th>有缓存耗时</th><th>墙钟加速</th><th>前向 token 数（无 → 有）</th><th>计算量比</th></tr></thead>
@@ -129,7 +133,7 @@ print(statistics.median(bench(no_cache) for _ in range(5)),
           </tbody>
         </table>
       </div>
-      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> prompt=64 · 贪心 · fp32 · 预热后各 5 次取中位；三个长度下两条路径输出均<b>逐位一致</b>。"前向 token 数"= 各次 forward 实际吃进去的 token 总数：无缓存生成 50 个时为 64+65+…+113 = (64+113)×50÷2 = 4425；有缓存 = 64（一次 prefill）+ 50×1 = 114。</p>
+      <p class="prov"><b>[作者实测 · 2026-09-30 · 2×RTX 4090 · torch 2.14.0+cu130]</b> prompt=64 · 贪心 · fp32 · 预热后各 5 次取中位；三个长度下两条路径输出均<b>逐位一致</b>。"前向 token 数"= 各次 forward 实际吃进去的 token 总数：无缓存生成 50 个时为 64+65+…+113 = (64+113)×50÷2 = 4425；有缓存 = 64（一次 prefill）+ 50×1 = 114。实验脚本全文已随课程仓库收录：<a href="codeview/experiments/m06_bench_kv.py.html"><code>experiments/m06_bench_kv.py</code></a>。</p>
       <p>四个观察，比"快"本身更值钱：</p>
       <ol>
         <li><b>无缓存的总计算量是平方级的</b>：生成到第 t 步时前缀已有 P+t−1 个 token，全量前向就要算这么多——生成 N 个共 (P + P+N−1)×N÷2。所以 50→200→500 token，前向 token 数从 4425 涨到 156750（35 倍），远超生成长度本身的 10 倍。</li>
@@ -375,7 +379,10 @@ print(f"真实分配核对：k{tuple(cache.k.shape)} + v 同形 = {real/1024/102
           <li class="sym">
             现象隐秘到险恶：输出<b>完全正确</b>，只是生成莫名地慢、且越生成越慢。把 <code>advance</code> 打成空操作
             （模拟手写循环里忘推游标），tiny 模型上真跑 24 步：
-            <pre class="term"><code><span class="out">正常：24 次前向，喂入 token 序列 = [9, 1, 1, …, 1]（总量 32）</span>
+            <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m06_advance_pit.py</span>
+<span class="dim"># 实验脚本随课程仓库 experiments/ 提供；在 minimind_reborn 仓库根目录运行（本页同）</span>
+<span class="dim"># 复现脚本已收录（重建版）：KVCache.advance 打成空操作，forward hook 数喂入 token</span>
+<span class="out">正常：24 次前向，喂入 token 序列 = [9, 1, 1, …, 1]（总量 32）</span>
 <span class="out">忘了 advance：24 次前向，喂入 token 序列 = [9, 10, 11, …, 32]（总量 492）</span>
 <span class="out">输出仍然逐位一致 = True</span></code></pre>
           </li>
@@ -593,6 +600,6 @@ for cap in (2048, 4096):
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

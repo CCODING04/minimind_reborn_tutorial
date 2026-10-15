@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m05_exp_rope.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m05_exp_rope.py</span>
+  <span class="cv-meta">17 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m05_exp_rope.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">import torch
+from minimind_reborn.models.layers import precompute_freqs_cis, apply_rotary_pos_emb
+
+torch.manual_seed(0)
+dim, end = 8, 64
+cos, sin = precompute_freqs_cis(dim, end=end)            # cos/sin: (end, dim)
+q, k = torch.randn(1, 1, 1, dim), torch.randn(1, 1, 1, dim)  # (b, seq, heads, head_dim)
+
+def qk_at(m, n):
+    &quot;&quot;&quot;q 放在位置 m、k 放在位置 n，返回旋转后的内积&quot;&quot;&quot;
+    qr, _ = apply_rotary_pos_emb(q, k, cos[m:m+1], sin[m:m+1])  # 只转 q 那一格
+    _, kn = apply_rotary_pos_emb(k, k, cos[n:n+1], sin[n:n+1])  # 只转 k 那一格
+    return (qr * kn).sum().item()
+
+print(&quot;q·k（不旋转）= %.6f&quot; % (q * k).sum().item())
+for m, n in [(2, 6), (30, 34), (57, 61)]:
+    print(f&quot;q@{m:2d} k@{n:2d}（距离 {n-m}）: {qk_at(m, n):.6f}&quot;)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m07_fill.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m07_fill.py</span>
+  <span class="cv-meta">18 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m07_fill.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M07 填空自测：把三处空填上后，手动路径③应与 SDPA is_causal（路径①）逐元素一致。&quot;&quot;&quot;
+import math
+
+import torch
+import torch.nn.functional as F
+
+torch.manual_seed(0)
+B, H, T, D = 1, 2, 5, 4                            # batch、头数、序列长、head_dim
+q, k, v = (torch.randn(B, H, T, D) for _ in range(3))   # (B, H, T, D)
+
+ref = F.scaled_dot_product_attention(q, k, v, is_causal=True)   # 路径① 参照答案
+
+scores = (q @ k.transpose(-2, -1)).float() / ____               # 空① 缩放
+scores += torch.full((T, T), float(&quot;-inf&quot;)).____                # 空② 因果 mask
+out = F.softmax(scores, dim=____).type_as(q) @ v                # 空③ softmax 维度
+
+print(&quot;allclose(atol=1e-6):&quot;, torch.allclose(out, ref, atol=1e-6),
+      &quot; max|Δ| =&quot;, (out - ref).abs().max().item())</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

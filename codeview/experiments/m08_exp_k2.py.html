@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m08_exp_k2.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m08_exp_k2.py</span>
+  <span class="cv-meta">36 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m08_exp_k2.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M08 实验 C：num_experts_per_tok=2 时的路由与激活（变式练习答案素材）。&quot;&quot;&quot;
+import torch
+import torch.nn.functional as F
+
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.feedforward import MOEFeedForward
+
+torch.manual_seed(0)
+cfg = MiniMindConfig(use_moe=True, num_experts_per_tok=2)
+moe = MOEFeedForward(cfg).train()
+print(f&quot;k=2: 每个 token 选 2 个专家，norm_topk_prob 重归一化&quot;)
+
+x = torch.randn(2, 16, 768)
+x_flat = x.view(-1, 768)
+scores = F.softmax(moe.gate(x_flat), dim=-1)
+topk_w, topk_idx = torch.topk(scores, k=2, dim=-1, sorted=False)
+w_norm = topk_w / (topk_w.sum(-1, keepdim=True) + 1e-20)     # 源码同款重归一化
+print(&quot;token0 路由分数:&quot;, [round(v, 3) for v in scores[0].tolist()])
+print(&quot;token0 选中:&quot;, topk_idx[0].tolist(), &quot; 原始权重:&quot;, [round(v, 3) for v in topk_w[0].tolist()],
+      &quot; 重归一化:&quot;, [round(v, 3) for v in w_norm[0].tolist()], &quot; 和=&quot;, round(w_norm[0].sum().item(), 6))
+load = F.one_hot(topk_idx, 4).float().mean((0, 1)).flatten()   # 每 token 投 2 票，共 64 票
+print(&quot;load（每专家得票占比）:&quot;, [round(v, 3) for v in load.tolist()],
+      &quot; 和=&quot;, round(load.sum().item(), 3), &quot;（每个 token 投 2 票）&quot;)
+
+called = []
+for i, e in enumerate(moe.experts):
+    e.register_forward_hook(lambda mod, inp, out, idx=i: called.append(idx))
+moe.eval()
+with torch.no_grad():
+    _ = moe(torch.randn(1, 1, 768))
+print(f&quot;单 token 前向实际调用的专家: {sorted(called)}&quot;)
+gate_n = sum(p.numel() for p in moe.gate.parameters())
+expert_n = sum(p.numel() for p in moe.experts[0].parameters())
+total = sum(p.numel() for p in moe.parameters())
+print(f&quot;每 token 激活: gate+2专家 = {gate_n + 2*expert_n:,}（k=1 时 {gate_n + expert_n:,}）&quot;
+      f&quot; 占每层总参数 {100*(gate_n+2*expert_n)/total:.1f}%&quot;)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

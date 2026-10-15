@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m20_rep_variant.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m20_rep_variant.py</span>
+  <span class="cv-meta">17 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m20_rep_variant.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1"># M20 变式：repetition_penalty 对贪心复读的影响（full_sft_768.pth，temperature=0 排除采样随机性）
+from collections import Counter
+from minimind_reborn.configuration.schemas import GenerateConfig
+from minimind_reborn.inference.engine import MiniMindLLM
+
+def dup_rate(text: str, n: int = 5) -&gt; float:
+    grams = [text[i:i + n] for i in range(len(text) - n + 1)]
+    return sum(c for g, c in Counter(grams).items() if c &gt; 1) / len(grams)
+
+llm = MiniMindLLM.build(&quot;full_sft&quot;)
+msgs = [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;介绍一下大语言模型&quot;}]
+for rp in (1.0, 1.5):
+    gen = GenerateConfig(temperature=0.0, repetition_penalty=rp, max_new_tokens=128)
+    r = llm.generate_text(msgs, gen)
+    c = r[&quot;content&quot;]
+    print(f&quot;rp={rp}: 重复 5-gram 率={dup_rate(c):.1%} 「大语言模型」出现 {c.count(&#x27;大语言模型&#x27;)} 次 tokens={r[&#x27;generated_tokens&#x27;]}&quot;)
+    print(&quot;  &quot;, c[:80], &quot;…&quot;)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

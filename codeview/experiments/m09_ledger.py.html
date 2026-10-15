@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m09_ledger.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m09_ledger.py</span>
+  <span class="cv-meta">20 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m09_ledger.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">import re
+from collections import OrderedDict
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+
+model = MiniMindForCausalLM(MiniMindConfig())   # 64M 默认结构：768 宽 × 8 层
+groups: &quot;OrderedDict[str, list]&quot; = OrderedDict()
+for name, p in model.named_parameters():
+    key = name.removeprefix(&quot;model.&quot;)                 # embed_tokens.weight / layers.0.… / norm.weight / lm_head.weight
+    key = re.sub(r&quot;layers\.\d+&quot;, &quot;layers.N&quot;, key)     # 8 层逐层归并到同一行
+    groups.setdefault(key, [0, 0])
+    groups[key][0] += p.numel()                       # 该行总参数
+    groups[key][1] += 1                               # 出现的 key 数
+
+total = sum(v[0] for v in groups.values())
+for k, (n, c) in groups.items():
+    tag = &quot;&quot; if c == 1 else f&quot;  ← ×{c} 层&quot;
+    print(f&quot;{k:44s}{n:&gt;12,}{tag}&quot;)
+print(f&quot;{&#x27;合计&#x27;:44s}{total:&gt;12,}   = {total/1e6:.2f}M&quot;)
+print(&quot;lm_head.weight 单独计账了吗：&quot;, &quot;lm_head.weight&quot; in groups)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

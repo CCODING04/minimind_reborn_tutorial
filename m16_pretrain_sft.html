@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M16 · pretrain / SFT 实战：点火，走完两棒 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m16">
 
@@ -502,8 +502,9 @@ val：ep1 末 1.6850 → ep2 末 1.5276（best）；tok/s ≈ 253k，mfu ≈ 29%
           <ul class="checklist">
             <li><b>① tiny 基座可加载、可生成</b>：<code>out/pretrain_64.pth</code> 是你 200 步训出的权重，
               且被 M03 那条完整推理链路（tokenizer→engine→generator→模型→KV cache→采样→detok）
-              strict 载入并生成。7 行验证脚本（真跑过）：
-              <div class="codeblock"><div class="code-head"><span>/tmp/m16_verify.py · 基座生成验证</span><span class="lang">python</span></div><pre class="code"><code>import torch
+              strict 载入并生成。10 行验证脚本（真跑过）：
+              <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m16_verify.py.html">experiments/m16_verify.py</a> · 基座生成验证（全文 10 行）</span><span class="lang">python</span></div><pre class="code"><code>"""里程碑 B 验证：自己训的 tiny 基座能被自己的推理链路加载并生成。"""
+import torch
 from minimind_reborn.configuration.schemas import GenerateConfig
 from minimind_reborn.inference.engine import MiniMindLLM
 
@@ -512,7 +513,9 @@ llm = MiniMindLLM.build("pretrain", config_path="runs/smoke_pretrain/20261001_09
 out = llm.generate_text([{"role": "user", "content": "北京是中国的"}],
                         GenerateConfig(temperature=0.8, max_new_tokens=48), pretrain_mode=True)
 print("生成:", out["content"], "| finish:", out["finish_reason"], "| tokens:", out["generated_tokens"])</code></pre></div>
-              <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m16_verify.py</span>
+              <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m16_verify.py</span>
+<span class="dim"># 实验脚本随课程仓库 experiments/ 提供；在 minimind_reborn 仓库根目录运行（本页同）</span>
+<span class="dim"># 输出为作者实测存档（生成文本随各自训练产物与采样随机性漂移）</span>
 <span class="out">生成: .在为：了篇 | finish: stop | tokens: 7</span></code></pre>
               config.json 快照来自<b>你自己</b>的 run 目录（坑卡的解法）——生成质量不重要，
               "strict 载入 + 走完生成链 + 正常停止"这条链通才重要；</li>
@@ -643,8 +646,8 @@ print("生成:", out["content"], "| finish:", out["finish_reason"], "| tokens:",
 <span class="out">… | minimind.trainer | Epoch[1/2](200/277865) loss=7.2320 lr=5.00e-05 …</span>
 <span class="ok">… | minimind.trainer | 训练结束：best_val_loss=7.527796745300293 optimizer_steps=200</span>
 <span class="out">… | minimind.sft | 数据卡已写入 runs/smoke_sft/&lt;时间戳&gt;/data_card.json：去重 63910 条，C3 重映射 0 次</span></code></pre>
-          <p>第三步，里程碑验证脚本（/tmp/m16_verify.py，正文 7 行，见 <a href="#milestone-b">里程碑 B</a>；把 config_path 换成你自己最新的 runs/smoke_pretrain/&lt;时间戳&gt;/config.json）：</p>
-          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m16_verify.py</span>
+          <p>第三步，里程碑验证脚本（<a href="codeview/experiments/m16_verify.py.html"><code>experiments/m16_verify.py</code></a>，正文 10 行，见 <a href="#milestone-b">里程碑 B</a>；把 config_path 换成你自己最新的 runs/smoke_pretrain/&lt;时间戳&gt;/config.json）：</p>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m16_verify.py</span>
 <span class="out">生成: .在为：了篇 | finish: stop | tokens: 7</span></code></pre>
           <ul class="pass-criteria">
             <li>第一棒日志含 <code>已保存：pretrain_64.pth + best</code> 与 <code>optimizer_steps=100</code>（= 200 micro ÷ 累积 2）；</li>
@@ -706,6 +709,6 @@ print("生成:", out["content"], "| finish:", out["finish_reason"], "| tokens:",
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

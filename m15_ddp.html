@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M15 · DDP 与 no_sync：把训练扩到两张卡 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m15">
 
@@ -369,26 +369,30 @@ with sync_ctx:                    # 注意：sync_ctx 已是上下文实例，�
         说"通信量降 87.5%"不等于"快 8 倍"——通信只是每步开销的一部分。真跑才算数。
         64M 模型、官方 64m 配方（seq 340 / batch 32 / 累积 8 / bf16），各跑 48 个 micro step、
         每 8 步一个吞吐窗，取第 2~6 窗（丢弃首窗预热）的中位数。"关"的那一组不改仓库一行代码，
-        用一个 8 行的启动器猴子补丁（monkey patch：运行时替换对象方法）精确复现修复前行为：
+        用一个 12 行的启动器猴子补丁（monkey patch：运行时替换对象方法）精确复现修复前行为：
       </p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m15_nosync_off.py · 复现 fd9fdc8 修复前：no_sync 变空操作</span><span class="lang">python</span></div><pre class="code"><code>"""把 DDP.no_sync 补丁成 nullcontext —— 每个 micro step 的 backward 都触发 all-reduce。"""
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m15_nosync_off.py.html">experiments/m15_nosync_off.py</a> · 复现 fd9fdc8 修复前：no_sync 变空操作（全文 12 行）</span><span class="lang">python</span></div><pre class="code"><code>"""复现 fd9fdc8 修复前的 Trainer 行为：把 DDP.no_sync 猴子补丁成 nullcontext ——
+每个 micro step 的 backward 都触发 allreduce（修复前 = 没有 no_sync 这回事）。"""
 import runpy
 import sys
 from contextlib import nullcontext
+
 from torch.nn.parallel.distributed import DistributedDataParallel
 
-DistributedDataParallel.no_sync = lambda self: nullcontext()   # 能力被"没收"
+DistributedDataParallel.no_sync = lambda self: nullcontext()
 
-sys.argv = ["tools/train.py"] + sys.argv[1:]                   # 透传参数，走原入口
+sys.argv = ["tools/train.py"] + sys.argv[1:]
 runpy.run_path("tools/train.py", run_name="__main__")</code></pre></div>
       <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/pretrain_64m.yaml --set train.max_steps=48 --set train.log_interval=8 \</span>
 <span class="cmd">  --set train.resume=false --set data.num_workers=4 --set output_dir=/tmp/m15_ab/out_1g ...   # 单卡基线</span>
+<span class="dim"># 输出为作者实测存档（数字随训练随机性/机器态漂移；本组 A/B 未自动复跑——torchrun 多卡重活）</span>
 <span class="out">… | 训练启动 … | 63.91M 可训练参数 | dtype=bf16 device=cuda world=1 | …</span>
 <span class="out">… | Epoch[1/2](16/39497) loss=8.5340 … tok/s=63873 mfu=14.8% …</span>
 <span class="p">$ </span><span class="cmd">uv run torchrun --nproc-per-node 2 tools/train.py configs/pretrain_64m.yaml --set …   # 双卡·no_sync 开（当前代码）</span>
 <span class="out">… | 训练启动 … | dtype=bf16 device=cuda:0 world=2 | …</span>
 <span class="out">… | Epoch[1/2](16/19749) loss=8.4467 … tok/s=114843 mfu=13.3% …</span>
-<span class="p">$ </span><span class="cmd">uv run torchrun --nproc-per-node 2 /tmp/m15_nosync_off.py configs/pretrain_64m.yaml --set …  # 双卡·no_sync 关</span>
+<span class="p">$ </span><span class="cmd">uv run torchrun --nproc-per-node 2 experiments/m15_nosync_off.py configs/pretrain_64m.yaml --set …  # 双卡·no_sync 关</span>
+<span class="dim"># 实验脚本随课程仓库 experiments/ 提供；在 minimind_reborn 仓库根目录运行（本页同）</span>
 <span class="out">… | 训练启动 … | dtype=bf16 device=cuda:0 world=2 | …</span>
 <span class="out">… | Epoch[1/2](16/19749) loss=8.4818 … tok/s=87559 mfu=10.2% …</span></code></pre>
       <div class="table-scroll">
@@ -405,7 +409,7 @@ runpy.run_path("tools/train.py", run_name="__main__")</code></pre></div>
       torch 2.14.0+cu130 · 64M dense · seq340 bs32 accum8 bf16 seed42]</b>
       诚实标注：三连跑期间机器上另有一个双卡 SFT 长训在共享两卡（各占约 8GB）——绝对吞吐被整体压低
       （单卡 64K，干净环境存档是 140.8K），但三组<b>同条件连跑、受同一干扰</b>，scaling 比值依然成立。
-      no_sync 关闭的方法：/tmp/m15_nosync_off.py 把 <code>DDP.no_sync</code> 猴子补丁成
+      no_sync 关闭的方法：<a href="codeview/experiments/m15_nosync_off.py.html"><code>experiments/m15_nosync_off.py</code></a> 把 <code>DDP.no_sync</code> 猴子补丁成
       <code>nullcontext</code>——精确复现 fd9fdc8 修复前"每个 micro step 都同步"的行为。
       scaling 效率 = 双卡 tok/s ÷（2 × 单卡 tok/s），tok/s 是两卡合计口径（trainer.py:279 的
       <code>B × world × seq</code>）。</p>
@@ -632,34 +636,41 @@ self.scaler.scale(scaled).backward()   # ← DDP 默认：每次 backward 都全
           <p>写下预测：路线一（2 卡、每卡 batch 4、累积 2 步）一个 optimizer step 吃了多少条样本？
           路线二（单卡、batch 16、累积 1 步）——两条路线的梯度<b>数值完全相同</b>吗？只差随机性，
           还是连"分片不等长"这种结构性差异都可能有？</p>
-          <div class="codeblock"><div class="code-head"><span>/tmp/m15_equiv_batch.py · DDP"两层平均"vs 单卡"一层平均"（CPU 可跑）</span><span class="lang">python</span></div><pre class="code"><code>import torch
+          <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m15_equiv_batch.py.html">experiments/m15_equiv_batch.py</a> · DDP"两层平均"vs 单卡"一层平均"（CPU 可跑，全文 29 行）</span><span class="lang">python</span></div><pre class="code"><code>"""等效 batch 的真算：DDP 的"两层平均"vs 单卡大 batch 的"一层平均"。
+模拟 2 卡：卡 A 吃前 8 条样本，卡 B 吃后 8 条（DistributedSampler 等分片）。
+"""
+import torch
 
 torch.manual_seed(42)
-W = torch.randn(8, 3)            # 假装这是模型的全部参数
+W = torch.randn(8, 3)            # 假装这是模型的全部参数（8 个，3 维输入）
 X = torch.randn(16, 3)           # 16 条样本
-y = torch.randn(16, 8)
+y = torch.randn(16, 8)           # 每条样本的回归目标
 
-def mean_grad(xs, ys):           # 一批样本的最小二乘平均梯度
+def mean_grad(xs, ys):           # 一批样本的平均梯度（最小二乘）
     w = W.detach().clone().requires_grad_(True)
     loss = ((xs @ w.T - ys) ** 2).mean()
     loss.backward()
     return w.grad
 
-g_big = mean_grad(X, y)                                  # 路线二：单卡 batch16 累积1
-g_a = mean_grad(X[:8], y[:8])                            # 卡 A：8 条平均（batch4×累积2）
-g_b = mean_grad(X[8:], y[8:])                            # 卡 B：8 条平均
-g_ddp = (g_a + g_b) / 2                                  # 路线一：all-reduce AVG
-print("两层平均 vs 一层平均最大差：", (g_ddp - g_big).abs().max().item())
+g_big = mean_grad(X, y)                                  # 路线二：单卡 batch 16 累积 1
+g_a = mean_grad(X[:8], y[:8])                            # 卡 A：8 条的平均梯度
+g_b = mean_grad(X[8:], y[8:])                            # 卡 B：8 条的平均梯度
+g_ddp = (g_a + g_b) / 2                                  # 路线一：all-reduce AVG（两卡等分片）
 
-g_a2 = mean_grad(X[:10], y[:10])                         # 反例：不等分片 10+6
+print("路线一（2 卡 ×4 batch ×2 累积 = 两层平均）与路线二（单卡 16）梯度最大差：",
+      (g_ddp - g_big).abs().max().item())
+
+# 不等分片的反例：卡 A 10 条、卡 B 6 条（手写切分没对齐时会遇到）
+g_a2 = mean_grad(X[:10], y[:10])
 g_b2 = mean_grad(X[10:], y[10:])
-print("不等分片时最大差：", (((g_a2 + g_b2) / 2) - g_big).abs().max().item())</code></pre></div>
+print("不等分片（10+6）时两层平均 vs 全局平均最大差：",
+      (((g_a2 + g_b2) / 2) - g_big).abs().max().item())</code></pre></div>
           <details>
             <summary>观察结果与解释（先动手再看）</summary>
-            <p>作者实测（2026-10-01，CPU）：</p>
-            <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m15_equiv_batch.py</span>
-<span class="out">两层平均 vs 一层平均最大差： 5.96e-08</span>
-<span class="out">不等分片时最大差： 0.11742919683456421</span></code></pre>
+            <p>复跑核对（2026-10-15，CPU，固定 seed 确定性可复现）：</p>
+            <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m15_equiv_batch.py</span>
+<span class="out">路线一（2 卡 ×4 batch ×2 累积 = 两层平均）与路线二（单卡 16）梯度最大差： 5.960464477539063e-08</span>
+<span class="out">不等分片（10+6）时两层平均 vs 全局平均最大差： 0.11742919683456421</span></code></pre>
             <p>
               <b>答案与机制：</b>路线一一个 optimizer step 吃 2×4×2 = <b>16 条</b>样本，等效 batch 16。
               等分片时两路线梯度之差 6e-08——纯浮点噪声，数学上严格相等：(1/2)·((1/8)Σ_A + (1/8)Σ_B)
@@ -753,6 +764,6 @@ print("不等分片时最大差：", (((g_a2 + g_b2) / 2) - g_big).abs().max().i
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

@@ -1,0 +1,5 @@
+'你好，世界'                        5字  3 token  ['你好', '，', '世界']
+'Hello, world!'                13字  4 token  ['Hello', ',', ' world', '!']
+'def add(a, b): return a + b'  27字 11 token  ['def', ' add', '(', 'a', ',', ' b', '):', ' return', ' a', ' +', ' b']
+'龘'                            1字  2 token  ['�', '�']
+'你好🤖'                          3字  4 token  ['你好', '�', '�', '�']

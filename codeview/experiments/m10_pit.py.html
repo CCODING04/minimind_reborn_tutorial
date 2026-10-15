@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m10_pit.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m10_pit.py</span>
+  <span class="cv-meta">18 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m10_pit.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">from minimind_reborn.inference.chat import render_chat
+from transformers import AutoTokenizer
+
+tok = AutoTokenizer.from_pretrained(&quot;assets/tokenizer&quot;)
+u = [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;你好&quot;}]
+real = render_chat(tok, u)                                        # 真模板（单一事实源渲染）
+hand = f&quot;&lt;|im_start|&gt;user\n{u[0][&#x27;content&#x27;]}&lt;|im_end|&gt;\n&lt;|im_start|&gt;assistant\n&quot;   # 手拼：漏了空 think 块
+hand2 = &quot;&lt;|im_start|&gt;user\n你好&lt;|im_end|&gt;\n&lt;|im_start|&gt;assistant \n&quot;              # 只多打了一个空格
+ri, hi, h2 = (tok(t).input_ids for t in (real, hand, hand2))
+print(&quot;真模板：&quot;, ri)
+print(&quot;手拼版：&quot;, hi)
+same = 0
+for a, b in zip(ri, hi):
+    if a != b:
+        break
+    same += 1
+print(f&quot;共同前缀 {same} 位后分岔：真 {len(ri)} token，手拼 {len(hi)} token（少了 &lt;think&gt; 空块）&quot;)
+print(&quot;多个空格：&quot;, h2, &quot;→ 结尾&quot;, repr(tok.decode([h2[-1]])), &quot;≠ &#x27;\\n&#x27;，prefix 锚点从此失配&quot;)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

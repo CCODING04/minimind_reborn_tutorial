@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M22 · 全链路与毕业实验：从一条命令到一个结论 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m22">
 
@@ -305,31 +305,45 @@ done</span>
         实验设计时对两者都要安排测量。
       </p>
       <h3 id="demo-design">第二步 · 设计（单变量 + 控制清单）</h3>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m22_temp_ab3.py · 温度 A/B（终版，28 行）</span><span class="lang">python</span></div><pre class="code"><code>import torch
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m22_temp_ab3.py.html">experiments/m22_temp_ab3.py</a> · 温度 A/B（终版）（10–47/66 行节选；实跑全部 8 题并含 tok/s 列——完整代码见标题链接）</span><span class="lang">python</span></div><pre class="code"><code>from __future__ import annotations
+
+import torch
+
 from minimind_reborn.configuration.schemas import GenerateConfig
 from minimind_reborn.inference.engine import MiniMindLLM
 
-PROMPTS = ["你有什么特长？", "为什么天空是蓝色的", "请用Python写一个计算斐波那契数列的函数",
-           "推荐一些中国的美食"]  # 节选 4/8 题（页面版；实跑用 M21 eval_llm.py 全部 8 题）
+PROMPTS = [
+    "你有什么特长？",
+    "为什么天空是蓝色的",
+    "请用Python写一个计算斐波那契数列的函数",
+    '解释一下"光合作用"的基本过程',
+    "如果明天下雨，我应该如何出门",
+    "比较一下猫和狗作为宠物的优缺点",
+    "解释什么是机器学习",
+    "推荐一些中国的美食",
+]
 
-def distinct2(text: str) -> float:
-    """distinct-2：不重复 bigram 占比。复读越重值越低，全新搭配=1.0。"""
+
+def distinct2(text: str) -&gt; float:
+    """distinct-2：不重复 bigram 占全部 bigram 的比例（越低=复读越重）。"""
     chs = list(text)
-    grams = [tuple(chs[i:i+2]) for i in range(len(chs)-1)]   # 相邻二字组
-    return len(set(grams)) / len(grams) if grams else 1.0
+    bigrams = [tuple(chs[i : i + 2]) for i in range(len(chs) - 1)]
+    return len(set(bigrams)) / len(bigrams) if bigrams else 1.0
 
-llm = MiniMindLLM.build("full_sft")          # 控制变量①：两臂同一权重同一实例
-for t in (0.7, 0.85):                        # 自变量：唯一的旋钮
-    for seed in (42, 43, 44):                # 控制变量②：两臂共用同一组随机种子
-        torch.manual_seed(seed)              # 固定随机数发生器起点：本臂重跑可复现
-        gen = GenerateConfig(temperature=t, top_p=0.95, max_new_tokens=384)  # top_p：M02 的核采样旋钮，冻结
-        lens, d2, stops = [], [], 0
-        for p in PROMPTS:
-            r = llm.generate_text([{"role": "user", "content": p}], gen)
-            lens.append(r["generated_tokens"]); d2.append(distinct2(r["content"]))
-            stops += r["finish_reason"] == "stop"
-        print(f"T={t} seed={seed}: distinct2={sum(d2)/len(PROMPTS):.4f} "
-              f"len={sum(lens)/len(PROMPTS):.1f} stop={stops}/{len(PROMPTS)}")</code></pre></div>
+
+def run_arm(llm: MiniMindLLM, temperature: float, seed: int) -&gt; dict:
+    torch.manual_seed(seed)
+    gen = GenerateConfig(temperature=temperature, top_p=0.95, max_new_tokens=384)
+    lens, d2s, stops, total_s = [], [], 0, 0.0
+    for p in PROMPTS:
+        r = llm.generate_text([{"role": "user", "content": p}], gen)
+        lens.append(r["generated_tokens"])
+        d2s.append(distinct2(r["content"]))
+        stops += r["finish_reason"] == "stop"
+        total_s += r["latency_ms"] / 1000
+    return {"d2": sum(d2s) / len(d2s), "len": sum(lens) / len(lens),
+            "stops": stops, "tps": sum(lens) / total_s}
+# ……（余 19 行：main()——0.7/0.85 两臂 × seed 42/43/44 循环打表与均值汇总——完整代码见标题链接）</code></pre></div>
       <p>
         设计不是一次成的——<b>第一版 max_new_tokens=256 就被数据打回来了</b>：8 题里 15/16 跑满上限
         （finish=length），长度这个因变量被测量天花板压死，根本分不出两臂。把上限提到 384 重跑，
@@ -337,7 +351,9 @@ for t in (0.7, 0.85):                        # 自变量：唯一的旋钮
         第一版留下的有效读数只有一个：distinct-2 均值 0.582（T=0.7）vs 0.650（T=0.85），方向与预期一致。
       </p>
       <h3 id="demo-data">第三步 · 数据</h3>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m22_temp_ab3.py</span>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m22_temp_ab3.py</span>
+<span class="dim"># 实验脚本随课程仓库 experiments/ 提供；在 minimind_reborn 仓库根目录运行（本页同）</span>
+<span class="dim"># 输出为作者实测存档（采样吞吐随时延漂移；列格式与归档脚本 print 一致）</span>
 <span class="out">temp  seed  distinct2  平均长度  stop/8  tok/s</span>
 <span class="out">0.70    42  0.5483     368.2   3/8    161.8</span>
 <span class="out">0.70    43  0.5551     358.9   3/8    164.2</span>
@@ -541,9 +557,9 @@ done</span>
 <span class="dim">（中段七行的绿灯样例见正文八范式一节：full_sft_64 / dpo_64 / lora_smoke_64 / full_dist_64 / grpo_64 / ppo_actor_64 / agent_64）</span>
 <span class="ok">… | minimind.rl | 已保存 agent_64.pth（epoch=1 step=2）</span></code></pre>
           <p>第三条，毕业实验（示范脚本 48 次生成约 2 分钟；你的选题自定，报告按模板四步）：</p>
-          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m22_temp_ab3.py</span>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m22_temp_ab3.py</span>
 <span class="out">0.70    42  0.5483     368.2   3/8    161.8</span>
-<span class="dim">（共 6 行：2 温度 × 3 seed，全表见正文第三步 · 数据）</span>
+<span class="dim">（输出为作者实测存档；2 温度 × 3 seed 共 6 行、另含两行均值汇总，全表见正文第三步 · 数据）</span>
 <span class="out">0.85    44  0.5883     334.0   4/8    164.6</span></code></pre>
           <ul class="pass-criteria">
             <li>第一条输出 <code>93 passed</code>（若你跑 <code>make test</code> 看到 5 个 metrics 失败——回
@@ -599,6 +615,6 @@ done</span>
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

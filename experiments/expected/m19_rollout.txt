@@ -1,0 +1,6 @@
+prompt 长度: [23, 23, 23, 23]   completion_ids 形状: (4, 16)
+per_token_logps 形状: (4, 16) （采样时策略对每个生成 token 的 logp）
+[0] '帮助企业数字 miss或服务\x03 mar生产吸 please,绿色询互之LP�'  有效长度=16  平均logp=-8.336
+[1] 'ding邀est整个衡目前�答案怎真正动�增加ا誉 systems'  有效长度=16  平均logp=-8.317
+[2] ' growth聚iz的手urnailed cration�启混有助��治疗ames'  有效长度=16  平均logp=-8.295
+[3] ' assistance�产品的ering):�责任�权限� conditions的建议的建议网页领导AP'  有效长度=16  平均logp=-8.288

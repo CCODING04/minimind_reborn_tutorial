@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m11_ex.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m11_ex.py</span>
+  <span class="cv-meta">26 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m11_ex.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M11 变式：改一个字节（大小不变），manifest 指纹会怎样？&quot;&quot;&quot;
+import subprocess
+import time
+from pathlib import Path
+
+from minimind_reborn.data.manifest import _fingerprint, load_or_build, manifest_path
+
+SRC = Path.home() / &quot;Code/WorkSpace/minimind-reproduce/dataset/sft_t2t_mini.jsonl&quot;
+SLICE = Path(&quot;/tmp/m11_slice.jsonl&quot;)
+
+subprocess.run([&quot;head&quot;, &quot;-n&quot;, &quot;20000&quot;, str(SRC)], stdout=open(SLICE, &quot;wb&quot;), check=True)
+manifest_path(SLICE).unlink(missing_ok=True)  # 干净起点：先删旁车
+
+t0 = time.perf_counter()
+m1 = load_or_build(SLICE, eval_ratio=0.1)  # 第一次：全量扫描建旁车
+print(f&quot;首建 {time.perf_counter()-t0:.2f}s  行数 {len(m1)}  eval 占比 {m1.is_eval.mean():.3f}&quot;)
+print(f&quot;指纹 = {m1.fingerprint}&quot;)
+
+raw = SLICE.read_bytes()  # 原地改一个字节：「。」(3字节) → 「，」(3字节)，大小不变
+i = raw.rindex(&quot;。&quot;.encode())
+SLICE.write_bytes(raw[:i] + &quot;，&quot;.encode() + raw[i + 3 :])
+print(f&quot;改后 stat：size {SLICE.stat().st_size}（不变）  指纹 = {_fingerprint(SLICE)}&quot;)
+
+t0 = time.perf_counter()
+m2 = load_or_build(SLICE, eval_ratio=0.5)  # 指纹已变：必须全量重建
+print(f&quot;重取(eval_ratio=0.5) {time.perf_counter()-t0:.2f}s  eval 占比 {m2.is_eval.mean():.3f}（重建，新口径生效）&quot;)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

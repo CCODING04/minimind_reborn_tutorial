@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M21 · 评测与官方对照 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m21">
 
@@ -426,17 +426,33 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
         对照做完，最后一步是让成果走出实验室。<a href="codeview/tools/convert_model.py.html"><code>tools/convert_model.py</code></a> 的
         <code>to-qwen</code> 子命令把 .pth 转成 HF transformers 的 Qwen3 结构目录（safetensors 权重——
         HF 生态的安全序列化格式，取代 pickle 的 .bin——加 config 与 tokenizer 一件套），
-        结构参数逐项搬运，键名恰好对齐（M09 保真移植的红利）：
+        结构参数逐项搬运，键名恰好对齐（M09 保真移植的红利）。桥通没通，用 transformers
+        裸加载并生成来验证——验证脚本全文如下：
       </p>
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m21_verify_qwen.py.html">experiments/m21_verify_qwen.py</a> · Qwen3 对照验证（全文 12 行）</span><span class="lang">python</span></div><pre class="code"><code>import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+tok = AutoTokenizer.from_pretrained("/tmp/m21_qwen3")
+model = AutoModelForCausalLM.from_pretrained("/tmp/m21_qwen3", dtype=torch.float32).eval()  # CPU 上 fp32 最稳
+prompt = tok.apply_chat_template([{"role": "user", "content": "用一句话介绍你自己"}], tokenize=False, add_generation_prompt=True)
+ids = tok(prompt, return_tensors="pt")
+torch.manual_seed(42)
+out = model.generate(**ids, max_new_tokens=24, do_sample=True, temperature=0.8, top_p=0.9,
+                     pad_token_id=tok.pad_token_id, eos_token_id=tok.eos_token_id)
+print("架构:", model.config.architectures, "| 参数:", f"{sum(p.numel() for p in model.parameters())/1e6:.1f}M")
+print("生成:", tok.decode(out[0][ids.input_ids.shape[1]:], skip_special_tokens=True))</code></pre></div>
       <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/convert_model.py to-qwen --torch-path out/full_sft_768.pth --out /tmp/m21_qwen3</span>
 <span class="out">Writing model shards: 100%|██████████| 1/1 [00:00&lt;00:00, 25.21it/s]</span>
 <span class="ok">已保存 HF(Qwen3) 格式：/tmp/m21_qwen3（63.9M）</span>
 <span class="out">（产出：model.safetensors · config.json · tokenizer.json · chat_template.jinja …）</span>
-<span class="p">$ </span><span class="cmd">uv run python /tmp/m21_verify_qwen.py   # 用 transformers 裸加载并生成，验证桥通了</span>
+<span class="p">$ </span><span class="cmd">uv run python experiments/m21_verify_qwen.py</span>   <span class="c"># 用 transformers 裸加载并生成，验证桥通了</span>
+<span class="dim"># 实验脚本随课程仓库 experiments/ 提供；在 minimind_reborn 仓库根目录运行（本页同）</span>
+<span class="dim"># 输出为 fp32 + 固定 seed 的可复现读数（现跑与作者存档逐字一致；权重加载进度条行略）</span>
 <span class="out">架构: ['Qwen3ForCausalLM'] | 参数: 63.9M</span>
 <span class="ok">生成: 我是由jingyaogong创建的高效小参数AI模型，专注于提供精准、快速的信息</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-10-01 · CPU · torch 2.14.0+cu130 · transformers 加载 90 个权重张量]</b>
-      验证脚本 13 行（/tmp/m21_verify_qwen.py）：<code>AutoModelForCausalLM.from_pretrained("/tmp/m21_qwen3")</code>
+      验证脚本全文 12 行已收录：<a href="codeview/experiments/m21_verify_qwen.py.html"><code>experiments/m21_verify_qwen.py</code></a>——
+      <code>AutoModelForCausalLM.from_pretrained("/tmp/m21_qwen3")</code>
       起 2.9 秒出全文生成。为什么值得单独一节：导出之后你的权重就进入了 HF 生态——transformers 直接吃，
       vLLM/ollama 这类推理引擎按 Qwen3 结构识别即可加载（它们不认识 minimind_reborn，但认识 Qwen3）。
       这是"实验室通往工业的桥"：训练栈是自己的（可控、可教、可改），交付格式是行业的（可被一切工具消费）。
@@ -521,14 +537,14 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
           <p>
             只动一个旋钮：<code>--temperature</code>（top_p 0.95、题集、权重全不动），各跑一遍
             <code>eval_llm.py</code>，用 3-gram 重复率算分——把 <a href="#rulers">尺子一节</a>的
-            <code>ngram_rep_rate</code> 包一个小驱动（/tmp/m21_rep_rate.py：正则抠出每题 🧠: 到
+            <code>ngram_rep_rate</code> 包一个小驱动（脚本已收录：<a href="codeview/experiments/m21_rep_rate.py.html"><code>experiments/m21_rep_rate.py</code></a>——正则抠出每题 🧠: 到
             [N tok 之间的回答，逐题算重复率再平均，顺带数 stop/length）。
           </p>
           <div class="ex-predict"></div>
           <p>写下预测：低温 0.1（更"稳"）和高温 0.9（更"放飞"），哪个的平均重复率更低？先押一边再动手：</p>
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/eval_llm.py --weight full_sft --temperature 0.1 &gt; /tmp/t01.txt</span>
 <span class="p">$ </span><span class="cmd">uv run python tools/eval_llm.py --weight full_sft --temperature 0.9 &gt; /tmp/t09.txt</span>
-<span class="p">$ </span><span class="cmd">python3 /tmp/m21_rep_rate.py /tmp/t01.txt /tmp/t09.txt</span>
+<span class="p">$ </span><span class="cmd">python3 experiments/m21_rep_rate.py /tmp/t01.txt /tmp/t09.txt</span>
 <span class="out">/tmp/t01.txt: 答案 8 | 平均3gram重复率 0.257 | 平均长度 376 字 | stop 0 / length 8</span>
 <span class="out">/tmp/t09.txt: 答案 8 | 平均3gram重复率 0.197 | 平均长度 363 字 | stop 1 / length 7</span></code></pre>
           <details>
@@ -624,6 +640,6 @@ print(f"平均吞吐: {total_tokens / max(total_time, 1e-6):.1f} tokens/s")</cod
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

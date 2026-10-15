@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m20_chat_fix.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m20_chat_fix.py</span>
+  <span class="cv-meta">39 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m20_chat_fix.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1"># M20 chat 签名 bug 收尾：① 直连复现 ② 一行修复验证（猴子补丁形态，仓库只读）③ 契约断言
+import inspect
+from minimind_reborn.configuration.schemas import GenerateConfig
+from minimind_reborn.inference.chat import ChatSession, render_chat
+from minimind_reborn.inference.engine import MiniMindLLM
+
+llm = MiniMindLLM.build(&quot;full_sft&quot;)
+gen = GenerateConfig(temperature=0.1, max_new_tokens=8)
+
+s_bad = ChatSession(llm.tokenizer, llm.generate_tokens, gen)
+try:
+    s_bad.respond(&quot;你好&quot;)
+except TypeError as e:
+    print(&quot;① 直连复现:&quot;, e)
+
+# ② M02 的一行修复：重写 respond，仅第 8 行改为按真实签名关键字传参（仓库只读，用补丁形态验证）
+def respond_fixed(self, user_text, *, open_thinking=False):
+    self.history.append({&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: user_text})
+    if self.pretrain_mode:
+        prompt = self.tokenizer.bos_token + user_text
+    else:
+        self._trim_history()
+        prompt = render_chat(self.tokenizer, self.history, open_thinking=open_thinking)
+    inputs = self.tokenizer(prompt, return_tensors=&quot;pt&quot;, truncation=True)
+    out = self.generate_fn(inputs[&quot;input_ids&quot;], self.gen, attention_mask=inputs[&quot;attention_mask&quot;])  # ← 唯一改动
+    new_tokens = out[&quot;sequences&quot;][0, inputs[&quot;input_ids&quot;].shape[1]:]
+    text = self._decode_truncated(new_tokens)
+    self.history.append({&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: text})
+    return text
+
+ChatSession.respond = respond_fixed
+s = ChatSession(llm.tokenizer, llm.generate_tokens, gen)
+print(&quot;② 修复后 respond:&quot;, s.respond(&quot;你好&quot;))
+print(&quot;   history roles:&quot;, [m[&quot;role&quot;] for m in s.history])
+
+sig = inspect.signature(llm.generate_tokens)               # ③ 契约锁定：签名断言
+positional = [p for p, v in sig.parameters.items()
+              if v.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD and v.default is inspect.Parameter.empty]
+print(&quot;③ generate_tokens 必填位置参数:&quot;, positional[1:], &quot;——其余全部 keyword-only（星号之后）&quot;)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m10_bpe.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m10_bpe.py</span>
+  <span class="cv-meta">45 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m10_bpe.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;迷你 BPE：8 行语料，手工跑前 3 轮合并（字符级，教学版）。&quot;&quot;&quot;
+from collections import Counter
+
+corpus = [
+    &quot;你好世界&quot;,
+    &quot;你好小模型&quot;,
+    &quot;世界你好&quot;,
+    &quot;你好你好&quot;,
+    &quot;小模型你好&quot;,
+    &quot;你好世界模型&quot;,
+    &quot;模型世界你好&quot;,
+    &quot;你好小模型世界&quot;,
+]
+
+# 每行先拆成字符序列；词表初始 = 语料里出现过的字符
+seqs = [list(line) for line in corpus]
+vocab = sorted({ch for s in seqs for ch in s})
+print(&quot;初始词表（%d）：%s&quot; % (len(vocab), &quot; &quot;.join(vocab)))
+
+def top_pairs(n=3):
+    cnt = Counter()
+    for s in seqs:
+        for a, b in zip(s, s[1:]):   # 相邻对：滑窗一格
+            cnt[(a, b)] += 1
+    return cnt.most_common(n)
+
+for rnd in range(1, 4):
+    pairs = top_pairs()
+    print(f&quot;\n第 {rnd} 轮 · 相邻对频次 top3：{pairs}&quot;)
+    (a, b), c = pairs[0]
+    merged = a + b
+    new_seqs, hits = [], 0
+    for s in seqs:
+        out, i = [], 0
+        while i &lt; len(s):
+            if i &lt; len(s) - 1 and s[i] == a and s[i + 1] == b:
+                out.append(merged); i += 2; hits += 1   # 合并：两枚旧 token 换一枚新 token
+            else:
+                out.append(s[i]); i += 1
+        new_seqs.append(out)
+    seqs = new_seqs
+    vocab.append(merged)
+    print(f&quot;  合并 {a}+{b} → 「{merged}」（命中 {hits} 处）→ 词表 {len(vocab)} 个&quot;)
+    print(&quot;  语料现状：&quot;, [&quot;|&quot;.join(s) for s in seqs[:3]], &quot;…&quot;)
+print(&quot;\n3 轮后词表（%d）：%s&quot; % (len(vocab), &quot; &quot;.join(vocab)))</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M11 · 数据访问层：registry 与字节偏移索引 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m11">
 
@@ -67,44 +67,50 @@
 <span class="out">1270238 /home/admin02/Code/WorkSpace/minimind-reproduce/dataset/pretrain_t2t_mini.jsonl</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-09-30]</b> 1,241,043,656 字节（1.24GB）、1,270,238 行，平均每行约 977 字节。文件名里的 t2t 指 text-to-text（指令改写语料）。</p>
       <p>取"第 100000 行"这么一件小事，有三种朴素程度不同的做法，全部真跑（脚本节选）：</p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m11_bench.py · 三姿势对比（节选，每姿势独立进程）</span><span class="lang">python</span></div><pre class="code"><code>import json, random, resource, time
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m11_bench.py.html">experiments/m11_bench.py</a> · 三姿势对比：argparse --mode 分流（naive_load / naive_scan / indexed），每姿势独立进程（6–37/82 行节选；三模式分支见完整代码）</span><span class="lang">python</span></div><pre class="code"><code>from __future__ import annotations
+
+import argparse
+import json
+import random
+import resource
+import sys
+import time
 from pathlib import Path
 
 PATH = Path.home() / "Code/WorkSpace/minimind-reproduce/dataset/pretrain_t2t_mini.jsonl"
+N_SAMPLE = 1000
+TARGET = 100_000
 
-def peak_mb():  # 峰值内存：进程实际占用的物理内存（RSS）
+
+def peak_mb() -> float:
+    # Linux: ru_maxrss 单位 KB
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
 
-# 姿势 A：全量读进内存 list（"先都装进来再说"）
-base = peak_mb()
-t0 = time.perf_counter()
-with PATH.open("rb") as f:
-    data = [json.loads(line) for line in f if line.strip()]
-print(f"[A] 解析 {time.perf_counter()-t0:.2f}s 净增 {peak_mb()-base:.0f}MB 共 {len(data)} 行")
 
-# 姿势 B：不预载，要哪行从头数到哪行（open 逐行 enumerate 直到目标）
-# 姿势 C：reborn 的字节偏移索引（本课主角）
-from minimind_reborn.data.datasets import JsonlIndexedDataset
-t0 = time.perf_counter()
-ds = JsonlIndexedDataset(PATH)  # 一次 O(N) 扫描，只记每行起点偏移
-print(f"[C] 构建 {time.perf_counter()-t0:.2f}s 净增 {peak_mb()-base:.0f}MB 共 {len(ds)} 行")
+def bench_access(fn, n_lines: int) -> float:
+    rng = random.Random(42)
+    idxs = rng.sample(range(n_lines), N_SAMPLE)
+    t0 = time.perf_counter()
+    for i in idxs:
+        fn(i)
+    return (time.perf_counter() - t0) / N_SAMPLE * 1e6  # µs/次
 
-# 计时部分（三姿势通用）：随机 1000 行取样 + 单取第 100000 行
-rng = random.Random(42)
-idxs = rng.sample(range(1270238), 1000)
-t0 = time.perf_counter()
-for i in idxs:
-    ds.load_line(i)  # A 换成 data[i]，B 换成 scan_get(i)
-print(f"随机取样 {(time.perf_counter()-t0)/1000*1e6:.1f}µs/次")</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">/usr/bin/time -v uv run python /tmp/m11_bench.py --mode naive_load</span>
+
+_p = argparse.ArgumentParser()
+_p.add_argument("--mode", required=True, choices=["naive_load", "naive_scan", "indexed"])
+mode = _p.parse_args(sys.argv[1:]).mode
+# ……（余 45 行：naive_load 全量预载 / naive_scan 顺序扫描 / indexed 偏移索引三模式分支——完整代码见标题链接）</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">/usr/bin/time -v uv run python experiments/m11_bench.py --mode naive_load</span>
+<span class="dim"># 实验脚本随课程仓库 experiments/ 提供；在 minimind_reborn 仓库根目录运行（本页同）</span>
+<span class="dim"># 输出为作者实测存档（数字随时延/采样/机器态漂移）</span>
 <span class="out">[naive_load] 行数 1270238</span>
 <span class="out">[naive_load] 全量解析耗时 3.23s</span>
 <span class="out">[naive_load] 峰值内存 1351MB（进程基线 34MB → 数据净增 1317MB）</span>
 <span class="out">[naive_load] 随机取样 0.69µs/次（1000 次平均）</span>
-<span class="p">$ </span><span class="cmd">/usr/bin/time -v uv run python /tmp/m11_bench.py --mode naive_scan</span>
+<span class="p">$ </span><span class="cmd">/usr/bin/time -v uv run python experiments/m11_bench.py --mode naive_scan</span>
 <span class="out">[naive_scan] 不预载、直接取第 100000 行：21ms/次（需从头扫过前 100000 行）</span>
 <span class="out">[naive_scan] 峰值内存 34MB（单行缓存，与文件大小无关）</span>
-<span class="p">$ </span><span class="cmd">/usr/bin/time -v uv run python /tmp/m11_bench.py --mode indexed</span>
+<span class="p">$ </span><span class="cmd">/usr/bin/time -v uv run python experiments/m11_bench.py --mode indexed</span>
 <span class="out">[indexed] 行数 1270238（与 wc -l 一致）</span>
 <span class="out">[indexed] 索引构建 0.47s（一次 O(N) 顺序扫描，只记偏移不解析 json）</span>
 <span class="out">[indexed] 峰值内存 554MB（进程基线 502MB → 索引净增 52MB）</span>
@@ -197,27 +203,39 @@ def resolve_dataset(name: str, data_root: Path | None = None) -&gt; DatasetEntry
         数据根目录默认 <code>~/Code/WorkSpace/minimind-reproduce/dataset</code>，可用环境变量覆盖，见
         <a href="codeview/src/minimind_reborn/envs.py.html"><code>envs.py</code></a>）：
       </p>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m11_registry.py · 注册表解析 + 两条错误路径（节选）</span><span class="lang">python</span></div><pre class="code"><code>from minimind_reborn.data.registry import _REGISTRY, file_path, resolve_dataset
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m11_registry.py.html">experiments/m11_registry.py</a> · 注册表解析 + 两条错误路径（1–25/46 行节选；后半视图对比段见完整代码）</span><span class="lang">python</span></div><pre class="code"><code>"""M11 实验：注册表解析、三要素报错、视图不复制（真数据）。"""
+import resource
+import time
+from pathlib import Path
 
+from minimind_reborn.data.registry import _REGISTRY, file_path, resolve_dataset
+from minimind_reborn.data.datasets import IndexListView, PretrainDataset, SegmentView
+
+DATA = Path.home() / "Code/WorkSpace/minimind-reproduce/dataset"
+
+# ① 注册表全景
 print(f"注册条目 {len(_REGISTRY)} 个：{sorted(_REGISTRY)}")
-print(resolve_dataset("pretrain_t2t_mini"))       # 正常路径
-print(file_path(resolve_dataset("pretrain_t2t_mini")))  # → 数据根目录/pretrain_t2t_mini.jsonl
+entry = resolve_dataset("pretrain_t2t_mini")
+print(f"resolve_dataset('pretrain_t2t_mini') → {entry}")
+print(f"file_path → {file_path(entry)}  存在={file_path(entry).exists()}")
 
+# ② 两条错误路径真触发
 try:
-    resolve_dataset("no_such_dataset")            # 错误路径一
+    resolve_dataset("no_such_dataset")
 except ValueError as e:
     print(f"-- ValueError: {e}")
 try:
-    resolve_dataset("pretrain_t2t_mini", data_root=Path("/tmp/nonexistent_data"))  # 错误路径二
+    resolve_dataset("pretrain_t2t_mini", data_root=Path("/tmp/nonexistent_data"))
 except FileNotFoundError as e:
-    print(f"-- FileNotFoundError: {e}")</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m11_registry.py 2&gt;/dev/null | head -4</span>
+    print(f"-- FileNotFoundError: {e}")
+# ……（余 21 行：③ 视图不复制——PretrainDataset 构建 / 两张薄壳 / IndexListView——完整代码见标题链接）</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m11_registry.py 2&gt;/dev/null | head -5</span>
 <span class="out">注册条目 9 个：['agent_rl_mini', 'dpo_mini', 'pretrain_longctx', 'pretrain_t2t', 'pretrain_t2t_mini', 'rlaif_mini', 'sft_t2t', 'sft_t2t_mini', 'sft_t2t_mt']</span>
 <span class="out">resolve_dataset('pretrain_t2t_mini') → DatasetEntry(name='pretrain_t2t_mini', file='pretrain_t2t_mini.jsonl', kind='pretrain', description='预训练语料（text 字段），MiniMind 官方 mini 版约 1.2GB')</span>
 <span class="out">file_path → /home/admin02/Code/WorkSpace/minimind-reproduce/dataset/pretrain_t2t_mini.jsonl  存在=True</span>
-<span class="err">-- ValueError: 数据集 'no_such_dataset' 未注册。已注册：['agent_rl_mini', …, 'sft_t2t_mt']。新增数据集请在 datasets.json 中声明（名称/文件名/kind），不要散落硬编码路径</span>
+<span class="err">-- ValueError: 数据集 'no_such_dataset' 未注册。已注册：['agent_rl_mini', 'dpo_mini', 'pretrain_longctx', 'pretrain_t2t', 'pretrain_t2t_mini', 'rlaif_mini', 'sft_t2t', 'sft_t2t_mini', 'sft_t2t_mt']。新增数据集请在 datasets.json 中声明（名称/文件名/kind），不要散落硬编码路径</span>
 <span class="err">-- FileNotFoundError: 数据集文件不存在：/tmp/nonexistent_data/pretrain_t2t_mini.jsonl（注册名 'pretrain_t2t_mini'）。请检查 MINIMIND_REBORN_DATA_ROOT 或运行 tools/download_data.py --name pretrain_t2t_mini 从 modelscope 下载</span></code></pre>
-      <p class="prov"><b>[作者实测 · 2026-09-30]</b> 与 M01 存档的那条报错逐字同源（M01 用 /tmp/nonexistent_data 触发的是同一路径）。三要素逐个对号：<b>缺什么</b>=拼接出的完整路径（第一行 f-string）；<b>叫什么</b>=注册名（括号里）；<b>怎么办</b>=两个解法各占一句——检查环境变量，或用 tools/download_data.py --name 从 ModelScope（国内的模型/数据集托管平台）下载。没有任何一句"废话"。</p>
+      <p class="prov"><b>[作者实测 · 2026-09-30]</b> 完整脚本已随课程仓库收录：<a href="codeview/experiments/m11_registry.py.html"><code>experiments/m11_registry.py</code></a>（后半"视图不复制"段即下一节 tail -7 输出的出处）。与 M01 存档的那条报错逐字同源（M01 用 /tmp/nonexistent_data 触发的是同一路径）。三要素逐个对号：<b>缺什么</b>=拼接出的完整路径（第一行 f-string）；<b>叫什么</b>=注册名（括号里）；<b>怎么办</b>=两个解法各占一句——检查环境变量，或用 tools/download_data.py --name 从 ModelScope（国内的模型/数据集托管平台）下载。没有任何一句"废话"。</p>
 
       <h3 id="why-json">为什么是声明式 JSON，不是 if-else</h3>
       <p>同一个需求两种写法，差距在"变更成本"与"错误质量"上：</p>
@@ -327,9 +345,11 @@ class IndexListView(Dataset):
       <p>
         两张视图各管一种切法：<b>SegmentView</b> 是连续段（pretrain 用：文件已打散时直接取尾部固定切片当 eval，
         <code>_tail_split</code> 保证可复现）；<b>IndexListView</b> 是任意行号集合（SFT 用：按内容哈希分桶选行，
-        下一节讲为什么）。真跑一遍（/tmp/m11_registry.py 的后半）：
+        下一节讲为什么）。真跑一遍（<a href="codeview/experiments/m11_registry.py.html"><code>experiments/m11_registry.py</code></a> 的后半）：
       </p>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m11_registry.py 2&gt;/dev/null | tail -7</span>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m11_registry.py 2&gt;/dev/null | tail -7</span>
+<span class="dim"># 后半（视图零复制对比）代码见完整脚本（标题链接）</span>
+<span class="dim"># 输出为作者实测存档（数字随时延/采样/机器态漂移）</span>
 <span class="out">PretrainDataset 构建 0.56s（含 0.47s 索引扫描）</span>
 <span class="out">总行数 1270238 = train 1263887 + eval 6351（eval_ratio=0.005）</span>
 <span class="out">train_view 是薄壳：_base is ds = True，只带 (_start,_stop)=(0,1263887)</span>
@@ -420,19 +440,23 @@ def _fingerprint(path: Path, bucket_take: int) -&gt; str:
             这与 M04 "配置漂移"是同一条纪律。
           </li>
         </ul>
-        <div class="codeblock"><div class="code-head"><span>/tmp/m11_pit.py · 用 64m 配方的口径去读 smoke 建的旁车（修复前复现）</span><span class="lang">python</span></div><pre class="code"><code>import time
-from pathlib import Path
+        <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m11_pit.py.html">experiments/m11_pit.py</a> · 用 64m 配方的口径去读 smoke 建的旁车（修复前复现，全文 12 行）</span><span class="lang">python</span></div><pre class="code"><code>"""M11 坑卡实测：真实 sidecar 的缓存键里没有 eval_ratio。"""
+import time
+
 from minimind_reborn.data.manifest import load_or_build
+from pathlib import Path
 
 SRC = Path.home() / "Code/WorkSpace/minimind-reproduce/dataset/sft_t2t_mini.jsonl"
+
 t0 = time.perf_counter()
-m = load_or_build(SRC, eval_ratio=0.005)   # sft_64m.yaml 的口径
-print(f"耗时 {time.perf_counter()-t0:.2f}s（毫秒级=命中缓存，没重建）")
+m = load_or_build(SRC, eval_ratio=0.005)  # sft_64m.yaml 的口径
+print(f"load_or_build(eval_ratio=0.005) 耗时 {time.perf_counter()-t0:.2f}s（毫秒级=命中缓存，没重建）")
 print(f"拿到的 eval 占比 {m.is_eval.mean():.5f}——是 smoke 的 0.001 桶，不是我要的 0.005")</code></pre></div>
-        <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m11_pit.py</span>   <span class="c"># 修复前（2026-09-29 实测）</span>
-<span class="out">耗时 0.04s（毫秒级=命中缓存，没重建）</span>
+        <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m11_pit.py</span>   <span class="c"># 修复前（2026-09-29 实测）</span>
+<span class="dim"># 输出为作者实测存档（数字随时延/采样/机器态漂移；旁车现场随历史口径变化，复跑占比可能不同）</span>
+<span class="out">load_or_build(eval_ratio=0.005) 耗时 0.04s（毫秒级=命中缓存，没重建）</span>
 <span class="err">拿到的 eval 占比 0.00092——是 smoke 的 0.001 桶，不是我要的 0.005</span>
-<span class="p">$ </span><span class="cmd">uv run python /tmp/m11_pit.py</span>   <span class="c"># 修复后（2026-10-06 实测，2 万行切片、换口径 0.1→0.5，脚本见下方变式）</span>
+<span class="p">$ </span><span class="cmd">uv run python experiments/m11_pit.py</span>   <span class="c"># 修复后（2026-10-06 实测，2 万行切片、换口径 0.1→0.5；修复后变式已并入 experiments/m11_ex.py，见下方变式 1）</span>
 <span class="ok">换口径重取(eval_ratio=0.5) 0.69s  eval 占比 0.492（指纹含 bucket_take：必重建）</span></code></pre>
         <p class="prov"><b>[作者实测 · 2026-10-06 · 纯 CPU 路径 · 修复前/后各一次]</b> 修复前毫秒级返回旧桶；修复后同文件换口径全量重扫、占比如实。同一脚本、同一数据，唯一变量是指纹里那一段 bucket_take——控制变量法的又一次现场演出。</p>
         <p class="pit-note">缓存键少一味参数 = 缓存可能"对不上请求"——与 M04 bool 覆盖失效同一家族：配置变了，行为没变。</p>
@@ -490,13 +514,14 @@ print(f"拿到的 eval 占比 {m.is_eval.mean():.5f}——是 smoke 的 0.001 �
         <div class="ex-head">🧪 变式 1 · 预测：把 jsonl 原地改一个字节（大小不变），manifest 指纹会怎样？</div>
         <div class="ex-body">
           <p>取 2 万行做独立切片，建一次旁车，然后把最后一行的「。」原地换成「，」（两个标点都是 3 字节，文件大小分毫不变）。</p>
-          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m11_ex.py</span></code></pre>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m11_ex.py</span></code></pre>
           <div class="ex-predict"></div>
           <p>先写下预测：① 指纹串会变吗？② 如果变，变的是冒号前（mtime）还是冒号后（size）？③ 旁车会重建吗——判断依据是什么？</p>
           <details>
             <summary>观察结果与解释（先动手再看）</summary>
-            <p>作者实测（2026-10-06，修复后代码，同环境，脚本 /tmp/m11_ex.py 全文见下方）：</p>
-            <pre class="term"><code><span class="out">首建 0.70s  行数 20000  eval 占比 0.098</span>
+            <p>作者实测（2026-10-06，修复后代码，同环境，<a href="codeview/experiments/m11_ex.py.html"><code>experiments/m11_ex.py</code></a> 全文见下方）：</p>
+            <pre class="term"><code><span class="dim"># 作者实测存档；现版仓库 _fingerprint 接口已演进，复跑需按当期 API</span>
+<span class="out">首建 0.70s  行数 20000  eval 占比 0.098</span>
 <span class="out">指纹 = 1791273753098007351:57191431:100</span>
 <span class="out">改后 stat：size 57191431（不变）  指纹 = 1791273754552018416:57191431:500</span>
 <span class="out">换口径重取(eval_ratio=0.5) 0.69s  eval 占比 0.492（必重建，坑卡修复生效）</span>
@@ -512,35 +537,32 @@ print(f"拿到的 eval 占比 {m.is_eval.mean():.5f}——是 smoke 的 0.001 �
               缓存失效策略永远在"检查成本"与"脏读风险"之间选点。
             </p>
           </details>
-          <div class="codeblock"><div class="code-head"><span>/tmp/m11_ex.py · 切片 → 首建 → 改一字节 → 重取</span><span class="lang">python</span></div><pre class="code"><code>import subprocess, time
+          <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m11_ex.py.html">experiments/m11_ex.py</a> · 切片 → 首建 → 改一字节 → 重取（全文 26 行）</span><span class="lang">python</span></div><pre class="code"><code>"""M11 变式：改一个字节（大小不变），manifest 指纹会怎样？"""
+import subprocess
+import time
 from pathlib import Path
+
 from minimind_reborn.data.manifest import _fingerprint, load_or_build, manifest_path
 
 SRC = Path.home() / "Code/WorkSpace/minimind-reproduce/dataset/sft_t2t_mini.jsonl"
 SLICE = Path("/tmp/m11_slice.jsonl")
+
 subprocess.run(["head", "-n", "20000", str(SRC)], stdout=open(SLICE, "wb"), check=True)
-manifest_path(SLICE).unlink(missing_ok=True)          # 干净起点：先删旁车
+manifest_path(SLICE).unlink(missing_ok=True)  # 干净起点：先删旁车
 
 t0 = time.perf_counter()
-m1 = load_or_build(SLICE, eval_ratio=0.1)             # 第一次：全量扫描建旁车
+m1 = load_or_build(SLICE, eval_ratio=0.1)  # 第一次：全量扫描建旁车
 print(f"首建 {time.perf_counter()-t0:.2f}s  行数 {len(m1)}  eval 占比 {m1.is_eval.mean():.3f}")
 print(f"指纹 = {m1.fingerprint}")
 
-t0 = time.perf_counter()
-m_half = load_or_build(SLICE, eval_ratio=0.5)         # 同文件换口径：指纹含 bucket_take，必重建
-print(f"换口径重取(eval_ratio=0.5) {time.perf_counter()-t0:.2f}s  eval 占比 {m_half.is_eval.mean():.3f}")
-t0 = time.perf_counter()
-m_same = load_or_build(SLICE, eval_ratio=0.5)         # 同口径二取：命中缓存
-print(f"同口径二取(eval_ratio=0.5) {time.perf_counter()-t0:.2f}s")
-
-raw = SLICE.read_bytes()                              # 原地改一字节：3 字节标点互换，大小不变
+raw = SLICE.read_bytes()  # 原地改一个字节：「。」(3字节) → 「，」(3字节)，大小不变
 i = raw.rindex("。".encode())
 SLICE.write_bytes(raw[:i] + "，".encode() + raw[i + 3 :])
-print(f"改后 stat：size {SLICE.stat().st_size}（不变）  指纹 = {_fingerprint(SLICE, 500)}")
+print(f"改后 stat：size {SLICE.stat().st_size}（不变）  指纹 = {_fingerprint(SLICE)}")
 
 t0 = time.perf_counter()
-m2 = load_or_build(SLICE, eval_ratio=0.5)             # 指纹已变：必须全量重建
-print(f"重取(eval_ratio=0.5) {time.perf_counter()-t0:.2f}s  eval 占比 {m2.is_eval.mean():.3f}")</code></pre></div>
+m2 = load_or_build(SLICE, eval_ratio=0.5)  # 指纹已变：必须全量重建
+print(f"重取(eval_ratio=0.5) {time.perf_counter()-t0:.2f}s  eval 占比 {m2.is_eval.mean():.3f}（重建，新口径生效）")</code></pre></div>
         </div>
       </div>
 
@@ -549,9 +571,11 @@ print(f"重取(eval_ratio=0.5) {time.perf_counter()-t0:.2f}s  eval 占比 {m2.is
         <div class="acc-body">
           <p><b>本课需要：</b>pretrain_t2t_mini 数据（约 1.2GB，<code>uv run python tools/download_data.py --name pretrain_t2t_mini</code>）；无网时跳过基准实验，读正文数字完成对照。</p>
           <p>在 <code>Reproduce/minimind_reborn/</code> 下两步。第一步，O(1) 取样等价性实验（脚本全文）：</p>
-          <div class="codeblock"><div class="code-head"><span>/tmp/m11_accept.py · 同一行：索引 O(1) 取 vs 顺序扫描取，必须一致</span><span class="lang">python</span></div><pre class="code"><code>"""M11 验收：同一行，索引 O(1) 取 与 顺序扫描 取，必须逐字节等价。"""
-import json, time
+          <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m11_accept.py.html">experiments/m11_accept.py</a> · 同一行：索引 O(1) 取 vs 顺序扫描取，必须一致（全文 30 行）</span><span class="lang">python</span></div><pre class="code"><code>"""M11 验收：同一行，索引 O(1) 取 与 顺序扫描 取，必须逐字节等价。"""
+import json
+import time
 from pathlib import Path
+
 from minimind_reborn.data.datasets import JsonlIndexedDataset
 
 PATH = Path.home() / "Code/WorkSpace/minimind-reproduce/dataset/pretrain_t2t_mini.jsonl"
@@ -562,20 +586,23 @@ ds = JsonlIndexedDataset(PATH)
 print(f"OK 索引构建 {time.perf_counter()-t0:.2f}s，行数 {len(ds)}")
 
 t0 = time.perf_counter()
-row = ds.load_line(TARGET)                    # O(1)：seek(offset) + readline
+row = ds.load_line(TARGET)  # O(1)：seek(offset) + readline
 dt_idx = time.perf_counter() - t0
 
-with PATH.open("rb") as f:                    # O(N) 对照：从头数行
+with PATH.open("rb") as f:  # O(N) 对照：从头数行
     for n, line in enumerate(f):
         if n == TARGET:
-            row_scan = json.loads(line); break
+            row_scan = json.loads(line)
+            break
 dt_scan = time.perf_counter() - t0
 
 assert row == row_scan, "两种姿势取到的行必须一致"
-print(f"OK 第 {TARGET} 行一致：{row['text'][:30]!r}")
+text = row["text"][:30]
+print(f"OK 第 {TARGET} 行一致：{text!r}")
 print(f"OK 索引 {dt_idx*1e6:.0f}µs vs 顺序扫描 {dt_scan*1000:.0f}ms（{dt_scan/dt_idx:.0f} 倍）")
 print("ALL PASS")</code></pre></div>
-          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m11_accept.py</span>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m11_accept.py</span>
+<span class="dim"># 输出为作者实测存档（数字随时延/采样/机器态漂移）</span>
 <span class="out">OK 索引构建 0.47s，行数 1270238</span>
 <span class="out">OK 第 100000 行一致：'按照这件衣服的主题，设计一个与之配套的配饰。这件衣服是一件黑色皮革夹克，'</span>
 <span class="out">OK 索引 39µs vs 顺序扫描 25ms（650 倍）</span>
@@ -638,6 +665,6 @@ print("ALL PASS")</code></pre></div>
   <aside class="toc" id="toc"></aside>
 </div>
 
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

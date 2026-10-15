@@ -1,0 +1,10 @@
+payload 顶层键（9 个）： ['best_val_loss', 'config', 'epoch', 'model', 'optimizer', 'rng', 'scaler', 'step', 'world_size']
+model   件： 25 个张量键，如 ['model.embed_tokens.weight', 'model.layers.0.self_attn.q_proj.weight']
+optim   件： ['param_groups', 'state'] | state 覆盖 24 个参数 | param_groups 2 组（decay/no_decay，M13）
+scaler  件： {}
+epoch/step 件： 0 / 60 （micro step 口径）| world_size 件： 1
+best    件： 8.63429307937622
+config  件： ['stage', 'recipe_name', 'output_dir', 'checkpoint_dir', 'run_dir', 'model'] …
+rng     件： {'torch': 'Tensor', 'cuda': 'list', 'python': 'tuple', 'numpy': 'tuple'}
+六件套全套：6.44 MB
+只留 model 件：2.14 MB

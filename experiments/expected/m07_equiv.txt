@@ -1,0 +1,5 @@
+路径判定（SDPA 调用次数，2 层模型）: ①=2  ②=6(prefill 2 层 + 2 步 decode 各 2 层)  ③=0
+① vs ③  allclose=True  max|Δ|=5.96e-08
+② vs ③  allclose=True  max|Δ|=7.45e-08
+② vs ①  allclose=True  max|Δ|=7.45e-08
+② vs ③（含 padding mask） allclose=True  max|Δ|=7.45e-08

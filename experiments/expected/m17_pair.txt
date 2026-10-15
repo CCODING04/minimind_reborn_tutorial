@@ -1,0 +1,3 @@
+loss = 0.693147 | ln(2) = 0.693147
+grad|logp| 最大 = 0.000e+00（精确为 0：True）
+对照（rejected 略差）loss = 0.656350 < ln(2)；grad|pol| 最大 = 7.219e-02 ≠ 0

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m11_registry.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m11_registry.py</span>
+  <span class="cv-meta">46 行 · 2KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m11_registry.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M11 实验：注册表解析、三要素报错、视图不复制（真数据）。&quot;&quot;&quot;
+import resource
+import time
+from pathlib import Path
+
+from minimind_reborn.data.registry import _REGISTRY, file_path, resolve_dataset
+from minimind_reborn.data.datasets import IndexListView, PretrainDataset, SegmentView
+
+DATA = Path.home() / &quot;Code/WorkSpace/minimind-reproduce/dataset&quot;
+
+# ① 注册表全景
+print(f&quot;注册条目 {len(_REGISTRY)} 个：{sorted(_REGISTRY)}&quot;)
+entry = resolve_dataset(&quot;pretrain_t2t_mini&quot;)
+print(f&quot;resolve_dataset(&#x27;pretrain_t2t_mini&#x27;) → {entry}&quot;)
+print(f&quot;file_path → {file_path(entry)}  存在={file_path(entry).exists()}&quot;)
+
+# ② 两条错误路径真触发
+try:
+    resolve_dataset(&quot;no_such_dataset&quot;)
+except ValueError as e:
+    print(f&quot;-- ValueError: {e}&quot;)
+try:
+    resolve_dataset(&quot;pretrain_t2t_mini&quot;, data_root=Path(&quot;/tmp/nonexistent_data&quot;))
+except FileNotFoundError as e:
+    print(f&quot;-- FileNotFoundError: {e}&quot;)
+
+# ③ 视图不复制：同一个底层索引，train/eval 各一张薄壳
+from transformers import AutoTokenizer
+
+tok = AutoTokenizer.from_pretrained(&quot;assets/tokenizer&quot;)
+t0 = time.perf_counter()
+ds = PretrainDataset(DATA / &quot;pretrain_t2t_mini.jsonl&quot;, tok, max_length=512, eval_ratio=0.005)
+print(f&quot;PretrainDataset 构建 {time.perf_counter()-t0:.2f}s（含 0.47s 索引扫描）&quot;)
+tr, ev = ds.train_view(), ds.eval_view()
+print(f&quot;总行数 {len(ds)} = train {len(tr)} + eval {len(ev)}（eval_ratio=0.005）&quot;)
+print(f&quot;train_view 是薄壳：_base is ds = {tr._base is ds}，只带 (_start,_stop)=({tr._start},{tr._stop})&quot;)
+rss = lambda: resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+print(f&quot;建两张视图后峰值内存不变：{rss():.0f}MB（视图零数据复制）&quot;)
+item = tr[0]
+print(f&quot;tr[0] → input_ids {tuple(item[&#x27;input_ids&#x27;].shape)}，labels {tuple(item[&#x27;labels&#x27;].shape)}&quot;)
+print(f&quot;视图转发：tr[123] 与 ds.encode(123) 同源 = {bool((tr[123][&#x27;input_ids&#x27;] == ds.encode(123)[&#x27;input_ids&#x27;]).all())}&quot;)
+
+# ④ IndexListView：重复的是行索引不是数据（哈希分桶视图的底座，M12 详用）
+lv = IndexListView(ds, [5, 3, 5])
+print(f&quot;IndexListView([5,3,5]) → len={len(lv)}，lv[0] 与 lv[2] 同一行 = &quot;
+      f&quot;{bool((lv[0][&#x27;input_ids&#x27;] == lv[2][&#x27;input_ids&#x27;]).all())}&quot;)</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

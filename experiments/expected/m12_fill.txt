@@ -1,0 +1,3 @@
+两轮完整： 2 个区间 [(13, 23), (36, 46)]
+砍掉末 4 token： 1 个区间 + 1 个残段（残段不计监督）
+与 reborn find_response_spans 逐位一致：ALL PASS

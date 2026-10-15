@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m06_bench_kv.py · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m06_bench_kv.py</span>
+  <span class="cv-meta">45 行 · 2KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m06_bench_kv.py</span><span class="lang">python</span></div><pre class="code"><code data-lines="1">&quot;&quot;&quot;M06 对照实验：无缓存全量重算 vs reborn generate()（KV cache）——耗时/前向 token 数/逐位一致。
+
+页面展示为 NEW=50 版本；表格里的 200/500 两轮是改 NEW 后重跑。
+&quot;&quot;&quot;
+import statistics, time, torch
+from minimind_reborn.configuration.schemas import GenerateConfig
+from minimind_reborn.inference.generator import generate
+from minimind_reborn.models.config import MiniMindConfig
+from minimind_reborn.models.model import MiniMindForCausalLM
+from minimind_reborn.models.weights import load_inference_weights
+
+torch.manual_seed(42)
+dev = &quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;
+cfg = MiniMindConfig()                            # 64M 正主：768 × 8 层，8 头 / 4 KV 头
+model = MiniMindForCausalLM(cfg)
+load_inference_weights(model, &quot;out/pretrain_768.pth&quot;, strict=True)
+model = model.to(dev).eval()
+PROMPT, NEW = 64, 50                              # 想扫更长，改 NEW 后重跑
+prompt = torch.randint(0, 6400, (1, PROMPT), device=dev)
+
+def no_cache():
+    cur, fwd = prompt, 0
+    for _ in range(NEW):                          # 每步全量前向：重算整个前缀的注意力
+        with torch.inference_mode():
+            logits = model(cur).logits[:, -1, :]  # (1, 6400)：只取最后一位，却算了全部位置
+        fwd += cur.shape[1]
+        cur = torch.cat([cur, logits.argmax(-1, keepdim=True)], dim=1)
+    return cur, fwd
+
+def with_cache():
+    gen = GenerateConfig(temperature=0.0, max_new_tokens=NEW)
+    out = generate(model, prompt, gen, eos_token_id=None, pad_token_id=0)
+    return out[&quot;sequences&quot;], PROMPT + NEW         # prefill 64 + 50 个单 token 步
+
+def bench(fn):
+    if dev == &quot;cuda&quot;: torch.cuda.synchronize()
+    t0 = time.perf_counter(); fn()
+    if dev == &quot;cuda&quot;: torch.cuda.synchronize()
+    return (time.perf_counter() - t0) * 1000
+
+no_cache(); with_cache()                          # 预热：首次内核加载不计入
+seq_a, tok_a = no_cache(); seq_b, tok_b = with_cache()
+assert (seq_a == seq_b).all()                     # 两条路径必须逐位一致（见&quot;最硬的一条测试&quot;）
+print(statistics.median(bench(no_cache) for _ in range(5)),
+      statistics.median(bench(with_cache) for _ in range(5)))</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>

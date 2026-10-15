@@ -25,17 +25,20 @@ const pages = [
   ...["m00_week0","m01_get_started","m02_chat","m03_pipeline","m04_config","m05_layers","m06_kv_cache",
      "m07_attention","m08_ffn_moe","m09_model","m10_tokenizer","m11_data_access","m12_datasets",
      "m13_trainer","m14_checkpoint","m15_ddp","m16_pretrain_sft","m17_dpo","m18_distill_lora",
-     "m19_rl","m20_inference","m21_eval","m22_graduation","btrack","pytorch_guide"].map(m => m + ".html"),
+     "m19_rl","m20_inference","m21_eval","m22_graduation","btrack","pytorch_guide",
+     "eng_glossary","glossary","retrospective"].map(m => m + ".html"),
 ];
 const cvPages = existsSync(resolve(ROOT, "codeview"))
   ? ["codeview/src/minimind_reborn/training/common/trainer.py.html",
      "codeview/tools/verify_env.py.html",
      "codeview/configs/smoke/smoke_pretrain.yaml.html",
-     "codeview/README.md.html"]
+     "codeview/README.md.html",
+     "codeview/experiments/m08_exp_route.py.html"]
   : ["source/src/minimind_reborn/training/common/trainer.py.html",
      "source/tools/verify_env.py.html",
      "source/configs/smoke/smoke_pretrain.yaml.html",
-     "source/README.md.html"];
+     "source/README.md.html",
+     "source/experiments/m08_exp_route.py.html"];
 const allPages = [...pages, ...cvPages];
 
 let pass = 0, fail = 0;

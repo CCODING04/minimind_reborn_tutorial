@@ -5,6 +5,7 @@
   1. 扫描课程目录顶层 *.html，收集对 Reproduce/minimind_reborn 文件的引用：
      - <a href="../../Reproduce/minimind_reborn/X"> 链接
      - .code-head 标头里以 Reproduce/minimind_reborn/X 开头的路径标签
+     - 课程仓库内 experiments/ 实验脚本（href="codeview/experiments/X.html" 或正文裸提及）
   2. 为每个被引用文件生成 codeview/X.html（镜像仓库目录结构）：
      面包屑顶栏 + 行号列 + 每行 #Ln 锚点 + 三色语法高亮（course.js 客户端完成）+ 复制按钮
   3. 重写课程页链接：
@@ -30,6 +31,17 @@ COURSE_DIR = Path(__file__).resolve().parent.parent
 # codeview 下这些目录是「存档快照」：源为运行时产物（out/、runs/ 不随仓库分发），
 # 已有页保留展示（孤儿清理跳过），由 check_course.py 以警告标注。
 ARCHIVE_TOP_DIRS = ("out", "runs")
+
+# 课程仓库内的顶层目录：这些引用的源不在 reborn 仓库，而在本仓库下
+# （experiments/ 收录课程实验脚本，页面经 codeview/experiments/x.py.html 跳转查看）。
+LOCAL_TOP_DIRS = ("experiments",)
+
+
+def src_for(rel: str) -> Path:
+    """引用的源文件路径：LOCAL_TOP_DIRS 前缀取课程仓库，其余取 reborn 仓库。"""
+    if rel.split("/")[0] in LOCAL_TOP_DIRS:
+        return COURSE_DIR / rel
+    return REBORN / rel
 
 
 def resolve_reborn() -> Path:
@@ -68,7 +80,7 @@ HEAD_LABEL = re.compile(
 # 正文（<code> 内或 prov 标注）中提及的仓库文件：全前缀形式与裸相对路径形式
 PROSE_FULL = re.compile(r'Reproduce/minimind_reborn/([\w./-]+\.[A-Za-z0-9]+)')
 # 裸相对路径：正文任意位置的 dir-anchored 路径（含终端命令行内），存在性校验自动解析
-PROSE_BARE = re.compile(r'(?<![\w./-])((?:src|configs|tools|tests|docs|out|assets)/[\w./-]+\.(?:py|ya?ml|json|sh|toml|md))\b')
+PROSE_BARE = re.compile(r'(?<![\w./-])((?:src|configs|tools|tests|docs|out|assets|experiments)/[\w./-]+\.(?:py|ya?ml|json|sh|toml|md))\b')
 # 正文里未被链接化的全前缀 <code> 路径 → 自动挂上 codeview 链接（(?<!>) 跳过已在 <a> 内的）
 PROSE_CODE_FULL = re.compile(r'(?<!>)<code>Reproduce/minimind_reborn/([\w./-]+\.[A-Za-z0-9]+)</code>')
 # 不做代码查看页的二进制/产物后缀
@@ -104,7 +116,10 @@ def collect_refs() -> dict[str, set[str]]:
             add(m.group(1), page.name)
         for m in PROSE_BARE.finditer(body):
             p = m.group(1)
-            if p in refs or (REBORN / p).is_file():
+            if p.split("/")[0] in LOCAL_TOP_DIRS:
+                if (COURSE_DIR / p).is_file():
+                    add(p, page.name)
+            elif p in refs or (REBORN / p).is_file():
                 add(p, page.name)
             elif (REBORN / "src" / "minimind_reborn" / p).is_file():
                 add("src/minimind_reborn/" + p, page.name)
@@ -112,7 +127,7 @@ def collect_refs() -> dict[str, set[str]]:
 
 
 def gen_page(rel: str) -> str:
-    src = REBORN / rel
+    src = src_for(rel)
     raw = src.read_bytes()
     text = raw.decode("utf-8", errors="replace")
     truncated = False
@@ -136,10 +151,14 @@ def gen_page(rel: str) -> str:
     title = src.name
     # codeview 页在 codeview/<多级目录>/ 下，assets 前缀按深度计算
     prefix = "../" * (len(Path(rel).parts) - 1 + 1)
+    # 课程仓库内文件（experiments/…）的面包屑/标注与 reborn 仓库区分开
+    is_local = rel.split("/")[0] in LOCAL_TOP_DIRS
+    crumb = f"minimind_reborn_tutorial/{html.escape(rel)}" if is_local else f"Reproduce/minimind_reborn/{html.escape(rel)}"
+    repo_label = "课程仓库" if is_local else "minimind_reborn"
 
     notice = (
         f'<div class="cv-notice">⚠️ 文件较大（{kb}KB），仅显示前 {n_lines} 行——'
-        f'完整内容见仓库 Reproduce/minimind_reborn/{html.escape(rel)}</div>'
+        f'完整内容见{("课程仓库 " + html.escape(rel)) if is_local else ("仓库 Reproduce/minimind_reborn/" + html.escape(rel))}</div>'
         if truncated else ""
     )
     return f"""<!DOCTYPE html>
@@ -154,8 +173,8 @@ def gen_page(rel: str) -> str:
 <body data-page="codeview">
 <header class="cv-topbar">
   <a class="cv-back" href="{prefix}index.html">← 课程地图</a>
-  <span class="cv-crumb">Reproduce/minimind_reborn/{html.escape(rel)}</span>
-  <span class="cv-meta">{n_lines} 行 · {kb}KB · minimind_reborn</span>
+  <span class="cv-crumb">{crumb}</span>
+  <span class="cv-meta">{n_lines} 行 · {kb}KB · {repo_label}</span>
 </header>
 <main class="cv-main">
   {notice}<div class="codeblock"><div class="code-head"><span>{html.escape(rel)}</span><span class="lang">{lang}</span></div><pre class="code"><code data-lines="1">{body}</code></pre></div>
@@ -198,7 +217,7 @@ def main() -> int:
     errors = 0
     written = []
     for rel in sorted(refs):
-        src = REBORN / rel
+        src = src_for(rel)
         if src.suffix.lower() in SKIP_SUFFIXES:
             continue
         if not src.is_file():
@@ -240,7 +259,6 @@ def main() -> int:
     if kept_archives:
         print(f"存档快照（源不随仓库分发，保留展示）：{', '.join(kept_archives)}")
     for rel in written:
-        src = REBORN / rel
         print(f"  {rel}  ← 引用页：{', '.join(sorted(refs[rel]))}")
     if removed:
         print(f"清理：{', '.join(removed)}")

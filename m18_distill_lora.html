@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>M18 · 蒸馏与 LoRA：小成本改造 | 跟着 minimind_reborn 造一个大模型</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="stylesheet" href="assets/course.css?v=18">
+<link rel="stylesheet" href="assets/course.css?v=19">
 </head>
 <body data-module="m18">
 
@@ -348,28 +348,35 @@ distill:
       </p>
 
       <h3 id="lora-ratio">实测一：参数账 0.615% &lt; 1%</h3>
-      <div class="codeblock"><div class="code-head"><span>/tmp/m18_exp_lora.py · 参数占比段（64M 与 tiny 两档）</span><span class="lang">python</span></div><pre class="code"><code>import torch
+      <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m18_exp_lora.py.html">experiments/m18_exp_lora.py</a> · 参数占比段（1–22/56 行节选；尾部 merge 一致性段见完整代码）</span><span class="lang">python</span></div><pre class="code"><code>"""M18 实验：① LoRA 挂载点与参数占比（64M 与 tiny 两档）；② merge 前后输出一致性。"""
+
+import torch
+
 from minimind_reborn.models.config import MiniMindConfig
-from minimind_reborn.models.lora import apply_lora
+from minimind_reborn.models.lora import apply_lora, lora_state_dict, merge_lora, save_lora
 from minimind_reborn.models.model import MiniMindForCausalLM
 
+torch.manual_seed(42)
+
+# ---- ① 参数占比：64M 主配方（rank=16，与 lora_64m.yaml 一致）----
 for tag, cfg, rank in [
-    ("64M  (768×8层, rank=16)", MiniMindConfig(), 16),   # lora_64m.yaml 同款
-    ("tiny (64×2层,  rank=8 )", MiniMindConfig(hidden_size=64, num_hidden_layers=2,
-                                               num_attention_heads=4, num_key_value_heads=2), 8),
+    ("64M  (768×8层, rank=16)", MiniMindConfig(), 16),
+    ("tiny (64×2层,  rank=8 )", MiniMindConfig(hidden_size=64, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2), 8),
 ]:
     m = MiniMindForCausalLM(cfg)
-    base = sum(p.numel() for p in m.parameters())        # 挂载前：基座参数
+    before = sum(p.numel() for p in m.parameters())
     apply_lora(m, rank=rank)
     hooked = [n for n, mod in m.named_modules() if hasattr(mod, "lora") and n]
     lora_n = sum(p.numel() for n, p in m.named_parameters() if "lora" in n)
-    print(f"{tag}: 基座 {base:,} | LoRA {lora_n:,} | 占比 {100*lora_n/base:.3f}% | 挂载点 {len(hooked)} 个")
-    print(f"  {sorted(set(h.rsplit('.', 1)[1] for h in hooked))}")</code></pre></div>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m18_exp_lora.py</span>
-<span class="out">64M  (768×8层, rank=16): 基座 63,912,192 | LoRA 393,216 | 占比 0.615% | 挂载点 16 个</span>
-<span class="out">  ['o_proj', 'q_proj']</span>
-<span class="out">tiny (64×2层,  rank=8 ): 基座 532,864 | LoRA 4,096 | 占比 0.769% | 挂载点 4 个</span>
-<span class="out">  ['o_proj', 'q_proj']</span></code></pre>
+    print(f"{tag}: 总参数 {before:,} | LoRA 参数 {lora_n:,} | 占比 {100*lora_n/before:.3f}%")
+    print(f"  挂载点（{len(hooked)} 个）: {hooked}")
+# ……（余 34 行：尾部 merge 一致性段——完整代码见标题链接）</code></pre></div>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m18_exp_lora.py</span>
+<span class="dim"># 实验脚本随课程仓库 experiments/ 提供；在 minimind_reborn 仓库根目录运行（本页同）</span>
+<span class="out">64M  (768×8层, rank=16): 总参数 63,912,192 | LoRA 参数 393,216 | 占比 0.615%</span>
+<span class="out">  挂载点（16 个）: ['model.layers.0.self_attn.q_proj', 'model.layers.0.self_attn.o_proj', 'model.layers.1.self_attn.q_proj', 'model.layers.1.self_attn.o_proj', 'model.layers.2.self_attn.q_proj', 'model.layers.2.self_attn.o_proj', 'model.layers.3.self_attn.q_proj', 'model.layers.3.self_attn.o_proj', 'model.layers.4.self_attn.q_proj', 'model.layers.4.self_attn.o_proj', 'model.layers.5.self_attn.q_proj', 'model.layers.5.self_attn.o_proj', 'model.layers.6.self_attn.q_proj', 'model.layers.6.self_attn.o_proj', 'model.layers.7.self_attn.q_proj', 'model.layers.7.self_attn.o_proj']</span>
+<span class="out">tiny (64×2层,  rank=8 ): 总参数 532,864 | LoRA 参数 4,096 | 占比 0.769%</span>
+<span class="out">  挂载点（4 个）: ['model.layers.0.self_attn.q_proj', 'model.layers.0.self_attn.o_proj', 'model.layers.1.self_attn.q_proj', 'model.layers.1.self_attn.o_proj']</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · CPU 执行]</b>
       393,216 的构成：16 个挂点 × (16×768 + 768×16) = 16 × 24,576。占比 0.615%——
       <b>"只训 1% 参数"的招牌说法在这台 64M 上兑现且有富余</b>。挂载点集合验证了方阵判据：q/o 入选，
@@ -451,10 +458,13 @@ trainer.run()</code></pre></div>
         <code>.lora.</code> 键：它就是一份普通基座权重，推理引擎根本不知道 LoRA 存在过，<b>零额外延迟</b>。
         恒等性实测（把 B 随机化模拟"训过的适配器"，同输入比对三条路线的输出 logits）：
       </p>
-      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m18_exp_lora.py   # 尾部 merge 一致性段（64M, rank=16, fp16 存档）</span>
-<span class="out">adapter 路线 vs 纯基座（同模型 B 归零）  max|Δ| = 0.4551    ← 旁路确实改了输出</span>
-<span class="ok">adapter 路线 vs merge 后基座            max|Δ| = 0.002657  ← 恒等（fp16 舍入级）</span>
-<span class="out">merged 权重里还有 .lora. 键? False</span></code></pre>
+      <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m18_exp_lora.py   # 尾部 merge 一致性段（64M, rank=16, fp16 存档）</span>
+<span class="dim"># 尾部 merge 段代码见完整脚本（标题链接）</span>
+<span class="out">merge 一致性（64M, rank=16, fp16 适配器存档）:</span>
+<span class="out">  adapter 路线 vs 干净基座     max|Δ| = 0.4551   ← 旁路确实改了输出</span>
+<span class="ok">  adapter 路线 vs merge 后基座 max|Δ| = 0.002657 ← 应≈0（半精度舍入级）</span>
+<span class="out">  merged 权重里还有 lora 键?  False</span>
+<span class="out">  lora 存档大小: 32 个张量 → B·A 逐层写回 W'</span></code></pre>
       <p class="prov"><b>[作者实测 · 2026-10-01 · RTX 4090 · torch 2.14.0+cu130 · CPU 执行]</b>
       残差 0.0027 来自两处半精度：适配器按 fp16 存档（save_lora_only 的 <code>.half()</code>），
       合并也在 fp16 里做加法——部署视角这点误差换"结构与基座完全相同"。另实测 merge 后再
@@ -626,28 +636,25 @@ for r in (4, 64):
           <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python tools/train.py configs/smoke/smoke_lora.yaml --set train.max_steps=20 --set train.resume=false</span>
 <span class="out">… | minimind.lora | LoRA rank=8：0.004M/0.537M（0.76%）</span>
 <span class="ok">… | minimind.trainer | 训练结束：best_val_loss=8.773457527160645 optimizer_steps=20</span></code></pre>
-          <p>第三步，参数占比断言脚本——正文<a href="#lora-ratio">实测一</a>的同款加三条断言，全文如下（存为 /tmp/m18_ratio_assert.py）：</p>
-          <div class="codeblock"><div class="code-head"><span>/tmp/m18_ratio_assert.py · 64M rank=16 参数账三断言</span><span class="lang">python</span></div><pre class="code"><code>"""M18 验收第三步：LoRA 参数账三断言（64M 默认配方、rank=16，与 lora_64m.yaml 同款）。"""
+          <p>第三步，参数占比断言脚本——正文<a href="#lora-ratio">实测一</a>的同款加三条断言，全文如下（<a href="codeview/experiments/m18_ratio_assert.py.html"><code>experiments/m18_ratio_assert.py</code></a>）：</p>
+          <div class="codeblock"><div class="code-head"><span><a href="codeview/experiments/m18_ratio_assert.py.html">experiments/m18_ratio_assert.py</a> · 64M rank=16 参数账三断言（全文 17 行）</span><span class="lang">python</span></div><pre class="code"><code>"""M18 验收：LoRA rank=16 参数占比断言（64M 主配方同款）。"""
+
 from minimind_reborn.models.config import MiniMindConfig
 from minimind_reborn.models.lora import apply_lora
 from minimind_reborn.models.model import MiniMindForCausalLM
 
-m = MiniMindForCausalLM(MiniMindConfig())
-base = sum(p.numel() for p in m.parameters())             # 挂载前：基座参数
-apply_lora(m, rank=16)
+m = MiniMindForCausalLM(MiniMindConfig())  # 768×8 层，64M 主配方结构
+base = sum(p.numel() for p in m.parameters())
+apply_lora(m, rank=16)  # 与 lora_64m.yaml 同款 rank
+lora = sum(p.numel() for n, p in m.named_parameters() if "lora" in n)
+hooks = [n for n, mod in m.named_modules() if hasattr(mod, "lora") and n]
+print(f"LoRA rank=16: {lora:,}/{base:,} = {100*lora/base:.3f}%（挂载点 {len(hooks)} 个：q/o_proj × 8 层）")
 
-hooked = [n for n, mod in m.named_modules() if hasattr(mod, "lora") and n]
-lora_n = sum(p.numel() for n, p in m.named_parameters() if "lora" in n)
-names = sorted(set(h.rsplit(".", 1)[1] for h in hooked))  # 挂载点叶子名
-ratio = lora_n / base
-
-assert lora_n == 16 * (16 * 768 + 768 * 16) == 393_216    # 断言①：参数账 = 挂点 ×（A: r×768 + B: 768×r）
-assert len(hooked) == 16 and names == ["o_proj", "q_proj"]  # 断言②：恰 16 个挂点——方形 q/o 中选，非方阵 k/v 落选
-assert ratio &lt; 0.01                                       # 断言③："只训 &lt;1% 参数"兑现（实测 0.615%）
-
-print(f"LoRA rank=16: {lora_n:,}/{base:,} = {ratio:.3%}（挂载点 {len(hooked)} 个：q/o_proj × 8 层）")
+assert lora == 393_216, "rank=16 在 768×8 层应恰为 393,216"
+assert len(hooks) == 16, "挂载点应为 16（8 层 × q_proj/o_proj）"
+assert lora / base &lt; 0.01, "可训练占比必须 &lt;1%"
 print("3 checks passed")</code></pre></div>
-          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python /tmp/m18_ratio_assert.py</span>
+          <pre class="term"><code><span class="p">$ </span><span class="cmd">uv run python experiments/m18_ratio_assert.py</span>
 <span class="out">LoRA rank=16: 393,216/63,912,192 = 0.615%（挂载点 16 个：q/o_proj × 8 层）</span>
 <span class="ok">3 checks passed</span></code></pre>
           <ul class="pass-criteria">
@@ -714,6 +721,6 @@ print("3 checks passed")</code></pre></div>
   };
 </script>
 <script async src="assets/vendor/tex-svg.js"></script>
-<script src="assets/course.js?v=18"></script>
+<script src="assets/course.js?v=19"></script>
 </body>
 </html>

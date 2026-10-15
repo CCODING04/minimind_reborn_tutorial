@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>m14_kill9.sh · minimind_reborn 代码查看 | 跟着 minimind_reborn 造一个大模型</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
+<link rel="stylesheet" href="../../assets/course.css?v=19">
+</head>
+<body data-page="codeview">
+<header class="cv-topbar">
+  <a class="cv-back" href="../../index.html">← 课程地图</a>
+  <span class="cv-crumb">minimind_reborn_tutorial/experiments/m14_kill9.sh</span>
+  <span class="cv-meta">34 行 · 1KB · 课程仓库</span>
+</header>
+<main class="cv-main">
+  <div class="codeblock"><div class="code-head"><span>experiments/m14_kill9.sh</span><span class="lang">bash</span></div><pre class="code"><code data-lines="1">#!/bin/bash
+# 从零启动 tiny 训练，step&gt;30 后对整个进程组 kill -9（uv 包装与 python 子进程一锅端）
+cd /home/admin02/Code/WorkSpace/PythonFormat/Reproduce/minimind_reborn
+rm -f checkpoints/pretrain_64_resume.pth
+ls -d runs/smoke_pretrain/*/ &gt; /tmp/m14_before.txt
+setsid uv run python tools/train.py configs/smoke/smoke_pretrain.yaml \
+  --set train.max_steps=60 --set train.save_interval_steps=10 \
+  --set train.log_interval=2 --set train.resume=false &gt; /tmp/m14_B_killed.log 2&gt;&amp;1 &amp;
+TRAIN_PID=$!
+LOG=&quot;&quot;
+for i in $(seq 1 300); do
+  NEW=$(ls -d runs/smoke_pretrain/*/ 2&gt;/dev/null | grep -v -F -f /tmp/m14_before.txt | head -1)
+  if [ -n &quot;$NEW&quot; ] &amp;&amp; [ -f &quot;$NEW/train.log&quot; ]; then LOG=&quot;$NEW/train.log&quot;; break; fi
+  kill -0 $TRAIN_PID 2&gt;/dev/null || break
+  sleep 0.02
+done
+echo &quot;watching: $LOG&quot;
+for i in $(seq 1 500); do
+  if grep -q &quot;(34/&quot; &quot;$LOG&quot; 2&gt;/dev/null; then
+    PGID=$(ps -o pgid= -p $TRAIN_PID | tr -d &#x27; &#x27;)
+    kill -9 -$PGID     # 杀整个进程组：uv 包装 + python 子进程
+    echo &quot;kill -9 sent to process group $PGID (step 34 logged; step-30 ckpt on disk)&quot;
+    break
+  fi
+  kill -0 $TRAIN_PID 2&gt;/dev/null || { echo &quot;process exited before kill&quot;; break; }
+  sleep 0.02
+done
+wait $TRAIN_PID 2&gt;/dev/null
+echo &quot;shell exit code after kill: $?&quot;
+sleep 1
+echo &quot;---- train.log tail（应止于 ~step 34，无训练结束行）----&quot;
+tail -3 &quot;$LOG&quot;
+echo &quot;---- 进程残活检查 ----&quot;
+pgrep -f &quot;tools/train.py&quot; | wc -l</code></pre></div>
+</main>
+<script src="../../assets/course.js?v=19"></script>
+</body>
+</html>
